@@ -33,7 +33,12 @@ impl Db {
         input: &AutoUpdateCandidateInput,
         now: &str,
     ) -> anyhow::Result<AutoUpdateCandidateRow> {
-        let input = input.clone();
+        let mut input = input.clone();
+        let original_digest = input.candidate_digest.clone();
+        input.candidate_digest = canonical_auto_update_digest(&original_digest);
+        if input.id == format!("{}:{original_digest}", input.service_id) {
+            input.id = format!("{}:{}", input.service_id, input.candidate_digest);
+        }
         let now = now.to_string();
         let settled_at =
             matches!(input.status.as_str(), "ready" | "unresolved").then(|| now.clone());
@@ -129,7 +134,7 @@ ON CONFLICT(service_id, candidate_digest) DO UPDATE SET
         candidate_digest: &str,
     ) -> anyhow::Result<Option<AutoUpdateCandidateRow>> {
         let service_id = service_id.to_string();
-        let candidate_digest = candidate_digest.to_string();
+        let candidate_digest = canonical_auto_update_digest(candidate_digest);
         self.call(move |conn| {
             Ok(conn.query_row(
                 &format!("SELECT {AUTO_UPDATE_CANDIDATE_COLUMNS} FROM auto_update_candidates WHERE service_id = ?1 AND candidate_digest = ?2"),
@@ -146,7 +151,8 @@ ON CONFLICT(service_id, candidate_digest) DO UPDATE SET
         &self,
         input: &AutoUpdateCandidateSettlementInput,
     ) -> anyhow::Result<Option<AutoUpdateCandidateRow>> {
-        let input = input.clone();
+        let mut input = input.clone();
+        input.candidate_digest = canonical_auto_update_digest(&input.candidate_digest);
         let resolved_tags = input
             .resolved_tags
             .as_ref()
@@ -235,7 +241,7 @@ WHERE service_id = ?1 AND candidate_digest = ?2
         now: &str,
     ) -> anyhow::Result<Option<AutoUpdateCandidateRow>> {
         let service_id = service_id.to_string();
-        let candidate_digest = candidate_digest.to_string();
+        let candidate_digest = canonical_auto_update_digest(candidate_digest);
         let now = now.to_string();
         self.call(move |conn| {
             let changed = conn.execute(
@@ -273,7 +279,7 @@ WHERE service_id = ?1
         now: &str,
     ) -> anyhow::Result<usize> {
         let service_id = service_id.to_string();
-        let candidate_digest = candidate_digest.to_string();
+        let candidate_digest = canonical_auto_update_digest(candidate_digest);
         let candidate_id = candidate_id.to_string();
         let now = now.to_string();
         self.call(move |conn| {
@@ -411,7 +417,7 @@ WHERE job_id = ?1
         self.call(move |conn| {
             let mut out = Vec::new();
             let mut stmt = conn.prepare(
-                &format!("SELECT {AUTO_UPDATE_CANDIDATE_COLUMNS_QUALIFIED} FROM auto_update_candidates c JOIN services s ON s.id = c.service_id WHERE c.service_id = ?1 AND (s.candidate_digest = c.candidate_digest OR (s.candidate_digest IS NULL AND c.policy_status = 'completed' AND s.current_digest = c.candidate_digest)) ORDER BY c.discovered_at DESC, c.id DESC LIMIT 1"),
+                &format!("SELECT {AUTO_UPDATE_CANDIDATE_COLUMNS_QUALIFIED} FROM auto_update_candidates c JOIN services s ON s.id = c.service_id WHERE c.service_id = ?1 AND (LOWER(TRIM(s.candidate_digest)) = LOWER(TRIM(c.candidate_digest)) OR (s.candidate_digest IS NULL AND c.policy_status = 'completed' AND LOWER(TRIM(s.current_digest)) = LOWER(TRIM(c.candidate_digest)))) ORDER BY c.discovered_at DESC, c.id DESC LIMIT 1"),
             )?;
             for service_id in service_ids {
                 if let Ok(row) = stmt.query_row(params![service_id], map_auto_update_candidate_row) {
@@ -430,7 +436,7 @@ WHERE job_id = ?1
         candidate_digest: &str,
     ) -> anyhow::Result<Vec<AutoUpdateCandidateRow>> {
         let image_ref = image_ref.to_string();
-        let candidate_digest = candidate_digest.to_string();
+        let candidate_digest = canonical_auto_update_digest(candidate_digest);
         self.call(move |conn| {
             let mut stmt = conn.prepare(&format!(
                 "SELECT {AUTO_UPDATE_CANDIDATE_COLUMNS} FROM auto_update_candidates WHERE image_ref = ?1 AND candidate_digest = ?2 AND status = 'awaiting_inference' ORDER BY discovered_at ASC"
@@ -450,7 +456,7 @@ WHERE job_id = ?1
         now: &str,
     ) -> anyhow::Result<bool> {
         let service_id = service_id.to_string();
-        let candidate_digest = candidate_digest.to_string();
+        let candidate_digest = canonical_auto_update_digest(candidate_digest);
         let reason = reason.to_string();
         let now = now.to_string();
         self.call(move |conn| {
@@ -490,7 +496,7 @@ WHERE service_id = ?1
         evaluated_at: &str,
     ) -> anyhow::Result<()> {
         let service_id = service_id.to_string();
-        let candidate_digest = candidate_digest.to_string();
+        let candidate_digest = canonical_auto_update_digest(candidate_digest);
         let policy_status = policy_status.to_string();
         let policy_reason = policy_reason.map(str::to_string);
         let rule_id = rule_id.map(str::to_string);
@@ -535,7 +541,7 @@ WHERE service_id = ?1 AND candidate_digest = ?2
         candidate_digest: &str,
     ) -> anyhow::Result<()> {
         let service_id = service_id.to_string();
-        let candidate_digest = candidate_digest.to_string();
+        let candidate_digest = canonical_auto_update_digest(candidate_digest);
         self.call(move |conn| {
             let context = conn
                 .query_row(

@@ -94,6 +94,32 @@ fn is_qualified_auto_policy_source(source: Option<&str>) -> bool {
     matches!(source, Some("schedule" | "github_webhook"))
 }
 
+fn auto_policy_source_identity_matches(
+    job_scope: &str,
+    job_stack_id: Option<&str>,
+    job_service_id: Option<&str>,
+    stack_id: Option<&str>,
+    service_id: Option<&str>,
+) -> bool {
+    match (stack_id, service_id, job_scope) {
+        (Some(stack_id), Some(service_id), scope) if scope.eq_ignore_ascii_case("service") => {
+            job_stack_id == Some(stack_id) && job_service_id == Some(service_id)
+        }
+        (Some(stack_id), Some(_), scope) if scope.eq_ignore_ascii_case("stack") => {
+            job_stack_id == Some(stack_id) && job_service_id.is_none()
+        }
+        (Some(_), Some(_), scope) if scope.eq_ignore_ascii_case("all") => {
+            job_stack_id.is_none() && job_service_id.is_none()
+        }
+        (Some(stack_id), None, _) => job_stack_id == Some(stack_id),
+        (None, Some(service_id), scope) if scope.eq_ignore_ascii_case("service") => {
+            job_service_id == Some(service_id)
+        }
+        (None, None, _) => true,
+        _ => false,
+    }
+}
+
 async fn has_valid_auto_policy_source(
     db: &crate::db::Db,
     source_job_id: &str,
@@ -110,21 +136,13 @@ async fn has_valid_auto_policy_source(
     if !job.status.eq_ignore_ascii_case("success") {
         return Ok(false);
     }
-    let identity_matches = match (stack_id, service_id, job.scope.as_str()) {
-        (Some(stack_id), Some(service_id), "service") => {
-            job.stack_id.as_deref() == Some(stack_id)
-                && job.service_id.as_deref() == Some(service_id)
-        }
-        (Some(stack_id), Some(_), "stack") => {
-            job.stack_id.as_deref() == Some(stack_id) && job.service_id.is_none()
-        }
-        (Some(_), Some(_), "all") => job.stack_id.is_none() && job.service_id.is_none(),
-        (Some(stack_id), None, _) => job.stack_id.as_deref() == Some(stack_id),
-        (None, Some(service_id), "service") => job.service_id.as_deref() == Some(service_id),
-        (None, None, _) => true,
-        _ => false,
-    };
-    if !identity_matches {
+    if !auto_policy_source_identity_matches(
+        job.scope.as_str(),
+        job.stack_id.as_deref(),
+        job.service_id.as_deref(),
+        stack_id,
+        service_id,
+    ) {
         return Ok(false);
     }
     Ok(auto_policy_source(&job.reason, &job.summary_json, Some(&job.created_by)) == Some(source))

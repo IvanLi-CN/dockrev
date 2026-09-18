@@ -218,7 +218,7 @@ async fn hydration_keeps_the_earliest_qualified_observation_as_one_consistent_re
             [],
         )?;
         conn.execute(
-            "INSERT INTO service_new_version_discoveries (service_id, image_ref, source_job_id, discovered_at, current_digest, current_display_tag, current_tag, candidate_tag, candidate_digest, candidate_display_tag) VALUES ('service', 'ghcr.io/acme/app:latest', 'missing-check', '2026-04-30T00:00:00Z', 'sha256:current', '1.0.0', 'latest', '1.4.0', 'sha256:multi', '1.4.0')",
+            "INSERT INTO service_new_version_discoveries (service_id, image_ref, source_job_id, discovered_at, current_digest, current_display_tag, current_tag, candidate_tag, candidate_digest, candidate_display_tag) VALUES ('service', 'ghcr.io/acme/app:latest', 'missing-check', '2026-04-30T00:00:00Z', 'sha256:current', '1.0.0', 'latest', '1.4.0', 'sha256:MULTI', '1.4.0')",
             [],
         )?;
         conn.execute(
@@ -332,6 +332,17 @@ async fn hydration_keeps_the_earliest_qualified_observation_as_one_consistent_re
             .as_deref(),
         Some("auto-policy-supersession")
     );
+    let candidate_count: i64 = db
+        .call(|conn| {
+            Ok(conn.query_row(
+                "SELECT COUNT(*) FROM auto_update_candidates WHERE service_id = 'service'",
+                [],
+                |row| row.get(0),
+            )?)
+        })
+        .await
+        .unwrap();
+    assert_eq!(candidate_count, 2);
 }
 
 #[tokio::test]

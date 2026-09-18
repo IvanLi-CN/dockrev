@@ -53,6 +53,11 @@ fn non_empty(value: &str) -> bool {
     !value.trim().is_empty()
 }
 
+fn canonical_candidate_digest(value: &str) -> String {
+    crate::snapshot_worker::normalize_digest(value)
+        .unwrap_or_else(|| value.trim().to_ascii_lowercase())
+}
+
 fn job_summary(row: &DiscoveryHistoryRow) -> serde_json::Value {
     row.job_summary_json
         .as_deref()
@@ -311,8 +316,9 @@ pub(super) fn hydrate_auto_update_candidates_tx(
     let history = select_discovery_history(tx)?;
     let mut grouped = BTreeMap::<(String, String), Vec<DiscoveryHistoryRow>>::new();
     for row in history {
+        let candidate_digest = canonical_candidate_digest(&row.candidate_digest);
         grouped
-            .entry((row.service_id.clone(), row.candidate_digest.clone()))
+            .entry((row.service_id.clone(), candidate_digest))
             .or_default()
             .push(row);
     }
@@ -511,7 +517,7 @@ ON CONFLICT(service_id, candidate_digest) DO UPDATE SET
             && source_row
                 .service_candidate_digest
                 .as_deref()
-                .is_some_and(|digest| digest == candidate_digest)
+                .is_some_and(|digest| canonical_candidate_digest(digest) == candidate_digest)
         {
             current_candidates.insert(
                 service_id.clone(),
@@ -570,7 +576,7 @@ SELECT
 FROM services s
 LEFT JOIN auto_update_candidates c
   ON c.service_id = s.id
- AND c.candidate_digest = s.candidate_digest
+ AND LOWER(TRIM(c.candidate_digest)) = LOWER(TRIM(s.candidate_digest))
 WHERE s.id IN ({placeholders})
   AND (
     c.hydration_origin IS NOT NULL
@@ -578,7 +584,7 @@ WHERE s.id IN ({placeholders})
       SELECT 1 FROM service_new_version_discoveries d
       WHERE c.id IS NULL
         AND d.service_id = s.id
-        AND d.candidate_digest = s.candidate_digest
+        AND LOWER(TRIM(d.candidate_digest)) = LOWER(TRIM(s.candidate_digest))
     )
   )
 "#
