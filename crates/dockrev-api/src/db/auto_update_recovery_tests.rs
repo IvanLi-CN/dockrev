@@ -620,6 +620,16 @@ async fn candidate_settlement_is_unique_and_idempotent() {
     assert_eq!(first.id, second.id);
 
     let failed = db
+        .begin_auto_update_candidate_inference(
+            "service",
+            "sha256:new",
+            "2026-04-30T00:00:30Z",
+        )
+        .await
+        .unwrap()
+        .unwrap();
+    let failed_generation = failed.evidence_generation;
+    let failed = db
         .settle_auto_update_candidate(&AutoUpdateCandidateSettlementInput {
             service_id: "service".to_string(),
             candidate_digest: "sha256:new".to_string(),
@@ -629,7 +639,7 @@ async fn candidate_settlement_is_unique_and_idempotent() {
             reason: Some("inference_failed".to_string()),
             last_error: Some("temporary registry failure".to_string()),
             attempts: 1,
-            evidence_generation: 1,
+            evidence_generation: failed_generation,
             retry_at: Some("2026-04-30T00:01:00Z".to_string()),
             settled_at: Some("2026-04-30T00:01:00Z".to_string()),
             now: "2026-04-30T00:01:00Z".to_string(),
@@ -642,6 +652,24 @@ async fn candidate_settlement_is_unique_and_idempotent() {
         Some("temporary registry failure")
     );
 
+    db.reopen_auto_update_candidate_inference(
+        "service",
+        "sha256:new",
+        "force_inference",
+        "2026-04-30T00:01:30Z",
+    )
+    .await
+    .unwrap();
+    let settled_generation = db
+        .begin_auto_update_candidate_inference(
+            "service",
+            "sha256:new",
+            "2026-04-30T00:01:45Z",
+        )
+        .await
+        .unwrap()
+        .unwrap()
+        .evidence_generation;
     let settled = db
         .settle_auto_update_candidate(&AutoUpdateCandidateSettlementInput {
             service_id: "service".to_string(),
@@ -652,7 +680,7 @@ async fn candidate_settlement_is_unique_and_idempotent() {
             reason: Some("digest_bound_version".to_string()),
             last_error: None,
             attempts: 0,
-            evidence_generation: 2,
+            evidence_generation: settled_generation,
             retry_at: None,
             settled_at: Some("2026-04-30T00:02:00Z".to_string()),
             now: "2026-04-30T00:02:00Z".to_string(),
@@ -678,7 +706,7 @@ async fn candidate_settlement_is_unique_and_idempotent() {
             reason: Some("digest_bound_version".to_string()),
             last_error: None,
             attempts: 0,
-            evidence_generation: 2,
+            evidence_generation: settled_generation,
             retry_at: None,
             settled_at: Some("2026-04-30T00:02:00Z".to_string()),
             now: "2026-04-30T00:03:00Z".to_string(),
@@ -703,6 +731,32 @@ async fn stale_awaiting_inference_settlement_preserves_newer_retry_state() {
     .await
     .unwrap();
 
+    let _ = db
+        .begin_auto_update_candidate_inference(
+            "service",
+            "sha256:awaiting-monotonic",
+            "2026-04-30T00:00:10Z",
+        )
+        .await
+        .unwrap();
+    let _ = db
+        .begin_auto_update_candidate_inference(
+            "service",
+            "sha256:awaiting-monotonic",
+            "2026-04-30T00:00:11Z",
+        )
+        .await
+        .unwrap();
+    let newer_generation = db
+        .begin_auto_update_candidate_inference(
+            "service",
+            "sha256:awaiting-monotonic",
+            "2026-04-30T00:00:12Z",
+        )
+        .await
+        .unwrap()
+        .unwrap()
+        .evidence_generation;
     db.settle_auto_update_candidate(&AutoUpdateCandidateSettlementInput {
         service_id: "service".to_string(),
         candidate_digest: "sha256:awaiting-monotonic".to_string(),
@@ -712,7 +766,7 @@ async fn stale_awaiting_inference_settlement_preserves_newer_retry_state() {
         reason: Some("version_inference_pending".to_string()),
         last_error: Some("newer registry failure".to_string()),
         attempts: 2,
-        evidence_generation: 3,
+        evidence_generation: newer_generation,
         retry_at: Some("2026-04-30T00:05:00Z".to_string()),
         settled_at: None,
         now: "2026-04-30T00:02:00Z".to_string(),
@@ -731,7 +785,7 @@ async fn stale_awaiting_inference_settlement_preserves_newer_retry_state() {
             reason: Some("version_inference_pending".to_string()),
             last_error: Some("older registry failure".to_string()),
             attempts: 1,
-            evidence_generation: 2,
+            evidence_generation: newer_generation - 1,
             retry_at: Some("2026-04-30T00:04:00Z".to_string()),
             settled_at: None,
             now: "2026-04-30T00:03:00Z".to_string(),

@@ -319,6 +319,7 @@ WHERE p.status IN ('pending', 'enqueuing', 'enqueued')
       AND c.service_id = p.service_id
       AND c.candidate_digest = p.candidate_digest
       AND c.stack_id = p.stack_id
+      AND c.source_job_id = p.source_check_job_id
       AND COALESCE(TRIM(c.image_ref), '') <> ''
       AND COALESCE(TRIM(c.discovered_at), '') <> ''
       AND LOWER(c.source) IN ('schedule', 'github_webhook')

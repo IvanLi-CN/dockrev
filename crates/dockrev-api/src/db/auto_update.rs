@@ -770,6 +770,16 @@ mod tests {
         )
         .await
         .unwrap();
+        let generation = db
+            .begin_auto_update_candidate_inference(
+                "service",
+                "sha256:monotonic",
+                "2026-04-30T00:01:00Z",
+            )
+            .await
+            .unwrap()
+            .unwrap()
+            .evidence_generation;
         db.settle_auto_update_candidate(&AutoUpdateCandidateSettlementInput {
             service_id: "service".to_string(),
             candidate_digest: "sha256:monotonic".to_string(),
@@ -779,7 +789,7 @@ mod tests {
             reason: Some("digest_bound_version".to_string()),
             last_error: None,
             attempts: 1,
-            evidence_generation: 1,
+            evidence_generation: generation,
             retry_at: None,
             settled_at: Some("2026-04-30T00:02:00Z".to_string()),
             now: "2026-04-30T00:02:00Z".to_string(),

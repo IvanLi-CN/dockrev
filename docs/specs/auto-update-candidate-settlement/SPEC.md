@@ -336,7 +336,7 @@ claim 失败只能释放本次 claim 或写入明确的 skipped/retryable 状态
 
 修复上线时由 <code>service_new_version_discoveries</code> 与成功 check job provenance 回填当前 service digest 缺失的 candidate。只接受 type 为 check、status 为 success 且来源可证明为 schedule 或 GHCR webhook 的最早可信观察；它保存原始 <code>sourceJobId</code>、<code>source</code>、<code>discoveredAt</code> 和当前 baseline。来源不明、image/baseline/source job/time 不完整或已被替代的历史记录只能形成 <code>unresolved</code> 的 <code>migration_ambiguous_history</code> 审计事实，不能获得自动部署授权。
 
-迁移与启动/周期 reconciliation 复用同一 hydration helper。hydration 按完整 discovery history 恢复 service + digest candidate fact，执行旧候选 supersession 和 pending 失效，不执行 Compose side effect；回填后仍须由当前 service digest、effective policy、SemVer evidence 与 operation protection 重新校验后才能 enqueue。对 inference settlement 使用单调递增的 `settlement_generation` 条件更新，迟到的旧结果不能覆盖新的 retry/ready 状态。
+迁移与启动/周期 reconciliation 复用同一 hydration helper。hydration 按完整 discovery history 恢复 service + digest candidate fact，执行旧候选 supersession 和 pending 失效，不执行 Compose side effect；回填后仍须由当前 service digest、effective policy、SemVer evidence 与 operation protection 重新校验后才能 enqueue。对 inference settlement 使用原子递增并精确匹配的 `settlement_generation` token 条件更新，迟到的旧结果不能覆盖新的 retry/ready 状态。
 
 对历史 active pending 的有限修复也必须复用同一 provenance predicate：不满足成功 Check、合格 source、授权 creator、scope identity 或 current digest 条件的 queued action 必须取消；已经 running 的 action 只能写入 stop control，不能伪造成功或重新获得 claim 权限，并保留 <code>migration_ambiguous_history</code> 审计原因。
 
@@ -418,7 +418,7 @@ UI 至少表达以下不同状态：
 - Given API 返回未解析状态，When用户查看 Service/Stack，Then能区分 inference waiting、unresolved、rule not matched、delayed 和 update running。
 - Given discovery history 存在但 candidate row 缺失，When migration 或启动/周期 reconciliation 运行，Then只为当前 service digest 创建唯一 candidate，保留首次 discoveredAt 与合格 source provenance，并继续经过 policy evaluator。
 - Given discovery history 缺少 image、baseline、source job 或合格成功 check，When hydration 运行，Then candidate 为 unresolved、reason 为 <code>migration_ambiguous_history</code>、source 不合格且不会创建 update job。
-- Given 同一 candidate 存在多个并发 inference 结果，When较旧 worker 晚于较新 retry/ready 结果完成，Then严格更高的 <code>settlement_generation</code> 才能提交，旧结果不能覆盖新状态。
+- Given 同一 candidate 存在多个并发 inference 结果，When较旧 worker 晚于较新 retry/ready 结果完成，Then只有当前 worker 持有的 <code>settlement_generation</code> token 能提交，旧结果不能覆盖新状态。
 - Given recovery queued auto-policy job 缺少 expected current digest 或 provenance 不完整，When恢复 reconciliation 运行，Then action fail-closed、不会 enqueue/claim，并保留 <code>migration_ambiguous_history</code> 审计原因。
 - Given discovery history 包含当前和旧 digest，When hydration 或 reconciliation 运行，Then所有 qualifying digest 均按 service + digest 幂等恢复，旧 digest 为 <code>superseded</code> 且其 pending/action 不可执行。
 - Given candidate 已由运行时流程创建且 discovery history 同时存在，When读取 hydration diagnostic，Then不显示 <code>candidate_missing</code>，并保持运行时 candidate 的既有 settlement 状态。

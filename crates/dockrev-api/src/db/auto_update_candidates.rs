@@ -197,7 +197,7 @@ WHERE service_id = ?1 AND candidate_digest = ?2
     OR ?8 > attempts
     OR (?8 = attempts AND ?11 >= updated_at)
   )
-  AND ?12 > settlement_generation
+  AND ?12 = settlement_generation
 "#,
                 params![
                     input.service_id,
