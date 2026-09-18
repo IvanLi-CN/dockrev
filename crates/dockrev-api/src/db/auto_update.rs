@@ -374,14 +374,23 @@ WHERE id = ?1 AND status = 'pending'
         let rule_id = rule_id.to_string();
         let now = now.to_string();
         self.call(move |conn| {
-            Ok(conn.execute(
+            let pending_candidate_digest =
+                super::canonical_digest_sql("auto_update_pending.candidate_digest");
+            let candidate_digest_expr = super::canonical_digest_sql("c.candidate_digest");
+            let service_candidate_digest = super::canonical_digest_sql("s.candidate_digest");
+            let expected_candidate_digest = super::canonical_digest_sql("?3");
+            let pending_current_digest = super::canonical_digest_sql(
+                "NULLIF(TRIM(COALESCE(NULLIF(TRIM(auto_update_pending.current_digest), ''), json_extract(CASE WHEN json_valid(auto_update_pending.summary_json) THEN auto_update_pending.summary_json ELSE '{}' END, '$.currentDigest'))), '')",
+            );
+            let service_current_digest = super::canonical_digest_sql("s.current_digest");
+            let sql = format!(
                 r#"
 UPDATE auto_update_pending
 SET status = 'enqueuing', updated_at = ?7
 WHERE id = ?1
   AND status = 'pending'
   AND service_id = ?2
-  AND candidate_digest = ?3
+  AND {pending_candidate_digest} = {expected_candidate_digest}
   AND policy_scope_type = ?4
   AND policy_scope_id = ?5
   AND rule_id = ?6
@@ -389,7 +398,7 @@ WHERE id = ?1
     SELECT 1
     FROM auto_update_candidates c
     WHERE c.service_id = ?2
-      AND c.candidate_digest = ?3
+      AND {candidate_digest_expr} = {expected_candidate_digest}
       AND c.status <> 'superseded'
       AND c.policy_status = 'delayed'
       AND c.policy_rule_id = ?6
@@ -399,13 +408,9 @@ WHERE id = ?1
     SELECT 1
     FROM services s
     WHERE s.id = ?2
-      AND s.candidate_digest = ?3
+      AND {service_candidate_digest} = {expected_candidate_digest}
       AND NULLIF(TRIM(s.current_digest), '') IS NOT NULL
-      AND LOWER(NULLIF(TRIM(COALESCE(
-        NULLIF(TRIM(auto_update_pending.current_digest), ''),
-        json_extract(CASE WHEN json_valid(auto_update_pending.summary_json)
-          THEN auto_update_pending.summary_json ELSE '{}' END, '$.currentDigest')
-      )), '')) = LOWER(NULLIF(TRIM(s.current_digest), ''))
+      AND {pending_current_digest} = {service_current_digest}
   )
   AND EXISTS (
     SELECT 1
@@ -463,7 +468,7 @@ WHERE id = ?1
           AND LOWER(source_job.created_by) = 'schedule')
         OR (LOWER(c.source) = 'github_webhook'
           AND LOWER(source_job.created_by) IN ('webhook', 'github')
-          AND LOWER(COALESCE(json_extract(CASE WHEN json_valid(source_job.summary_json) THEN source_job.summary_json ELSE '{}' END, '$.source'), '')) = 'github_webhook')
+          AND LOWER(COALESCE(json_extract(CASE WHEN json_valid(source_job.summary_json) THEN source_job.summary_json ELSE '{{}}' END, '$.source'), '')) = 'github_webhook')
       )
       AND (
         (LOWER(source_job.scope) = 'service'
@@ -479,6 +484,9 @@ WHERE id = ?1
   )
   AND json_extract(auto_update_pending.summary_json, '$.policyUpdatedAt') IS NOT NULL
 "#,
+            );
+            Ok(conn.execute(
+                &sql,
                 params![
                     pending_id,
                     service_id,
@@ -548,15 +556,30 @@ WHERE id = ?1 AND status = 'queued' AND created_by = 'auto-policy'
         let reason = reason.to_string();
         let now = now.to_string();
         self.call(move |conn| {
-            let mut summary = conn
+            let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
+            let pending = tx
                 .query_row(
-                    "SELECT summary_json FROM auto_update_pending WHERE id = ?1",
+                    "SELECT status, update_job_id, summary_json FROM auto_update_pending WHERE id = ?1",
                     params![&pending_id],
-                    |row| row.get::<_, String>(0),
+                    |row| {
+                        Ok((
+                            row.get::<_, String>(0)?,
+                            row.get::<_, Option<String>>(1)?,
+                            row.get::<_, String>(2)?,
+                        ))
+                    },
                 )
-                .optional()?
-                .and_then(|raw| serde_json::from_str::<serde_json::Value>(&raw).ok())
-                .unwrap_or_else(|| serde_json::json!({}));
+                .optional()?;
+            let Some((status, update_job_id, summary_raw)) = pending else {
+                tx.commit()?;
+                return Ok(());
+            };
+            if !matches!(status.as_str(), "pending" | "enqueuing" | "enqueued") {
+                tx.commit()?;
+                return Ok(());
+            }
+            let mut summary = serde_json::from_str::<serde_json::Value>(&summary_raw)
+                .unwrap_or_else(|_| serde_json::json!({}));
             if !summary.is_object() {
                 summary = serde_json::json!({});
             }
@@ -564,15 +587,52 @@ WHERE id = ?1 AND status = 'queued' AND created_by = 'auto-policy'
                 obj.insert("skipReason".to_string(), serde_json::json!(reason));
                 obj.insert("skippedAt".to_string(), serde_json::json!(now));
             }
-            conn.execute(
+            let changed = tx.execute(
                 r#"
 UPDATE auto_update_pending
 SET status = 'skipped', summary_json = ?2, updated_at = ?3
-WHERE id = ?1
+WHERE id = ?1 AND status IN ('pending', 'enqueuing', 'enqueued')
 "#,
                 params![pending_id, serde_json::to_string(&summary)?, now],
             )?;
-            conn.execute(
+            if changed == 0 {
+                tx.commit()?;
+                return Ok(());
+            }
+            if let Some(update_job_id) = update_job_id {
+                tx.execute(
+                    r#"
+UPDATE jobs
+SET status = 'cancelled', finished_at = ?2
+WHERE id = ?1 AND status = 'queued' AND created_by = 'auto-policy'
+"#,
+                    params![update_job_id, now],
+                )?;
+                tx.execute(
+                    r#"
+INSERT INTO update_job_stop_controls (
+  job_id, stop_requested_at, stop_requested_by, updated_at
+)
+SELECT ?1, ?2, 'auto-policy-skip', ?2
+WHERE EXISTS (
+  SELECT 1 FROM jobs
+  WHERE id = ?1 AND status = 'running' AND created_by = 'auto-policy'
+)
+ON CONFLICT(job_id) DO UPDATE SET
+  stop_requested_at = COALESCE(update_job_stop_controls.stop_requested_at, excluded.stop_requested_at),
+  stop_requested_by = COALESCE(update_job_stop_controls.stop_requested_by, excluded.stop_requested_by),
+  updated_at = excluded.updated_at
+WHERE update_job_stop_controls.apply_committed_at IS NULL
+  AND update_job_stop_controls.stop_requested_at IS NULL
+"#,
+                    params![update_job_id, now],
+                )?;
+            }
+            let pending_digest = super::canonical_digest_sql("p.candidate_digest");
+            let active_digest = super::canonical_digest_sql("active.candidate_digest");
+            let candidate_digest =
+                super::canonical_digest_sql("auto_update_candidates.candidate_digest");
+            let sql = format!(
                 r#"
 UPDATE auto_update_candidates
 SET policy_status = 'skipped',
@@ -585,19 +645,20 @@ WHERE status <> 'superseded'
     FROM auto_update_pending p
     WHERE p.id = ?1
       AND p.service_id = auto_update_candidates.service_id
-      AND p.candidate_digest = auto_update_candidates.candidate_digest
+      AND {pending_digest} = {candidate_digest}
   )
   AND NOT EXISTS (
     SELECT 1
     FROM auto_update_pending active
     WHERE active.service_id = auto_update_candidates.service_id
-      AND active.candidate_digest = auto_update_candidates.candidate_digest
+      AND {active_digest} = {candidate_digest}
       AND active.id <> ?1
       AND active.status IN ('pending', 'enqueuing', 'enqueued')
   )
 "#,
-                params![pending_id, reason, now],
-            )?;
+            );
+            tx.execute(&sql, params![pending_id, reason, now])?;
+            tx.commit()?;
             Ok(())
         })
         .await
@@ -1031,7 +1092,11 @@ mod tests {
                 [],
             )?;
             conn.execute(
-                "INSERT INTO services (id, stack_id, name, image_ref, image_tag, current_digest, candidate_digest, auto_rollback, backup_targets_bind_paths_json, backup_targets_volume_names_json, created_at, updated_at) VALUES ('service', 'stack', 'service', 'ghcr.io/acme/app', 'latest', 'sha256:old', 'sha256:new', 0, '{}', '{}', '2026-04-30', '2026-04-30')",
+                "INSERT INTO services (id, stack_id, name, image_ref, image_tag, current_digest, candidate_digest, auto_rollback, backup_targets_bind_paths_json, backup_targets_volume_names_json, created_at, updated_at) VALUES ('service', 'stack', 'service', 'ghcr.io/acme/app', 'latest', 'OLD', 'NEW', 0, '{}', '{}', '2026-04-30', '2026-04-30')",
+                [],
+            )?;
+            conn.execute(
+                "INSERT INTO jobs (id, type, scope, stack_id, service_id, status, allow_arch_mismatch, backup_mode, created_by, reason, created_at, summary_json) VALUES ('check', 'check', 'service', 'stack', 'service', 'success', 0, 'inherit', 'schedule', 'schedule', '2026-04-30T00:00:00Z', '{}')",
                 [],
             )?;
             Ok(())
@@ -1100,12 +1165,29 @@ mod tests {
                     min_age_seconds: 0,
                     min_version_lag: 0,
                     summary_json: serde_json::json!({
-                        "policyUpdatedAt": "2026-04-30T00:01:00Z"
+                        "policyUpdatedAt": "2026-04-30T00:01:00Z",
+                        "currentDigest": "OLD"
                     }),
-                    candidate_id: Some("service:sha256:new".to_string()),
+                    candidate_id: Some("candidate-policy-recheck".to_string()),
                 },
                 "2026-04-30T00:01:00Z",
             )
+            .await
+            .unwrap();
+        assert!(
+            db.try_claim_auto_update_pending_if_current(
+                &pending.id,
+                "service",
+                "sha256:new",
+                "stack",
+                "stack",
+                "rule",
+                "2026-04-30T00:01:01Z",
+            )
+            .await
+            .unwrap()
+        );
+        db.release_auto_update_pending_claim(&pending.id, "2026-04-30T00:01:02Z")
             .await
             .unwrap();
         policy.rules[0].matcher.pattern = "not-latest".to_string();
@@ -1133,6 +1215,196 @@ mod tests {
                 .status,
             "pending"
         );
+    }
+
+    #[tokio::test]
+    async fn skipping_pending_auto_update_stops_attached_jobs_idempotently() {
+        let db = Db::open(Path::new(":memory:")).await.unwrap();
+        let pending_input = |id: &str, rule_id: &str| AutoUpdatePendingInput {
+            id: id.to_string(),
+            policy_scope_type: "stack".to_string(),
+            policy_scope_id: "stack".to_string(),
+            rule_id: rule_id.to_string(),
+            stack_id: "stack".to_string(),
+            service_id: "service".to_string(),
+            source_check_job_id: "check".to_string(),
+            candidate_tag: "latest".to_string(),
+            candidate_display_tag: "1.4.0".to_string(),
+            candidate_digest: format!("sha256:{id}"),
+            current_display_tag: "1.0.0".to_string(),
+            first_seen_at: "2026-04-30T00:00:00Z".to_string(),
+            due_at: "2026-04-30T00:00:00Z".to_string(),
+            min_age_seconds: 0,
+            min_version_lag: 0,
+            summary_json: serde_json::json!({}),
+            candidate_id: None,
+        };
+        let queued = db
+            .reserve_auto_update_pending(
+                &pending_input("queued-pending", "queued-rule"),
+                "2026-04-30T00:00:00Z",
+            )
+            .await
+            .unwrap();
+        assert!(
+            db.try_claim_auto_update_pending(&queued.id, "2026-04-30T00:00:01Z")
+                .await
+                .unwrap()
+        );
+        db.insert_job(crate::api::types::JobListItem {
+            id: "queued-auto-policy-job".to_string(),
+            r#type: crate::api::types::JobType::Update,
+            scope: crate::api::types::JobScope::Service,
+            stack_id: Some("stack".to_string()),
+            service_id: Some("service".to_string()),
+            status: "queued".to_string(),
+            created_by: "auto-policy".to_string(),
+            reason: "auto_policy".to_string(),
+            created_at: "2026-04-30T00:00:02Z".to_string(),
+            started_at: None,
+            finished_at: None,
+            allow_arch_mismatch: false,
+            backup_mode: "inherit".to_string(),
+            summary_json: serde_json::json!({}),
+        })
+        .await
+        .unwrap();
+        assert!(
+            db.mark_auto_update_pending_enqueued(
+                &queued.id,
+                "queued-auto-policy-job",
+                "2026-04-30T00:00:03Z",
+            )
+            .await
+            .unwrap()
+        );
+        db.mark_auto_update_pending_skipped(&queued.id, "policy_changed", "2026-04-30T00:00:04Z")
+            .await
+            .unwrap();
+        assert_eq!(
+            db.get_job("queued-auto-policy-job")
+                .await
+                .unwrap()
+                .unwrap()
+                .status,
+            "cancelled"
+        );
+        assert_eq!(
+            db.get_auto_update_pending_by_id(&queued.id)
+                .await
+                .unwrap()
+                .unwrap()
+                .status,
+            "skipped"
+        );
+        db.mark_auto_update_pending_skipped(
+            &queued.id,
+            "should_not_replace",
+            "2026-04-30T00:00:05Z",
+        )
+        .await
+        .unwrap();
+        assert_eq!(
+            db.get_auto_update_pending_by_id(&queued.id)
+                .await
+                .unwrap()
+                .unwrap()
+                .summary_json["skipReason"],
+            "policy_changed"
+        );
+
+        let running = db
+            .reserve_auto_update_pending(
+                &pending_input("running-pending", "running-rule"),
+                "2026-04-30T00:00:00Z",
+            )
+            .await
+            .unwrap();
+        assert!(
+            db.try_claim_auto_update_pending(&running.id, "2026-04-30T00:00:01Z")
+                .await
+                .unwrap()
+        );
+        db.insert_job(crate::api::types::JobListItem {
+            id: "running-auto-policy-job".to_string(),
+            r#type: crate::api::types::JobType::Update,
+            scope: crate::api::types::JobScope::Service,
+            stack_id: Some("stack".to_string()),
+            service_id: Some("service".to_string()),
+            status: "running".to_string(),
+            created_by: "auto-policy".to_string(),
+            reason: "auto_policy".to_string(),
+            created_at: "2026-04-30T00:00:02Z".to_string(),
+            started_at: Some("2026-04-30T00:00:02Z".to_string()),
+            finished_at: None,
+            allow_arch_mismatch: false,
+            backup_mode: "inherit".to_string(),
+            summary_json: serde_json::json!({}),
+        })
+        .await
+        .unwrap();
+        assert!(
+            db.mark_auto_update_pending_enqueued(
+                &running.id,
+                "running-auto-policy-job",
+                "2026-04-30T00:00:03Z",
+            )
+            .await
+            .unwrap()
+        );
+        db.mark_auto_update_pending_skipped(&running.id, "superseded", "2026-04-30T00:00:04Z")
+            .await
+            .unwrap();
+        assert_eq!(
+            db.get_update_stop_control("running-auto-policy-job")
+                .await
+                .unwrap()
+                .unwrap()
+                .stop_requested_by
+                .as_deref(),
+            Some("auto-policy-skip")
+        );
+    }
+
+    #[tokio::test]
+    async fn candidate_upsert_keeps_earliest_qualified_provenance_tuple() {
+        let db = Db::open(Path::new(":memory:")).await.unwrap();
+        let mut later = candidate_input(
+            "candidate-provenance",
+            "sha256:provenance",
+            "ready",
+            "2026-04-30T00:02:00Z",
+        );
+        later.source_job_id = "schedule-check".to_string();
+        later.source = "schedule".to_string();
+        db.upsert_auto_update_candidate(&later, "2026-04-30T00:02:00Z")
+            .await
+            .unwrap();
+
+        let mut earlier = later.clone();
+        earlier.source_job_id = "webhook-check".to_string();
+        earlier.source = "github_webhook".to_string();
+        earlier.discovered_at = "2026-04-30T00:01:00Z".to_string();
+        db.upsert_auto_update_candidate(&earlier, "2026-04-30T00:03:00Z")
+            .await
+            .unwrap();
+
+        let mut latest = earlier.clone();
+        latest.source_job_id = "latest-check".to_string();
+        latest.source = "schedule".to_string();
+        latest.discovered_at = "2026-04-30T00:04:00Z".to_string();
+        db.upsert_auto_update_candidate(&latest, "2026-04-30T00:04:00Z")
+            .await
+            .unwrap();
+
+        let candidate = db
+            .get_auto_update_candidate("service", "sha256:provenance")
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(candidate.source_job_id, "webhook-check");
+        assert_eq!(candidate.source, "github_webhook");
+        assert_eq!(candidate.discovered_at, "2026-04-30T00:01:00Z");
     }
 
     include!("auto_update_recovery_tests.rs");

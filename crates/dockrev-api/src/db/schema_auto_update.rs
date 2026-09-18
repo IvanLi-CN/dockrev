@@ -470,8 +470,78 @@ SET source_job_id = COALESCE(
          AND LOWER(TRIM(other.source)) IN ('schedule', 'github_webhook')
          AND NULLIF(TRIM(other.source_job_id), '') IS NOT NULL
          AND NULLIF(TRIM(other.discovered_at), '') IS NOT NULL
-       ORDER BY other.discovered_at ASC, other.created_at ASC, other.id ASC LIMIT 1),
+      ORDER BY other.discovered_at ASC, other.created_at ASC, other.id ASC LIMIT 1),
       NULLIF(TRIM(keeper.discovered_at), ''), keeper.discovered_at),
+    resolved_tags = COALESCE(
+      NULLIF(TRIM(keeper.resolved_tags), ''),
+      (SELECT NULLIF(TRIM(other.resolved_tags), '')
+       FROM migration_duplicate_auto_update_candidates mapping
+       JOIN auto_update_candidates other ON other.id = mapping.duplicate_id
+       WHERE mapping.keeper_id = keeper.id AND NULLIF(TRIM(other.resolved_tags), '') IS NOT NULL
+       ORDER BY other.created_at ASC, other.id ASC LIMIT 1)),
+    last_error = COALESCE(
+      NULLIF(TRIM(keeper.last_error), ''),
+      (SELECT NULLIF(TRIM(other.last_error), '')
+       FROM migration_duplicate_auto_update_candidates mapping
+       JOIN auto_update_candidates other ON other.id = mapping.duplicate_id
+       WHERE mapping.keeper_id = keeper.id AND NULLIF(TRIM(other.last_error), '') IS NOT NULL
+       ORDER BY other.created_at ASC, other.id ASC LIMIT 1)),
+    retry_at = COALESCE(
+      NULLIF(TRIM(keeper.retry_at), ''),
+      (SELECT NULLIF(TRIM(other.retry_at), '')
+       FROM migration_duplicate_auto_update_candidates mapping
+       JOIN auto_update_candidates other ON other.id = mapping.duplicate_id
+       WHERE mapping.keeper_id = keeper.id AND NULLIF(TRIM(other.retry_at), '') IS NOT NULL
+       ORDER BY other.created_at ASC, other.id ASC LIMIT 1)),
+    policy_reason = COALESCE(
+      NULLIF(TRIM(keeper.policy_reason), ''),
+      (SELECT NULLIF(TRIM(other.policy_reason), '')
+       FROM migration_duplicate_auto_update_candidates mapping
+       JOIN auto_update_candidates other ON other.id = mapping.duplicate_id
+       WHERE mapping.keeper_id = keeper.id AND NULLIF(TRIM(other.policy_reason), '') IS NOT NULL
+       ORDER BY other.created_at ASC, other.id ASC LIMIT 1)),
+    policy_rule_id = COALESCE(
+      NULLIF(TRIM(keeper.policy_rule_id), ''),
+      (SELECT NULLIF(TRIM(other.policy_rule_id), '')
+       FROM migration_duplicate_auto_update_candidates mapping
+       JOIN auto_update_candidates other ON other.id = mapping.duplicate_id
+       WHERE mapping.keeper_id = keeper.id AND NULLIF(TRIM(other.policy_rule_id), '') IS NOT NULL
+       ORDER BY other.created_at ASC, other.id ASC LIMIT 1)),
+    policy_evaluated_at = COALESCE(
+      NULLIF(TRIM(keeper.policy_evaluated_at), ''),
+      (SELECT NULLIF(TRIM(other.policy_evaluated_at), '')
+       FROM migration_duplicate_auto_update_candidates mapping
+       JOIN auto_update_candidates other ON other.id = mapping.duplicate_id
+       WHERE mapping.keeper_id = keeper.id AND NULLIF(TRIM(other.policy_evaluated_at), '') IS NOT NULL
+       ORDER BY other.created_at ASC, other.id ASC LIMIT 1)),
+    policy_scope_type = COALESCE(
+      NULLIF(TRIM(keeper.policy_scope_type), ''),
+      (SELECT NULLIF(TRIM(other.policy_scope_type), '')
+       FROM migration_duplicate_auto_update_candidates mapping
+       JOIN auto_update_candidates other ON other.id = mapping.duplicate_id
+       WHERE mapping.keeper_id = keeper.id AND NULLIF(TRIM(other.policy_scope_type), '') IS NOT NULL
+       ORDER BY other.created_at ASC, other.id ASC LIMIT 1)),
+    policy_scope_id = COALESCE(
+      NULLIF(TRIM(keeper.policy_scope_id), ''),
+      (SELECT NULLIF(TRIM(other.policy_scope_id), '')
+       FROM migration_duplicate_auto_update_candidates mapping
+       JOIN auto_update_candidates other ON other.id = mapping.duplicate_id
+       WHERE mapping.keeper_id = keeper.id AND NULLIF(TRIM(other.policy_scope_id), '') IS NOT NULL
+       ORDER BY other.created_at ASC, other.id ASC LIMIT 1)),
+    superseded_at = COALESCE(
+      NULLIF(TRIM(keeper.superseded_at), ''),
+      (SELECT NULLIF(TRIM(other.superseded_at), '')
+       FROM migration_duplicate_auto_update_candidates mapping
+       JOIN auto_update_candidates other ON other.id = mapping.duplicate_id
+       WHERE mapping.keeper_id = keeper.id AND NULLIF(TRIM(other.superseded_at), '') IS NOT NULL
+       ORDER BY other.superseded_at ASC, other.created_at ASC, other.id ASC LIMIT 1)),
+    superseded_by_candidate_id = COALESCE(
+      NULLIF(TRIM(keeper.superseded_by_candidate_id), ''),
+      (SELECT NULLIF(TRIM(other.superseded_by_candidate_id), '')
+       FROM migration_duplicate_auto_update_candidates mapping
+       JOIN auto_update_candidates other ON other.id = mapping.duplicate_id
+       WHERE mapping.keeper_id = keeper.id AND NULLIF(TRIM(other.superseded_by_candidate_id), '') IS NOT NULL
+       ORDER BY other.created_at ASC, other.id ASC LIMIT 1)),
     resolved_version = COALESCE(
       NULLIF(TRIM(keeper.resolved_version), ''),
       (SELECT NULLIF(TRIM(other.resolved_version), '')
@@ -640,6 +710,52 @@ WHERE notification.status IN ('pending', 'sent')
 "#
     );
     tx.execute(&mapping_sql, [])?;
+    tx.execute(
+        r#"
+UPDATE new_version_notifications AS keeper
+SET sent_channels_json = COALESCE(
+      (SELECT json_group_array(channel)
+       FROM (
+         SELECT value AS channel
+         FROM json_each(CASE
+           WHEN json_valid(keeper.sent_channels_json)
+             AND json_type(keeper.sent_channels_json) = 'array'
+             THEN keeper.sent_channels_json ELSE '[]' END)
+         WHERE type = 'text'
+         UNION
+         SELECT channel.value
+         FROM migration_duplicate_new_version_notifications mapping
+         JOIN new_version_notifications other ON other.id = mapping.duplicate_id
+         JOIN json_each(CASE
+           WHEN json_valid(other.sent_channels_json)
+             AND json_type(other.sent_channels_json) = 'array'
+             THEN other.sent_channels_json ELSE '[]' END) AS channel
+         WHERE mapping.keeper_id = keeper.id
+           AND mapping.duplicate_id <> mapping.keeper_id
+           AND channel.type = 'text'
+         ORDER BY channel
+       )), '[]'),
+    sent_at = COALESCE(
+      keeper.sent_at,
+      (SELECT MIN(other.sent_at)
+       FROM migration_duplicate_new_version_notifications mapping
+       JOIN new_version_notifications other ON other.id = mapping.duplicate_id
+       WHERE mapping.keeper_id = keeper.id AND other.sent_at IS NOT NULL)),
+    last_error = COALESCE(
+      NULLIF(TRIM(keeper.last_error), ''),
+      (SELECT NULLIF(TRIM(other.last_error), '')
+       FROM migration_duplicate_new_version_notifications mapping
+       JOIN new_version_notifications other ON other.id = mapping.duplicate_id
+       WHERE mapping.keeper_id = keeper.id AND NULLIF(TRIM(other.last_error), '') IS NOT NULL
+       ORDER BY other.created_at ASC, other.id ASC LIMIT 1))
+WHERE keeper.id IN (
+  SELECT keeper_id
+  FROM migration_duplicate_new_version_notifications
+  WHERE duplicate_id <> keeper_id
+)
+"#,
+        [],
+    )?;
     tx.execute(
         r#"
 UPDATE new_version_notifications

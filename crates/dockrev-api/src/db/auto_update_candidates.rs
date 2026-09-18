@@ -78,16 +78,55 @@ ON CONFLICT(service_id, candidate_digest) DO UPDATE SET
   END,
   retry_at = COALESCE(excluded.retry_at, auto_update_candidates.retry_at),
   source_job_id = CASE
-    WHEN excluded.source IN ('schedule', 'github_webhook')
+    WHEN LOWER(TRIM(auto_update_candidates.source)) IN ('schedule', 'github_webhook')
+      AND NULLIF(TRIM(auto_update_candidates.source_job_id), '') IS NOT NULL
+      AND NULLIF(TRIM(auto_update_candidates.discovered_at), '') IS NOT NULL
+      AND (
+        LOWER(TRIM(excluded.source)) NOT IN ('schedule', 'github_webhook')
+        OR NULLIF(TRIM(excluded.source_job_id), '') IS NULL
+        OR NULLIF(TRIM(excluded.discovered_at), '') IS NULL
+        OR auto_update_candidates.discovered_at <= excluded.discovered_at
+      )
+      THEN auto_update_candidates.source_job_id
+    WHEN LOWER(TRIM(excluded.source)) IN ('schedule', 'github_webhook')
+      AND NULLIF(TRIM(excluded.source_job_id), '') IS NOT NULL
+      AND NULLIF(TRIM(excluded.discovered_at), '') IS NOT NULL
       THEN excluded.source_job_id
     ELSE auto_update_candidates.source_job_id
   END,
   source = CASE
-    WHEN excluded.source IN ('schedule', 'github_webhook')
-      THEN excluded.source
-    WHEN auto_update_candidates.source IS NULL OR auto_update_candidates.source = 'unknown'
+    WHEN LOWER(TRIM(auto_update_candidates.source)) IN ('schedule', 'github_webhook')
+      AND NULLIF(TRIM(auto_update_candidates.source_job_id), '') IS NOT NULL
+      AND NULLIF(TRIM(auto_update_candidates.discovered_at), '') IS NOT NULL
+      AND (
+        LOWER(TRIM(excluded.source)) NOT IN ('schedule', 'github_webhook')
+        OR NULLIF(TRIM(excluded.source_job_id), '') IS NULL
+        OR NULLIF(TRIM(excluded.discovered_at), '') IS NULL
+        OR auto_update_candidates.discovered_at <= excluded.discovered_at
+      )
+      THEN auto_update_candidates.source
+    WHEN LOWER(TRIM(excluded.source)) IN ('schedule', 'github_webhook')
+      AND NULLIF(TRIM(excluded.source_job_id), '') IS NOT NULL
+      AND NULLIF(TRIM(excluded.discovered_at), '') IS NOT NULL
       THEN excluded.source
     ELSE auto_update_candidates.source
+  END,
+  discovered_at = CASE
+    WHEN LOWER(TRIM(auto_update_candidates.source)) IN ('schedule', 'github_webhook')
+      AND NULLIF(TRIM(auto_update_candidates.source_job_id), '') IS NOT NULL
+      AND NULLIF(TRIM(auto_update_candidates.discovered_at), '') IS NOT NULL
+      AND (
+        LOWER(TRIM(excluded.source)) NOT IN ('schedule', 'github_webhook')
+        OR NULLIF(TRIM(excluded.source_job_id), '') IS NULL
+        OR NULLIF(TRIM(excluded.discovered_at), '') IS NULL
+        OR auto_update_candidates.discovered_at <= excluded.discovered_at
+      )
+      THEN auto_update_candidates.discovered_at
+    WHEN LOWER(TRIM(excluded.source)) IN ('schedule', 'github_webhook')
+      AND NULLIF(TRIM(excluded.source_job_id), '') IS NOT NULL
+      AND NULLIF(TRIM(excluded.discovered_at), '') IS NOT NULL
+      THEN excluded.discovered_at
+    ELSE auto_update_candidates.discovered_at
   END,
   current_tag = excluded.current_tag,
   current_display_tag = excluded.current_display_tag,
