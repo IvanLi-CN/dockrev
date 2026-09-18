@@ -1,0 +1,75 @@
+name: Notify failed workflow
+
+on:
+  workflow_run:
+    workflows:
+      - "CI (PR)"
+      - "Docs Pages"
+      - "Label Gate"
+      - "Release completion"
+      - "Release Preparation"
+      - "Review Policy"
+    types: [completed]
+  workflow_dispatch:
+
+permissions: {}
+
+jobs:
+  resolve_workflow_context:
+    if: github.event_name == 'workflow_run' && github.event.workflow_run.conclusion == 'failure'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    outputs:
+      summary: ${{ steps.context.outputs.summary }}
+    steps:
+      - name: Checkout trusted notifier helper
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          fetch-depth: 1
+
+      - name: Render workflow failure context
+        id: context
+        env:
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          GITHUB_SERVER_URL: ${{ github.server_url }}
+          WORKFLOW_NAME: ${{ github.event.workflow_run.name }}
+          WORKFLOW_EVENT: ${{ github.event.workflow_run.event }}
+          WORKFLOW_REF: ${{ github.event.workflow_run.head_branch || '' }}
+          WORKFLOW_BRANCH: ${{ github.event.workflow_run.head_branch || '' }}
+          WORKFLOW_HEAD_SHA: ${{ github.event.workflow_run.head_sha || '' }}
+          WORKFLOW_PULL_REQUEST: ${{ github.event.workflow_run.pull_requests[0].number || '' }}
+          WORKFLOW_RUN_ID: ${{ github.event.workflow_run.id }}
+          WORKFLOW_RUN_ATTEMPT: ${{ github.event.workflow_run.run_attempt }}
+          WORKFLOW_ACTOR: ${{ github.event.workflow_run.actor.login || '' }}
+          WORKFLOW_CONCLUSION: ${{ github.event.workflow_run.conclusion }}
+        run: |
+          set -euo pipefail
+          python3 .github/scripts/workflow_failure_context.py
+
+  notify_failure:
+    if: github.event_name == 'workflow_run' && github.event.workflow_run.conclusion == 'failure'
+    needs: [resolve_workflow_context]
+    permissions:
+      id-token: write
+    uses: IvanLi-CN/oidrune/.github/workflows/notify.yml@e48822f99c6402a753ed86557ea029754cbab20b
+    with:
+      outcome: failure
+      summary: ${{ needs.resolve_workflow_context.outputs.summary }}
+
+  smoke_test:
+    if: github.event_name == 'workflow_dispatch'
+    permissions:
+      id-token: write
+    uses: IvanLi-CN/oidrune/.github/workflows/notify.yml@e48822f99c6402a753ed86557ea029754cb20b
+    with:
+      outcome: failure
+      summary: |
+        Generic workflow failure notification smoke test - ${{ github.repository }}
+        status: smoke test
+        workflow: Notify failed workflow
+        event: workflow_dispatch
+        sha: ${{ github.sha }}
+        run: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        recovery: workflow_dispatch smoke test only

@@ -1,11 +1,28 @@
 {
-  "schema_version": 1,
+  "schema_version": 2,
   "selection_evidence": "checked-in-project-contract",
   "transport": "oidrune-oidc",
   "transport_owner": "Dockrev maintainers",
   "configuration_owner": "Dockrev maintainers",
   "required_secrets": [],
   "required_identity": "github-actions-id-token",
+  "expected_success_workflows": [
+    "CI (PR)",
+    "Docs Pages",
+    "Label Gate",
+    "Release completion",
+    "Release Preparation",
+    "Release",
+    "Review Policy"
+  ],
+  "failure_notification_routes": {
+    "Release": "Notify failed release",
+    "default": "Notify failed workflow"
+  },
+  "excluded_workflows": [
+    "Notify failed release",
+    "Notify failed workflow"
+  ],
   "when_unselected": "block-rollout",
   "missing_selected_configuration": "fail",
   "caller_code_execution": false
