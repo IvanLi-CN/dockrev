@@ -428,10 +428,19 @@ fn update_request_from_job(job: &api::types::JobListItem) -> anyhow::Result<Trig
     }
     for target in &targets {
         if target.service_id.trim().is_empty()
+            || target.target_tag.trim().is_empty()
             || api::normalize_digest_for_compare(&target.target_digest).is_none()
         {
             anyhow::bail!("auto policy update job has an invalid target");
         }
+    }
+    if job.scope != api::types::JobScope::Service
+        || job.stack_id.as_deref().is_none_or(str::is_empty)
+        || job.service_id.as_deref().is_none_or(str::is_empty)
+        || targets.len() != 1
+        || targets[0].service_id != job.service_id.as_deref().unwrap_or_default()
+    {
+        anyhow::bail!("auto policy update job has an invalid service scope");
     }
     let backup_mode =
         serde_json::from_value::<BackupMode>(serde_json::Value::String(job.backup_mode.clone()))

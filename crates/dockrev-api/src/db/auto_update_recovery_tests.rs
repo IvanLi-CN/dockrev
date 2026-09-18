@@ -455,6 +455,8 @@ async fn ambiguous_discovery_history_is_unresolved_and_cannot_authorize_policy()
     assert_eq!(candidate.status, "unresolved");
     assert_eq!(candidate.reason.as_deref(), Some("migration_ambiguous_history"));
     assert_eq!(candidate.source, "unknown");
+    assert_eq!(candidate.source_job_id, "");
+    assert_eq!(candidate.discovered_at, "");
     assert_eq!(
         candidate.hydration_origin.as_deref(),
         Some("discovery_history_ambiguous")
@@ -468,6 +470,8 @@ async fn ambiguous_discovery_history_is_unresolved_and_cannot_authorize_policy()
         diagnostics[0].reason.as_deref(),
         Some("migration_ambiguous_history")
     );
+    assert_eq!(diagnostics[0].source_job_id, None);
+    assert_eq!(diagnostics[0].discovered_at, None);
 }
 
 #[tokio::test]
@@ -599,6 +603,183 @@ async fn candidate_hydration_migration_copies_history_and_is_idempotent() {
     assert_eq!(count, 1);
     drop(db);
     std::fs::remove_file(path).unwrap();
+}
+
+#[tokio::test]
+async fn queued_auto_policy_recovery_requires_exact_candidate_and_target_identity() {
+    let db = Db::open(Path::new(":memory:")).await.unwrap();
+    db.call(|conn| {
+        conn.execute(
+            "INSERT INTO stacks (id, name, compose_type, compose_files_json, backup_targets_json, backup_retention_keep_last, backup_retention_delete_after_stable_seconds, created_at, updated_at, last_check_at) VALUES ('stack', 'stack', 'path', '[]', '[]', 0, 0, '2026-04-30', '2026-04-30', '2026-04-30')",
+            [],
+        )?;
+        conn.execute(
+            "INSERT INTO auto_update_policies (scope_type, scope_id, mode, enabled, rules_json, created_at, updated_at) VALUES ('stack', 'stack', 'override', 1, '[{\"id\":\"rule\",\"enabled\":true}]', '2026-04-30T00:00:00Z', '2026-04-30T00:01:00Z')",
+            [],
+        )?;
+        Ok(())
+    })
+    .await
+    .unwrap();
+
+    let cases = [
+        ("missing-candidate", "missing", None, "latest", "service"),
+        (
+            "mismatched-tag",
+            "tag",
+            Some("candidate"),
+            "stable",
+            "service",
+        ),
+        (
+            "wrong-scope",
+            "scope",
+            Some("candidate"),
+            "latest",
+            "stack",
+        ),
+        (
+            "wrong-target-service",
+            "target",
+            Some("other-service"),
+            "latest",
+            "service",
+        ),
+    ];
+
+    for (suffix, digest_suffix, candidate_binding, target_tag, job_scope) in cases {
+        let service_id = format!("service-{suffix}");
+        let digest = format!("sha256:{digest_suffix}");
+        let source_job_id = format!("check-{suffix}");
+        let candidate_id = format!("{service_id}:{digest}");
+        let mut input = candidate_input(&candidate_id, &digest, "ready", "2026-04-30T00:00:00Z");
+        input.service_id = service_id.clone();
+        input.source_job_id = source_job_id.clone();
+        input.current_digest = Some("sha256:current".to_string());
+        db.call({
+            let service_id = service_id.clone();
+            let digest = digest.clone();
+            let source_job_id = source_job_id.clone();
+            move |conn| {
+                conn.execute(
+                    "INSERT INTO services (id, stack_id, name, image_ref, image_tag, current_digest, candidate_digest, auto_rollback, backup_targets_bind_paths_json, backup_targets_volume_names_json, created_at, updated_at) VALUES (?1, 'stack', ?1, 'ghcr.io/acme/app', 'latest', 'sha256:current', ?2, 0, '{}', '{}', '2026-04-30', '2026-04-30')",
+                    rusqlite::params![service_id, digest],
+                )?;
+                conn.execute(
+                    "INSERT INTO jobs (id, type, scope, stack_id, service_id, status, allow_arch_mismatch, backup_mode, created_by, reason, created_at, summary_json) VALUES (?1, 'check', 'service', 'stack', ?2, 'success', 0, 'inherit', 'schedule', 'schedule', '2026-04-30T00:00:00Z', '{}')",
+                    rusqlite::params![source_job_id, service_id],
+                )?;
+                Ok(())
+            }
+        })
+        .await
+        .unwrap();
+        db.upsert_auto_update_candidate(&input, "2026-04-30T00:00:00Z")
+            .await
+            .unwrap();
+        db.set_auto_update_candidate_policy(
+            &service_id,
+            &digest,
+            "queued",
+            Some("policy_matched"),
+            Some("rule"),
+            "2026-04-30T00:01:00Z",
+        )
+        .await
+        .unwrap();
+
+        let pending_id = format!("pending-{suffix}");
+        let pending = db
+            .reserve_auto_update_pending(
+                &AutoUpdatePendingInput {
+                    id: pending_id.clone(),
+                    policy_scope_type: "stack".to_string(),
+                    policy_scope_id: "stack".to_string(),
+                    rule_id: "rule".to_string(),
+                    stack_id: "stack".to_string(),
+                    service_id: service_id.clone(),
+                    source_check_job_id: source_job_id,
+                    candidate_tag: "latest".to_string(),
+                    candidate_display_tag: "1.4.0".to_string(),
+                    candidate_digest: digest.clone(),
+                    current_display_tag: "1.0.0".to_string(),
+                    first_seen_at: "2026-04-30T00:00:00Z".to_string(),
+                    due_at: "2026-04-30T00:00:00Z".to_string(),
+                    min_age_seconds: 0,
+                    min_version_lag: 0,
+                    summary_json: serde_json::json!({
+                        "policyUpdatedAt": "2026-04-30T00:01:00Z"
+                    }),
+                    candidate_id: candidate_binding.map(|binding| {
+                        if binding == "candidate" {
+                            candidate_id.clone()
+                        } else {
+                            binding.to_string()
+                        }
+                    }),
+                },
+                "2026-04-30T00:01:01Z",
+            )
+            .await
+            .unwrap();
+        assert!(db
+            .try_claim_auto_update_pending(&pending.id, "2026-04-30T00:01:02Z")
+            .await
+            .unwrap());
+
+        let job_id = format!("job-{suffix}");
+        let target_service_id = if suffix == "wrong-target-service" {
+            "other-service"
+        } else {
+            service_id.as_str()
+        };
+        let job_scope = if job_scope == "stack" {
+            crate::api::types::JobScope::Stack
+        } else {
+            crate::api::types::JobScope::Service
+        };
+        db.insert_job(crate::api::types::JobListItem {
+            id: job_id.clone(),
+            r#type: crate::api::types::JobType::Update,
+            scope: job_scope.clone(),
+            stack_id: Some("stack".to_string()),
+            service_id: (job_scope == crate::api::types::JobScope::Service)
+                .then(|| service_id.clone()),
+            status: "queued".to_string(),
+            created_by: "auto-policy".to_string(),
+            reason: "auto_policy".to_string(),
+            created_at: "2026-04-30T00:01:03Z".to_string(),
+            started_at: None,
+            finished_at: None,
+            allow_arch_mismatch: false,
+            backup_mode: "inherit".to_string(),
+            summary_json: serde_json::json!({
+                "targets": [{
+                    "serviceId": target_service_id,
+                    "targetTag": target_tag,
+                    "targetDigest": digest,
+                    "autoPolicyContext": {
+                        "expectedCurrentDigest": "sha256:current"
+                    }
+                }]
+            }),
+        })
+        .await
+        .unwrap();
+        assert!(db
+            .mark_auto_update_pending_enqueued(&pending_id, &job_id, "2026-04-30T00:01:04Z")
+            .await
+            .unwrap());
+
+        assert!(!db
+            .claim_queued_job_by_id(&job_id, "2026-04-30T00:01:05Z")
+            .await
+            .unwrap());
+        assert_eq!(
+            db.get_job(&job_id).await.unwrap().unwrap().status,
+            "cancelled"
+        );
+    }
 }
 #[tokio::test]
 async fn candidate_settlement_is_unique_and_idempotent() {

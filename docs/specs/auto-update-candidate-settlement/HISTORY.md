@@ -18,6 +18,8 @@
 - hydration diagnostic 将 candidate missing 限定为真实缺失 candidate row；启动/周期 reconciliation 继续处理 awaiting inference candidate。
 - 自动策略 job 的 current-digest 校验收敛到插入事务内；历史 pending 清理与运行时 claim 共用成功 Check、来源、creator 和 scope identity 门禁，避免 stale 或非 Check provenance 获得部署授权。
 - inference settlement 改为 begin 阶段发放、settle 阶段精确匹配的 generation token；migration provenance 同时要求 candidate 与 pending 使用同一 source check job。
+- ambiguous discovery history 不再用 migration 时间或合成 job id 填充 provenance；API 只暴露真实存在的 source job/time，缺失 provenance 保持可观测但不可执行。
+- queued auto-policy recovery 现在要求 exact candidate binding 与唯一 service target，并重新校验 service scope、target tag、candidate digest 和 expected current digest；旧 action 不满足这些条件时 fail-closed。
 
 ## Decision Trace
 

@@ -332,16 +332,8 @@ pub(super) fn hydrate_auto_update_candidates_tx(
         } else {
             "unknown"
         };
-        let source_job_id = if non_empty(&source_row.source_job_id) {
-            source_row.source_job_id.clone()
-        } else {
-            format!("migration-ambiguous:{service_id}:{candidate_digest}")
-        };
-        let discovered_at = if non_empty(&source_row.discovered_at) {
-            source_row.discovered_at.clone()
-        } else {
-            now.to_string()
-        };
+        let source_job_id = source_row.source_job_id.trim().to_string();
+        let discovered_at = source_row.discovered_at.trim().to_string();
         let resolved_version = complete
             .then(|| dockrev_common::normalized_semver_from_oci_version(&raw_tag))
             .flatten();
@@ -587,9 +579,13 @@ WHERE s.id IN ({placeholders})
             status: status.to_string(),
             reason,
             source: row.get(5)?,
-            source_job_id: row.get(6)?,
+            source_job_id: row
+                .get::<_, Option<String>>(6)?
+                .filter(|value| non_empty(value)),
             hydration_origin,
-            discovered_at: row.get(8)?,
+            discovered_at: row
+                .get::<_, Option<String>>(8)?
+                .filter(|value| non_empty(value)),
         })
     })?;
     rows.collect()
