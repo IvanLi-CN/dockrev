@@ -135,6 +135,20 @@ def _validate_identity_commit(
     raise PublicationLockOwnershipError("publication lock identity has an unsupported release mode")
 
 
+def validate_publication_lock_identity(
+    fetch_json: Callable[[str], Any],
+    repository: str,
+    lock_sha: str,
+    version: str,
+) -> tuple[dict[str, str], str]:
+    """Validate a lock identity without resolving its owning merge."""
+    try:
+        release_policy.validate_sha(lock_sha, "publication lock commit SHA")
+    except release_policy.PolicyError as error:
+        raise PublicationLockOwnershipError(str(error)) from error
+    return _validate_identity_commit(fetch_json, repository, lock_sha, version)
+
+
 def _version_at_commit(fetch_json: Callable[[str], Any], repository: str, commit_sha: str) -> str:
     owner, name = _repository_parts(repository)
     content = fetch_json(f"/repos/{owner}/{name}/contents/VERSION?ref={commit_sha}")
@@ -226,7 +240,7 @@ def publication_lock_matches_merge(
     if lock_sha in (allowed_identity_shas or set()):
         return False
 
-    trailers, identity_source_sha = _validate_identity_commit(
+    trailers, identity_source_sha = validate_publication_lock_identity(
         fetch_json, repository, lock_sha, version
     )
     if trailers["Release-Mode"] == "version-only-release-pr":

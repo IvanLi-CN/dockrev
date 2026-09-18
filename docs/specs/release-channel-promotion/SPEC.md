@@ -90,6 +90,11 @@
   one merged PR into `main` whose head SHA equals the signed release identity
   SHA and whose base repository equals the target repository. Any other
   association MUST fail closed.
+  Before `Release completion` accepts a release PR, the publication lock for
+  the target product version MUST be absent or resolve to the current release
+  identity. A valid lock owned by another identity MUST make the completion
+  check fail; a malformed lock MUST fail closed rather than be treated as
+  available.
   Malformed, ambiguous, duplicate, or unverified lock ownership evidence MUST
   fail closed.
   The current
