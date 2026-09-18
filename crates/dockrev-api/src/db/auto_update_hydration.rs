@@ -313,7 +313,6 @@ pub(super) fn hydrate_auto_update_candidates_tx(
     for ((service_id, candidate_digest), rows) in grouped {
         let source_row = rows
             .iter()
-            .rev()
             .find(|row| is_complete_hydration(row))
             .unwrap_or(&rows[0]);
         let complete = is_complete_hydration(source_row);
@@ -328,11 +327,11 @@ pub(super) fn hydrate_auto_update_candidates_tx(
         } else {
             format!("migration-ambiguous:{service_id}:{candidate_digest}")
         };
-        let discovered_at = rows
-            .iter()
-            .find(|row| non_empty(&row.discovered_at))
-            .map(|row| row.discovered_at.clone())
-            .unwrap_or_else(|| now.to_string());
+        let discovered_at = if non_empty(&source_row.discovered_at) {
+            source_row.discovered_at.clone()
+        } else {
+            now.to_string()
+        };
         let resolved_version = complete
             .then(|| dockrev_common::normalized_semver_from_oci_version(&raw_tag))
             .flatten();
@@ -356,10 +355,8 @@ pub(super) fn hydrate_auto_update_candidates_tx(
         } else {
             HYDRATION_ORIGIN_AMBIGUOUS_HISTORY
         };
-        let current_digest = rows
-            .iter()
-            .find(|row| non_empty(&row.current_digest))
-            .map(|row| row.current_digest.clone());
+        let current_digest =
+            non_empty(&source_row.current_digest).then(|| source_row.current_digest.clone());
 
         tx.execute(
             r#"

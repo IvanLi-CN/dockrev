@@ -314,16 +314,21 @@ INSERT INTO schema_migrations (id, applied_at) VALUES
 INSERT INTO services (id, stack_id, candidate_digest)
 VALUES
   ('service-1', 'stack-1', 'sha256:new'),
-  ('service-3', 'stack-1', 'sha256:strict');
+  ('service-3', 'stack-1', 'sha256:strict'),
+  ('service-4', 'stack-1', 'sha256:noncheck');
 INSERT INTO jobs (
-  id, type, scope, status, allow_arch_mismatch, backup_mode, created_by,
+  id, type, scope, stack_id, service_id, status, allow_arch_mismatch, backup_mode, created_by,
   reason, created_at, summary_json
 ) VALUES
-  ('schedule-check', 'check', 'stack', 'success', 0, 'inherit', 'test', 'schedule',
+  ('schedule-check', 'check', 'stack', 'stack-1', NULL, 'success', 0, 'inherit', 'schedule', 'schedule',
    '2026-04-30T00:00:00Z', '{}'),
-  ('unknown-check', 'check', 'stack', 'success', 0, 'inherit', 'test', 'ui',
+  ('unknown-check', 'check', 'stack', 'stack-1', NULL, 'success', 0, 'inherit', 'test', 'ui',
    '2026-04-30T00:00:00Z', '{malformed'),
-  ('running-auto-job', 'update', 'service', 'running', 0, 'inherit', 'auto-policy', 'auto_policy',
+  ('running-auto-job', 'update', 'service', 'stack-1', 'service-2', 'running', 0, 'inherit', 'auto-policy', 'auto_policy',
+   '2026-04-30T00:00:02Z', '{}'),
+  ('non-check-schedule', 'update', 'service', 'stack-1', 'service-4', 'success', 0, 'inherit', 'schedule', 'schedule',
+   '2026-04-30T00:00:00Z', '{}'),
+  ('queued-noncheck-job', 'update', 'service', 'stack-1', 'service-4', 'queued', 0, 'inherit', 'auto-policy', 'auto_policy',
    '2026-04-30T00:00:02Z', '{}');
 INSERT INTO auto_update_pending (
   id, policy_scope_type, policy_scope_id, rule_id, stack_id, service_id,
@@ -344,7 +349,12 @@ INSERT INTO auto_update_pending (
    'schedule-check', '1.2.3', '1.2.3', 'sha256:strict', '1.0.0',
    '2026-04-30T00:00:00Z', '2026-04-30T00:15:00Z', 900, 0,
    'pending', NULL, '2026-04-30T00:00:00Z', '2026-04-30T00:00:00Z',
-   '{"imageRef":"ghcr.io/acme/app:1.2.3","currentDigest":"sha256:old"}');
+   '{"imageRef":"ghcr.io/acme/app:1.2.3","currentDigest":"sha256:old"}'),
+  ('pending-noncheck', 'stack', 'stack-1', 'rule-noncheck', 'stack-1', 'service-4',
+   'non-check-schedule', 'latest', 'latest', 'sha256:noncheck', '1.0.0',
+   '2026-04-30T00:00:00Z', '2026-04-30T00:15:00Z', 900, 0,
+   'enqueued', 'queued-noncheck-job', '2026-04-30T00:00:00Z', '2026-04-30T00:00:00Z',
+   '{"imageRef":"ghcr.io/acme/app:latest","currentDigest":"sha256:old"}');
 "#,
         )
         .unwrap();
@@ -400,11 +410,10 @@ INSERT INTO auto_update_pending (
                     ))
                 },
             )?;
-            Ok((candidate, pending, ambiguous, stop, strict))
+    Ok((candidate, pending, ambiguous, stop, strict))
         })
         .await
         .unwrap();
-
     assert_eq!(
         migrated.0,
         (
@@ -449,6 +458,25 @@ INSERT INTO auto_update_pending (
             None
         )
     );
+
+    let noncheck = db
+        .call(|conn| {
+            let pending = conn.query_row(
+                "SELECT candidate_id, status FROM auto_update_pending WHERE id = 'pending-noncheck'",
+                [],
+                |row| Ok((row.get::<_, Option<String>>(0)?, row.get::<_, String>(1)?)),
+            )?;
+            let job = conn.query_row(
+                "SELECT status FROM jobs WHERE id = 'queued-noncheck-job'",
+                [],
+                |row| row.get::<_, String>(0),
+            )?;
+            Ok((pending, job))
+        })
+        .await
+        .unwrap();
+    assert_eq!(noncheck.0, (None, "skipped".to_string()));
+    assert_eq!(noncheck.1, "cancelled");
 
     drop(db);
     std::fs::remove_file(&db_path).unwrap();
