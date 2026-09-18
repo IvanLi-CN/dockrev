@@ -291,6 +291,8 @@ claim 失败只能释放本次 claim 或写入明确的 skipped/retryable 状态
 
 迁移与启动/周期 reconciliation 复用同一 hydration helper。hydration 只创建 candidate fact、执行旧候选 supersession 和 pending 失效，不执行 Compose side effect；回填后仍须由当前 service digest、effective policy、SemVer evidence 与 operation protection 重新校验后才能 enqueue。
 
+reconciliation 查询必须包含 <code>awaiting_inference</code> candidate；这只保证候选会被当前 evaluator 重新检查，不改变 SemVer policy 的安全门禁。没有 resolved version 时 policy action 仍为 <code>waiting_inference</code>，不得创建 pending 或 update job。
+
 ## API / UI 合同
 
 现有接口保持兼容，在 service/candidate 结构中增加可选状态字段：
@@ -343,7 +345,7 @@ UI 至少表达以下不同状态：
 - “等待延迟”：规则命中，显示时间门槛和版本滞后门槛；
 - “已排队/执行中/已完成”：对应真实 update job 状态；
 - “候选已被替代”：只读历史状态。
-- “历史回填不完整”：显示 <code>ambiguous_history</code> 与 <code>migration_ambiguous_history</code>，明确不可自动部署；发现历史存在但 candidate 缺失时显示 <code>candidate_missing</code>。
+- “历史回填不完整”：显示 <code>ambiguous_history</code> 与 <code>migration_ambiguous_history</code>，明确不可自动部署；只有发现历史存在且当前 digest 确实没有 candidate row 时显示 <code>candidate_missing</code>。已有运行时 candidate 即使没有 hydration origin，也不能被误报为 candidate missing。
 
 前端 SemVer 预览必须复用后端相同的严格解析规则：没有 resolved version 时显示“不确定/等待解析”，不能显示“确定未命中”。Regex/Glob 预览可明确展示 raw tag 的匹配结果。
 
@@ -365,6 +367,8 @@ UI 至少表达以下不同状态：
 - Given API 返回未解析状态，When用户查看 Service/Stack，Then能区分 inference waiting、unresolved、rule not matched、delayed 和 update running。
 - Given discovery history 存在但 candidate row 缺失，When migration 或启动/周期 reconciliation 运行，Then只为当前 service digest 创建唯一 candidate，保留首次 discoveredAt 与合格 source provenance，并继续经过 policy evaluator。
 - Given discovery history 缺少 image、baseline、source job 或合格成功 check，When hydration 运行，Then candidate 为 unresolved、reason 为 <code>migration_ambiguous_history</code>、source 不合格且不会创建 update job。
+- Given candidate 已由运行时流程创建且 discovery history 同时存在，When读取 hydration diagnostic，Then不显示 <code>candidate_missing</code>，并保持运行时 candidate 的既有 settlement 状态。
+- Given candidate 为 <code>awaiting_inference</code>，When启动或周期 reconciliation 运行，Then候选会进入 policy evaluator；SemVer policy 仍为 <code>waiting_inference</code>，不创建 pending 或 update job。
 
 ## 非功能性验收 / 质量门槛
 
@@ -390,7 +394,7 @@ UI 至少表达以下不同状态：
 
 ### Operational checks
 
-- 启动 reconciliation 能恢复 waiting、retryable、delayed candidate；
+- 启动 reconciliation 能恢复 waiting、retryable、delayed candidate，并包含 <code>awaiting_inference</code> candidate；
 - 日志包含 candidate identity、source、settlement status、policy action、reason 和 update job identity；
 - 不引入需要跨实例锁或新的外部发布权限的运行时依赖。
 
