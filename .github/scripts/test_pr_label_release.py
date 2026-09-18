@@ -447,6 +447,80 @@ expect_exception(
 )
 
 
+original_lock_match = release_lock.publication_lock_matches_merge
+
+
+def raise_lock_ownership_error(*_args, **_kwargs):
+    raise release_lock.PublicationLockOwnershipError("malformed publication lock")
+
+
+def completion_mapping_fixture(_api_root, _token, path):
+    if "release-publication-lock%2Fv0.80.2" in path:
+        return {"object": {"sha": lock_commit_sha}}
+    if "/git/ref/" in path:
+        raise completion.CompletionError("GitHub API failed: 404")
+    raise AssertionError(f"unexpected completion mapping API path: {path}")
+
+
+def preparation_mapping_fixture(_api_root, _token, _method, path, _payload=None):
+    if "release-publication-lock%2Fv0.80.2" in path:
+        return {"object": {"sha": lock_commit_sha}}
+    if "/git/ref/" in path:
+        raise preparation_script.PreparationError("GitHub API failed: 404:")
+    raise AssertionError(f"unexpected preparation mapping API path: {path}")
+
+
+def identity_mapping_fixture(_api_root, _token, path):
+    if "release-publication-lock%2Fv0.80.2" in path:
+        return {"object": {"sha": lock_commit_sha}}
+    if "/git/ref/" in path:
+        raise identity.IdentityError("GitHub API failed: 404")
+    raise AssertionError(f"unexpected identity mapping API path: {path}")
+
+
+release_lock.publication_lock_matches_merge = raise_lock_ownership_error
+original_completion_mapping_api = completion.api_json
+original_preparation_mapping_api = preparation_script.api_request
+original_identity_mapping_api = identity.api_json
+try:
+    completion.api_json = completion_mapping_fixture
+    preparation_script.api_request = preparation_mapping_fixture
+    identity.api_json = identity_mapping_fixture
+    expect_exception(
+        completion.CompletionError,
+        completion.covered_product_has_existing_identity,
+        "https://api.github.test",
+        "token",
+        "IvanLi-CN/dockrev",
+        covered_lock_target,
+        "0.80.2",
+    )
+    expect_exception(
+        preparation_script.PreparationError,
+        preparation_script.covered_product_has_existing_identity,
+        "https://api.github.test",
+        "token",
+        "IvanLi-CN/dockrev",
+        covered_lock_target,
+        "0.80.2",
+        identity_sha=lock_commit_sha,
+    )
+    expect_exception(
+        identity.IdentityError,
+        identity.covered_version_has_existing_identity,
+        "https://api.github.test",
+        "token",
+        "IvanLi-CN/dockrev",
+        "0.80.2",
+        covered_merge_sha=covered_lock_target,
+    )
+finally:
+    release_lock.publication_lock_matches_merge = original_lock_match
+    completion.api_json = original_completion_mapping_api
+    preparation_script.api_request = original_preparation_mapping_api
+    identity.api_json = original_identity_mapping_api
+
+
 labels = policy.parse_labels(["type:patch", "channel:stable", "component:app"])
 assert labels["release_enabled"] is True
 assert policy.next_patch("0.1.0") == "0.1.1"
@@ -1652,6 +1726,7 @@ original_completion_api_json = completion.api_json
 try:
     tag_exists = False
     normal_reservation_ref_sha = prep_sha
+    normal_target_lock_sha = None
     labels_for_loader = ["type:patch", "channel:stable"]
     preparation_message = (
         "Prepare release identity\n\n"
@@ -1681,6 +1756,19 @@ try:
                 "files": [{"filename": "VERSION"}] if labels_for_loader[0] != "type:none" else [],
                 "commit": {"verification": {"verified": True}, "message": preparation_message if labels_for_loader[0] != "type:none" else "Product change"},
             }
+        if (
+            normal_target_lock_sha is not None
+            and normal_target_lock_sha != prep_sha
+            and path.endswith(f"/commits/{normal_target_lock_sha}")
+        ):
+            return {
+                "parents": [{"sha": source_sha}],
+                "files": [{"filename": "VERSION"}],
+                "commit": {
+                    "verification": {"verified": True},
+                    "message": preparation_message,
+                },
+            }
         if path.endswith("/pulls/42/files?per_page=100&page=1"):
             return [{"filename": "VERSION"}] if labels_for_loader[0] == "type:none" else []
         if path.endswith("/commits/" + source_sha):
@@ -1702,7 +1790,9 @@ try:
         if path.endswith("/git/ref/tags/0.1.1"):
             raise completion.CompletionError("GitHub API failed: 404")
         if path.endswith("/git/ref/heads/release-publication-lock%2Fv0.1.1"):
-            raise completion.CompletionError("GitHub API failed: 404")
+            if normal_target_lock_sha is None:
+                raise completion.CompletionError("GitHub API failed: 404")
+            return {"object": {"sha": normal_target_lock_sha}}
         if path.endswith("/git/ref/heads/release-reservation%2Fv0.1.1"):
             return {"object": {"sha": normal_reservation_ref_sha, "type": "commit"}}
         if path.endswith("/commits/" + "f" * 40):
@@ -1724,6 +1814,36 @@ try:
     completion.api_json = fake_completion_api
     loaded = completion.load_github_completion("https://api.github.test", "token", "IvanLi-CN/dockrev", 42)
     assert completion.validate_completion(loaded)["status"] == "pass"
+    normal_target_lock_sha = "7" * 40
+    foreign_normal_target_lock = completion.load_github_completion(
+        "https://api.github.test", "token", "IvanLi-CN/dockrev", 42
+    )
+    assert foreign_normal_target_lock["tag_reserved"] is False
+    expect_error(completion.validate_completion, foreign_normal_target_lock)
+    normal_target_lock_sha = prep_sha
+    owned_normal_target_lock = completion.load_github_completion(
+        "https://api.github.test", "token", "IvanLi-CN/dockrev", 42
+    )
+    assert completion.validate_completion(owned_normal_target_lock)["status"] == "pass"
+    normal_target_lock_sha = "6" * 40
+    preparation_message += "\nProduct-Version: 0.1.1"
+    expect_error(
+        completion.load_github_completion,
+        "https://api.github.test",
+        "token",
+        "IvanLi-CN/dockrev",
+        42,
+    )
+    preparation_message = preparation_message.rsplit("\nProduct-Version: 0.1.1", 1)[0]
+    normal_target_lock_sha = "not-a-sha"
+    expect_error(
+        completion.load_github_completion,
+        "https://api.github.test",
+        "token",
+        "IvanLi-CN/dockrev",
+        42,
+    )
+    normal_target_lock_sha = None
     normal_reservation_ref_sha = "f" * 40
     assert completion.validate_completion(
         completion.load_github_completion("https://api.github.test", "token", "IvanLi-CN/dockrev", 42)
