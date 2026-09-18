@@ -755,7 +755,7 @@ def load_github_completion(
             token,
             repository,
             covered_merge_sha,
-            covered_product_version,
+            trailers["Product-Version"],
             expected_recovery_identity_sha=identity_sha,
             expected_recovery_pr_number=pr_number,
             expected_recovery_intent=trailers.get("Release-Intent", ""),

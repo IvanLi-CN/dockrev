@@ -1889,6 +1889,7 @@ try:
     recovery_identity_matches = True
     version_only_completion_pr_head_sha = prep_sha
     version_only_completion_target_lock_sha = None
+    version_only_completion_baseline_reservation_sha = "e" * 40
 
     def fake_version_only_completion_api(_api_root, _token, path):
         if path.endswith("/pulls/42"):
@@ -1954,7 +1955,22 @@ try:
                 raise completion.CompletionError("GitHub API failed: 404")
             return {"object": {"sha": prep_sha if recovery_identity_matches else "9" * 40}}
         if path.endswith("/git/ref/heads/release-reservation%2Fv0.80.1"):
-            raise completion.CompletionError("GitHub API failed: 404")
+            return {"object": {"sha": version_only_completion_baseline_reservation_sha}}
+        if path.endswith("/commits/" + version_only_completion_baseline_reservation_sha):
+            return {
+                "parents": [{"sha": "9" * 40}],
+                "commit": {
+                    "message": (
+                        "Reserve release version v0.80.1\n\n"
+                        "Release-Reservation-Version: 0.80.1\n"
+                        "Release-Reservation-PR: 99\n"
+                        "Release-Reservation-Source-SHA: " + "9" * 40 + "\n"
+                        "Release-Reservation-Identity-SHA: " + "8" * 40 + "\n"
+                        "Release-Reservation-Intent: type:patch channel:stable\n"
+                        "Release-Reservation-Mode: version-only-release-pr"
+                    )
+                },
+            }
         if path.endswith("/git/ref/heads/release-publication-lock%2Fv0.80.1"):
             raise completion.CompletionError("GitHub API failed: 404")
         if path.endswith("/git/ref/tags/v0.80.1"):
