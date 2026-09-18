@@ -473,17 +473,17 @@ async fn recover_enqueued_auto_update_jobs(
             Err(error) => {
                 state
                     .db
-                    .fail_corrupt_auto_update_job(
-                        &job.id,
-                        now,
-                        &format!("invalid_job_summary: {error}"),
-                    )
+                    .fail_corrupt_auto_update_job(&job.id, now, "migration_ambiguous_history")
                     .await?;
                 tracing::warn!(job_id = %job.id, error = %error, "auto policy update job recovery skipped invalid job summary");
                 continue;
             }
         };
-        if !state.db.claim_queued_job_by_id(&job.id, now).await? {
+        if !state
+            .db
+            .claim_queued_job_by_id_for_recovery(&job.id, now)
+            .await?
+        {
             continue;
         }
         let run_state = state.clone();

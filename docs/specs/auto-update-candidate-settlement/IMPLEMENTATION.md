@@ -18,6 +18,8 @@
 - recovery queued auto-policy job 在恢复执行前重新验证成功 Check、schedule/GHCR webhook provenance、creator/scope identity、candidate target digest、expected current digest、当前 service digest、candidate 和 policy；缺少任一基线则 fail-closed，不能绕过 source/current-digest 门禁。
 - ambiguous hydration 不伪造 `source_job_id` 或 `discovered_at`；这些缺失值在候选事实和 API diagnostic 中保持为空，`migration_ambiguous_history` 只作为不可执行的审计原因。
 - queued recovery 必须同时匹配 pending 的 candidate identity、service scope、唯一 target、当前 service tag、candidate digest 和 expected current digest；缺失 candidate 绑定、target tag 或 scope/target service 不一致都会取消 queued action。
+- queued recovery 的 fail-closed 取消和损坏历史都保留 `migration_ambiguous_history` audit reason；普通运行时 claim 仍使用 `policy_changed_before_start`，不混淆两类来源。
+- hydration supersession 对已有或新建的 running stop-control 都写入 `auto-policy-supersession`，并尊重已提交 apply 的保护条件。
 - hydration 会恢复所有 qualifying discovery history 的 digest，并以当前 service candidate 统一 supersede 非当前历史 candidate，确保旧 pending/action 不能因迁移只看到当前 digest 而重新执行。
 - Validation: local checks complete; the shared-testbox Compose smoke is partially blocked by the existing metrics migration error <code>retained rollups cannot be recovered after raw retention</code> during the Compose V1 rejection setup. The V2 plugin and standalone lifecycle portions passed before that blocker.
 
