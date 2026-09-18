@@ -200,7 +200,7 @@ async fn hydration_rejects_successful_source_job_from_another_service() {
 }
 
 #[tokio::test]
-async fn hydration_keeps_earliest_observation_and_latest_qualified_provenance() {
+async fn hydration_keeps_the_earliest_qualified_observation_as_one_consistent_record() {
     let db = Db::open(Path::new(":memory:")).await.unwrap();
     db.call(|conn| {
         conn.execute(
@@ -266,10 +266,10 @@ async fn hydration_keeps_earliest_observation_and_latest_qualified_provenance() 
         .unwrap()
         .unwrap();
     assert_eq!(candidate.status, "ready");
-    assert_eq!(candidate.discovered_at, "2026-04-30T00:00:00Z");
-    assert_eq!(candidate.source, "github_webhook");
-    assert_eq!(candidate.source_job_id, "check-webhook-latest");
-    assert_eq!(candidate.raw_tag, "1.5.0");
+    assert_eq!(candidate.discovered_at, "2026-04-30T00:01:00Z");
+    assert_eq!(candidate.source, "schedule");
+    assert_eq!(candidate.source_job_id, "check-schedule");
+    assert_eq!(candidate.raw_tag, "1.4.0");
 }
 
 #[tokio::test]

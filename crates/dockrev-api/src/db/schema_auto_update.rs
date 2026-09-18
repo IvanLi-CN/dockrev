@@ -292,6 +292,147 @@ WHERE current_digest IS NULL
     Ok(())
 }
 
+pub(super) fn apply_migration_0022_harden_auto_update_source_provenance(
+    conn: &mut rusqlite::Connection,
+) -> anyhow::Result<()> {
+    let id = "0022_harden_auto_update_source_provenance";
+    if migration_applied(conn, id)? {
+        return Ok(());
+    }
+    let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
+    let now = now_rfc3339()?;
+    tx.execute_batch(
+        "CREATE TEMP TABLE migration_invalid_auto_update_pending (id TEXT PRIMARY KEY NOT NULL)",
+    )?;
+    tx.execute(
+        r#"
+INSERT INTO migration_invalid_auto_update_pending (id)
+SELECT p.id
+FROM auto_update_pending p
+WHERE p.status IN ('pending', 'enqueuing', 'enqueued')
+  AND NOT EXISTS (
+    SELECT 1
+    FROM auto_update_candidates c
+    JOIN jobs candidate_source_job ON candidate_source_job.id = c.source_job_id
+    JOIN services candidate_service ON candidate_service.id = c.service_id
+    WHERE c.id = p.candidate_id
+      AND c.service_id = p.service_id
+      AND c.candidate_digest = p.candidate_digest
+      AND c.stack_id = p.stack_id
+      AND COALESCE(TRIM(c.image_ref), '') <> ''
+      AND COALESCE(TRIM(c.discovered_at), '') <> ''
+      AND LOWER(c.source) IN ('schedule', 'github_webhook')
+      AND candidate_service.stack_id = c.stack_id
+      AND candidate_service.candidate_digest = c.candidate_digest
+      AND LOWER(candidate_source_job.type) = 'check'
+      AND LOWER(candidate_source_job.status) = 'success'
+      AND (
+        (LOWER(c.source) = 'schedule'
+          AND LOWER(candidate_source_job.reason) = 'schedule'
+          AND LOWER(candidate_source_job.created_by) = 'schedule')
+        OR (LOWER(c.source) = 'github_webhook'
+          AND LOWER(candidate_source_job.created_by) IN ('webhook', 'github')
+          AND LOWER(COALESCE(json_extract(CASE WHEN json_valid(candidate_source_job.summary_json) THEN candidate_source_job.summary_json ELSE '{}' END, '$.source'), '')) = 'github_webhook')
+      )
+      AND (
+        (LOWER(candidate_source_job.scope) = 'service'
+          AND candidate_source_job.stack_id = c.stack_id
+          AND candidate_source_job.service_id = c.service_id)
+        OR (LOWER(candidate_source_job.scope) = 'stack'
+          AND candidate_source_job.stack_id = c.stack_id
+          AND candidate_source_job.service_id IS NULL)
+        OR (LOWER(candidate_source_job.scope) = 'all'
+          AND candidate_source_job.stack_id IS NULL
+          AND candidate_source_job.service_id IS NULL)
+      )
+      AND EXISTS (
+        SELECT 1
+        FROM jobs source_job
+        WHERE source_job.id = p.source_check_job_id
+          AND LOWER(source_job.type) = 'check'
+          AND LOWER(source_job.status) = 'success'
+          AND (
+            (LOWER(c.source) = 'schedule'
+              AND LOWER(source_job.reason) = 'schedule'
+              AND LOWER(source_job.created_by) = 'schedule')
+            OR (LOWER(c.source) = 'github_webhook'
+              AND LOWER(source_job.created_by) IN ('webhook', 'github')
+              AND LOWER(COALESCE(json_extract(CASE WHEN json_valid(source_job.summary_json) THEN source_job.summary_json ELSE '{}' END, '$.source'), '')) = 'github_webhook')
+          )
+          AND (
+            (LOWER(source_job.scope) = 'service'
+              AND source_job.stack_id = p.stack_id
+              AND source_job.service_id = p.service_id)
+            OR (LOWER(source_job.scope) = 'stack'
+              AND source_job.stack_id = p.stack_id
+              AND source_job.service_id IS NULL)
+            OR (LOWER(source_job.scope) = 'all'
+              AND source_job.stack_id IS NULL
+              AND source_job.service_id IS NULL)
+          )
+      )
+  )
+"#,
+        [],
+    )?;
+    tx.execute(
+        r#"
+UPDATE jobs
+SET status = 'cancelled',
+    finished_at = ?1
+WHERE id IN (
+  SELECT p.update_job_id
+  FROM auto_update_pending p
+  JOIN migration_invalid_auto_update_pending invalid ON invalid.id = p.id
+  WHERE p.update_job_id IS NOT NULL
+)
+  AND status = 'queued'
+  AND created_by = 'auto-policy'
+"#,
+        params![&now],
+    )?;
+    tx.execute(
+        r#"
+INSERT INTO update_job_stop_controls (
+  job_id, stop_requested_at, stop_requested_by, updated_at
+)
+SELECT p.update_job_id, ?1, 'migration-ambiguous-history', ?1
+FROM auto_update_pending p
+JOIN migration_invalid_auto_update_pending invalid ON invalid.id = p.id
+JOIN jobs j ON j.id = p.update_job_id
+WHERE p.update_job_id IS NOT NULL
+  AND j.status = 'running'
+ON CONFLICT(job_id) DO UPDATE SET
+  stop_requested_at = COALESCE(update_job_stop_controls.stop_requested_at, excluded.stop_requested_at),
+  stop_requested_by = COALESCE(update_job_stop_controls.stop_requested_by, excluded.stop_requested_by),
+  updated_at = excluded.updated_at
+WHERE update_job_stop_controls.apply_committed_at IS NULL
+  AND update_job_stop_controls.stop_requested_at IS NULL
+"#,
+        params![&now],
+    )?;
+    tx.execute(
+        r#"
+UPDATE auto_update_pending
+SET candidate_id = NULL,
+    status = 'skipped',
+    summary_json = CASE
+      WHEN json_valid(summary_json)
+        AND json_type(CASE WHEN json_valid(summary_json) THEN summary_json ELSE '{}' END) = 'object'
+        THEN json_set(summary_json, '$.skipReason', 'migration_ambiguous_history', '$.skippedAt', ?1)
+      ELSE json_object('skipReason', 'migration_ambiguous_history', 'skippedAt', ?1)
+    END,
+    updated_at = ?1
+WHERE id IN (SELECT id FROM migration_invalid_auto_update_pending)
+"#,
+        params![&now],
+    )?;
+    tx.execute_batch("DROP TABLE migration_invalid_auto_update_pending")?;
+    record_migration_tx(&tx, id)?;
+    tx.commit()?;
+    Ok(())
+}
+
 fn apply_migration_0014_add_auto_update_candidates(
     conn: &mut rusqlite::Connection,
 ) -> anyhow::Result<()> {
@@ -484,10 +625,30 @@ WHERE id IN (
         SELECT 1
         FROM jobs source_job
         WHERE source_job.id = p.source_check_job_id
+          AND LOWER(source_job.type) = 'check'
           AND LOWER(source_job.status) = 'success'
           AND (
-            LOWER(source_job.reason) = 'schedule'
-            OR LOWER(COALESCE(json_extract(CASE WHEN json_valid(source_job.summary_json) THEN source_job.summary_json ELSE '{}' END, '$.source'), '')) = 'github_webhook'
+            (
+              LOWER(c.source) = 'schedule'
+              AND LOWER(source_job.reason) = 'schedule'
+              AND LOWER(source_job.created_by) = 'schedule'
+            )
+            OR (
+              LOWER(c.source) = 'github_webhook'
+              AND LOWER(source_job.created_by) IN ('webhook', 'github')
+              AND LOWER(COALESCE(json_extract(CASE WHEN json_valid(source_job.summary_json) THEN source_job.summary_json ELSE '{}' END, '$.source'), '')) = 'github_webhook'
+            )
+          )
+          AND (
+            (LOWER(source_job.scope) = 'service'
+              AND source_job.stack_id = p.stack_id
+              AND source_job.service_id = p.service_id)
+            OR (LOWER(source_job.scope) = 'stack'
+              AND source_job.stack_id = p.stack_id
+              AND source_job.service_id IS NULL)
+            OR (LOWER(source_job.scope) = 'all'
+              AND source_job.stack_id IS NULL
+              AND source_job.service_id IS NULL)
           )
       )
     )
@@ -527,17 +688,53 @@ WHERE (
       AND COALESCE(TRIM(valid_candidate.image_ref), '') <> ''
       AND COALESCE(TRIM(valid_candidate.discovered_at), '') <> ''
       AND valid_candidate.source IN ('schedule', 'github_webhook')
+      AND LOWER(candidate_source_job.type) = 'check'
       AND LOWER(candidate_source_job.status) = 'success'
+      AND (
+        (LOWER(valid_candidate.source) = 'schedule'
+          AND LOWER(candidate_source_job.reason) = 'schedule'
+          AND LOWER(candidate_source_job.created_by) = 'schedule')
+        OR (LOWER(valid_candidate.source) = 'github_webhook'
+          AND LOWER(candidate_source_job.created_by) IN ('webhook', 'github')
+          AND LOWER(COALESCE(json_extract(CASE WHEN json_valid(candidate_source_job.summary_json) THEN candidate_source_job.summary_json ELSE '{}' END, '$.source'), '')) = 'github_webhook')
+      )
+      AND (
+        (LOWER(candidate_source_job.scope) = 'service'
+          AND candidate_source_job.stack_id = valid_candidate.stack_id
+          AND candidate_source_job.service_id = valid_candidate.service_id)
+        OR (LOWER(candidate_source_job.scope) = 'stack'
+          AND candidate_source_job.stack_id = valid_candidate.stack_id
+          AND candidate_source_job.service_id IS NULL)
+        OR (LOWER(candidate_source_job.scope) = 'all'
+          AND candidate_source_job.stack_id IS NULL
+          AND candidate_source_job.service_id IS NULL)
+      )
       AND candidate_service.stack_id = valid_candidate.stack_id
       AND candidate_service.candidate_digest = valid_candidate.candidate_digest
       AND EXISTS (
         SELECT 1
         FROM jobs source_job
         WHERE source_job.id = p.source_check_job_id
+          AND LOWER(source_job.type) = 'check'
           AND LOWER(source_job.status) = 'success'
           AND (
-            LOWER(source_job.reason) = 'schedule'
-            OR LOWER(COALESCE(json_extract(CASE WHEN json_valid(source_job.summary_json) THEN source_job.summary_json ELSE '{}' END, '$.source'), '')) = 'github_webhook'
+            (LOWER(valid_candidate.source) = 'schedule'
+              AND LOWER(source_job.reason) = 'schedule'
+              AND LOWER(source_job.created_by) = 'schedule')
+            OR (LOWER(valid_candidate.source) = 'github_webhook'
+              AND LOWER(source_job.created_by) IN ('webhook', 'github')
+              AND LOWER(COALESCE(json_extract(CASE WHEN json_valid(source_job.summary_json) THEN source_job.summary_json ELSE '{}' END, '$.source'), '')) = 'github_webhook')
+          )
+          AND (
+            (LOWER(source_job.scope) = 'service'
+              AND source_job.stack_id = p.stack_id
+              AND source_job.service_id = p.service_id)
+            OR (LOWER(source_job.scope) = 'stack'
+              AND source_job.stack_id = p.stack_id
+              AND source_job.service_id IS NULL)
+            OR (LOWER(source_job.scope) = 'all'
+              AND source_job.stack_id IS NULL
+              AND source_job.service_id IS NULL)
           )
       )
   )
@@ -573,18 +770,54 @@ WHERE status IN ('pending', 'enqueuing', 'enqueued')
       WHERE c.id = auto_update_pending.candidate_id
         AND COALESCE(TRIM(c.image_ref), '') <> ''
         AND COALESCE(TRIM(c.discovered_at), '') <> ''
+        AND LOWER(j.type) = 'check'
         AND LOWER(j.status) = 'success'
         AND c.source IN ('schedule', 'github_webhook')
+        AND (
+          (LOWER(c.source) = 'schedule'
+            AND LOWER(j.reason) = 'schedule'
+            AND LOWER(j.created_by) = 'schedule')
+          OR (LOWER(c.source) = 'github_webhook'
+            AND LOWER(j.created_by) IN ('webhook', 'github')
+            AND LOWER(COALESCE(json_extract(CASE WHEN json_valid(j.summary_json) THEN j.summary_json ELSE '{}' END, '$.source'), '')) = 'github_webhook')
+        )
+        AND (
+          (LOWER(j.scope) = 'service'
+            AND j.stack_id = c.stack_id
+            AND j.service_id = c.service_id)
+          OR (LOWER(j.scope) = 'stack'
+            AND j.stack_id = c.stack_id
+            AND j.service_id IS NULL)
+          OR (LOWER(j.scope) = 'all'
+            AND j.stack_id IS NULL
+            AND j.service_id IS NULL)
+        )
         AND s.stack_id = c.stack_id
         AND s.candidate_digest = c.candidate_digest
         AND EXISTS (
           SELECT 1
           FROM jobs source_job
           WHERE source_job.id = auto_update_pending.source_check_job_id
+            AND LOWER(source_job.type) = 'check'
             AND LOWER(source_job.status) = 'success'
             AND (
-              LOWER(source_job.reason) = 'schedule'
-              OR LOWER(COALESCE(json_extract(CASE WHEN json_valid(source_job.summary_json) THEN source_job.summary_json ELSE '{}' END, '$.source'), '')) = 'github_webhook'
+              (LOWER(c.source) = 'schedule'
+                AND LOWER(source_job.reason) = 'schedule'
+                AND LOWER(source_job.created_by) = 'schedule')
+              OR (LOWER(c.source) = 'github_webhook'
+                AND LOWER(source_job.created_by) IN ('webhook', 'github')
+                AND LOWER(COALESCE(json_extract(CASE WHEN json_valid(source_job.summary_json) THEN source_job.summary_json ELSE '{}' END, '$.source'), '')) = 'github_webhook')
+            )
+            AND (
+              (LOWER(source_job.scope) = 'service'
+                AND source_job.stack_id = auto_update_pending.stack_id
+                AND source_job.service_id = auto_update_pending.service_id)
+              OR (LOWER(source_job.scope) = 'stack'
+                AND source_job.stack_id = auto_update_pending.stack_id
+                AND source_job.service_id IS NULL)
+              OR (LOWER(source_job.scope) = 'all'
+                AND source_job.stack_id IS NULL
+                AND source_job.service_id IS NULL)
             )
         )
         AND c.service_id = auto_update_pending.service_id
