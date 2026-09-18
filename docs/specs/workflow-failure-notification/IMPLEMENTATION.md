@@ -11,7 +11,7 @@
 - `REQ-WORKFLOW-FAILURE-001`: `.github/release-failure-notification.json` declares the seven expected-success workflows and two notification exclusions. `.github/scripts/test_workflow_failure_notification_contract.py` compares those sets with every workflow's top-level name.
 - `REQ-WORKFLOW-FAILURE-002`: `.github/workflows/notify-failed-workflow.yml` listens to `CI (PR)`, `Docs Pages`, `Label Gate`, `Release completion`, `Release Preparation`, and `Review Policy`; `Release` remains exclusively in `.github/workflows/notify-release-failure.yml`.
 - `REQ-WORKFLOW-FAILURE-003`: `.github/scripts/workflow_failure_context.py` validates failure/run identifiers and renders the workflow metadata, head SHA, PR, attempt, actor, run URL, and recovery guidance without release identity claims.
-- `REQ-WORKFLOW-FAILURE-004`: the generic notifier checks out only `github.event.repository.default_branch`, uses the pinned Oidrune reusable workflow, grants only `contents: read` to context resolution and `id-token: write` to delivery, and does not execute the failed caller ref.
+- `REQ-WORKFLOW-FAILURE-004`: the generic notifier checks out only `github.event.repository.default_branch`, uses the same 40-character pinned Oidrune ref for each delivery path, grants only `contents: read` to context resolution and `id-token: write` to delivery, and does not execute the failed caller ref. The contract test rejects truncated or divergent reusable-workflow refs before publication.
 
 ## Implementation Order
 
