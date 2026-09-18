@@ -170,6 +170,7 @@ Dockrev 目前把自动更新策略评估挂在“检查任务完成时提取出
 ### 候选身份
 
 - 候选的稳定通知身份是 <code>serviceId + candidateDigest</code>。
+- <code>candidateDigest</code> 在分组、唯一约束、查询和 settlement 写入前必须经过共享 digest 规整：去除外层空白、补全缺省的 <code>sha256:</code> 算法前缀并统一算法和十六进制部分的大小写；因此仅大小写或缺省前缀不同的等价 digest 只能形成一个候选。
 - 同一个 digest 因 raw tag 或 display tag 变化而重新展示时，不创建第二个候选，也不重复发送新候选通知。
 - 候选记录保留首次发现时间、最近一次可证明的来源、raw tag、当前服务基线和 digest 证据。
 - 新 digest 被接受为当前有效候选时，旧的同服务有效候选立即转为 <code>superseded</code>。旧记录保留用于历史和版本滞后统计，但不能 claim 或执行部署。

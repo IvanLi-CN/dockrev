@@ -572,11 +572,15 @@ async fn candidate_hydration_migration_copies_history_and_is_idempotent() {
                 [],
             )?;
             conn.execute(
-                "INSERT INTO services (id, stack_id, name, image_ref, image_tag, current_digest, candidate_digest, auto_rollback, backup_targets_bind_paths_json, backup_targets_volume_names_json, created_at, updated_at) VALUES ('service', 'stack', 'service', 'ghcr.io/acme/app', 'latest', 'sha256:current', 'sha256:migrated', 0, '{}', '{}', '2026-04-30', '2026-04-30')",
+                "INSERT INTO services (id, stack_id, name, image_ref, image_tag, current_digest, candidate_digest, auto_rollback, backup_targets_bind_paths_json, backup_targets_volume_names_json, created_at, updated_at) VALUES ('service', 'stack', 'service', 'ghcr.io/acme/app', 'latest', 'sha256:current', 'MIGRATED', 0, '{}', '{}', '2026-04-30', '2026-04-30')",
                 [],
             )?;
             conn.execute(
-                "INSERT INTO service_new_version_discoveries (service_id, image_ref, source_job_id, discovered_at, current_digest, current_display_tag, current_tag, candidate_tag, candidate_digest, candidate_display_tag) VALUES ('service', 'ghcr.io/acme/app:latest', 'check-schedule', '2026-04-30T00:00:00Z', 'sha256:current', '1.0.0', 'latest', '1.5.0', 'sha256:migrated', '1.5.0')",
+                "INSERT INTO service_new_version_discoveries (service_id, image_ref, source_job_id, discovered_at, current_digest, current_display_tag, current_tag, candidate_tag, candidate_digest, candidate_display_tag) VALUES ('service', 'ghcr.io/acme/app:latest', 'check-schedule', '2026-04-30T00:00:00Z', 'sha256:current', '1.0.0', 'latest', '1.5.0', 'MIGRATED', '1.5.0')",
+                [],
+            )?;
+            conn.execute(
+                "INSERT INTO auto_update_candidates (id, stack_id, service_id, image_ref, raw_tag, candidate_digest, status, reason, attempts, discovered_at, source_job_id, source, current_tag, current_display_tag, current_digest, created_at, updated_at) VALUES ('legacy-candidate', 'stack', 'service', 'ghcr.io/acme/app', 'latest', 'sha256:MiGrAtEd', 'awaiting_inference', 'migration_pending_history', 0, '2026-04-30T00:00:00Z', 'check-schedule', 'schedule', 'latest', '1.0.0', 'sha256:current', '2026-04-30T00:00:00Z', '2026-04-30T00:00:00Z')",
                 [],
             )?;
             conn.execute(
@@ -620,7 +624,7 @@ async fn candidate_hydration_migration_copies_history_and_is_idempotent() {
                 source_check_job_id: "check-schedule".to_string(),
                 candidate_tag: "latest".to_string(),
                 candidate_display_tag: "1.5.0".to_string(),
-                candidate_digest: "sha256:migrated".to_string(),
+                candidate_digest: "MIGRATED".to_string(),
                 current_display_tag: "1.0.0".to_string(),
                 first_seen_at: "2026-04-30T00:00:00Z".to_string(),
                 due_at: "2026-04-30T00:00:00Z".to_string(),
@@ -656,6 +660,7 @@ async fn candidate_hydration_migration_copies_history_and_is_idempotent() {
         .await
         .unwrap()
         .unwrap();
+    assert_eq!(candidate.id, "legacy-candidate");
     assert_eq!(candidate.source, "schedule");
     assert_eq!(candidate.hydration_origin.as_deref(), Some("discovery_history"));
     assert_eq!(candidate.discovered_at, "2026-04-30T00:00:00Z");

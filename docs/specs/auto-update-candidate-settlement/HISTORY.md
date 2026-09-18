@@ -20,6 +20,7 @@
 - inference settlement 改为 begin 阶段发放、settle 阶段精确匹配的 generation token；migration provenance 同时要求 candidate 与 pending 使用同一 source check job。
 - ambiguous discovery history 不再用 migration 时间或合成 job id 填充 provenance；API 只暴露真实存在的 source job/time，缺失 provenance 保持可观测但不可执行。
 - queued auto-policy recovery 现在要求 exact candidate binding 与唯一 service target，并重新校验 service scope、target tag、candidate digest 和 expected current digest；旧 action 不满足这些条件时 fail-closed。
+- candidate identity 对 legacy digest 表示保持兼容：大小写或缺省 `sha256:` 前缀差异在 hydration、runtime reconciliation 和 settlement 边界归一为同一身份，不改变首次 `discoveredAt`。
 - recovery 的取消审计与 migration provenance 统一保留 `migration_ambiguous_history`，正常运行时 policy 变化仍保持独立 reason；hydration 对已存在的 running stop-control 也会发出 supersession stop request。
 
 ## Decision Trace
