@@ -135,6 +135,9 @@ jobs:
       - name: Release channel contract check
         run: bash ./.github/scripts/release-channel-contract-check.sh
 
+      - name: Docs Pages workflow contract check
+        run: python3 ./.github/scripts/test_docs_pages_workflow_contract.py
+
       - name: Live quality-gates check
         env:
           QUALITY_GATES_LIVE_RULES_MODE: require
