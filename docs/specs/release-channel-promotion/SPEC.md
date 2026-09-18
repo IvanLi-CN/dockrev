@@ -82,6 +82,12 @@
   `createCommitOnBranch(expectedHeadOid)`. Reservation, recovery-ref, and
   publication-lock ownership MUST bind that same identity SHA, and the
   canonical version reservation ref MUST point directly to the identity commit.
+  A publication lock for the new product version MUST resolve to that exact
+  identity SHA. A lock for the covered product's older version MUST be
+  resolved against its own owning merge SHA and MUST NOT be treated as the
+  owner of the new version or block an unrelated historical boundary.
+  Malformed, ambiguous, duplicate, or unverified lock ownership evidence MUST
+  fail closed.
   The current
   approved repair boundaries are explicitly enumerated. They include PR #391
   merge `978207fe9d140d81e2d4a2a7bd24fb253a04ebff` -> `0.80.2` with baseline
