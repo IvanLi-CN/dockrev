@@ -30,7 +30,10 @@
   compatibility. The direct reservation ref, recovery ref, and publication
   lock for the new product version resolve to the same identity SHA. A lock on
   the covered product's older VERSION is resolved to its exact owning merge and
-  does not block an unrelated historical boundary. Publication acquires only
+  does not block an unrelated historical boundary. Normal-preparation locks
+  require exactly one merged `main` PR whose head SHA matches the signed
+  release identity SHA and whose base repository matches the target repository.
+  Publication acquires only
   the new product-version lock. All writes use existing job-scoped
   `contents: write`; no additional CI permission is required.
   Recovery branches use the `recovery/` selector; automatic workflow-run

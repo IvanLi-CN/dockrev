@@ -86,6 +86,10 @@
   identity SHA. A lock for the covered product's older version MUST be
   resolved against its own owning merge SHA and MUST NOT be treated as the
   owner of the new version or block an unrelated historical boundary.
+  For a normal-preparation identity, its owning association MUST be exactly
+  one merged PR into `main` whose head SHA equals the signed release identity
+  SHA and whose base repository equals the target repository. Any other
+  association MUST fail closed.
   Malformed, ambiguous, duplicate, or unverified lock ownership evidence MUST
   fail closed.
   The current

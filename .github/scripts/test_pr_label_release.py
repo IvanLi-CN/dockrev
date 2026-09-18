@@ -87,8 +87,8 @@ def publication_lock_fixture(path):
             "state": "closed",
             "merged_at": "2026-01-01T00:00:00Z",
             "merge_commit_sha": normal_lock_merge_sha,
-            "base": {"ref": "main"},
-            "head": {"sha": covered_lock_other},
+            "base": {"ref": "main", "repo": {"full_name": "IvanLi-CN/dockrev"}},
+            "head": {"sha": lock_commit_sha},
         }]
     if path.endswith(f"/contents/VERSION?ref={lock_commit_sha}"):
         return {"encoding": "base64", "content": "MC44MC4y\n"}
@@ -104,7 +104,11 @@ def paginated_publication_lock_fixture(path):
         return lock_commit_payload
     if path.endswith(f"/commits/{covered_lock_other}/pulls?per_page=100&page=1"):
         return [
-            {"state": "open", "base": {"ref": "main"}, "head": {"sha": covered_lock_other}}
+            {
+                "state": "open",
+                "base": {"ref": "main", "repo": {"full_name": "IvanLi-CN/dockrev"}},
+                "head": {"sha": covered_lock_other},
+            }
             for _ in range(100)
         ]
     if path.endswith(f"/commits/{covered_lock_other}/pulls?per_page=100&page=2"):
@@ -112,8 +116,8 @@ def paginated_publication_lock_fixture(path):
             "state": "closed",
             "merged_at": "2026-01-01T00:00:00Z",
             "merge_commit_sha": covered_lock_target,
-            "base": {"ref": "main"},
-            "head": {"sha": covered_lock_other},
+            "base": {"ref": "main", "repo": {"full_name": "IvanLi-CN/dockrev"}},
+            "head": {"sha": lock_commit_sha},
         }]
     if path.endswith(f"/contents/VERSION?ref={lock_commit_sha}"):
         return {"encoding": "base64", "content": "MC44MC4y\n"}
@@ -186,7 +190,12 @@ expect_exception(
     "0.80.2",
     covered_lock_target,
 )
+lock_commit_payload["commit"]["message"] = lock_commit_payload["commit"]["message"].replace(
+    "unsupported", "normal-preparation"
+)
 
+
+duplicate_association_paths = []
 
 def duplicate_publication_lock_fixture(path):
     if path.endswith(f"/commits/{lock_commit_sha}"):
@@ -198,20 +207,21 @@ def duplicate_publication_lock_fixture(path):
     ):
         return {"encoding": "base64", "content": "MC44MC4x\n"}
     if path.endswith(f"/commits/{covered_lock_other}/pulls?per_page=100&page=1"):
+        duplicate_association_paths.append(path)
         return [
             {
                 "state": "closed",
                 "merged_at": "2026-01-01T00:00:00Z",
                 "merge_commit_sha": covered_lock_target,
-                "base": {"ref": "main"},
-                "head": {"sha": covered_lock_other},
+                "base": {"ref": "main", "repo": {"full_name": "IvanLi-CN/dockrev"}},
+                "head": {"sha": lock_commit_sha},
             },
             {
                 "state": "closed",
                 "merged_at": "2026-01-02T00:00:00Z",
                 "merge_commit_sha": covered_lock_target,
-                "base": {"ref": "main"},
-                "head": {"sha": covered_lock_other},
+                "base": {"ref": "main", "repo": {"full_name": "IvanLi-CN/dockrev"}},
+                "head": {"sha": lock_commit_sha},
             },
         ]
     raise AssertionError(f"unexpected duplicate publication lock API path: {path}")
@@ -226,7 +236,86 @@ expect_exception(
     "0.80.2",
     covered_lock_target,
 )
+assert duplicate_association_paths == [
+    f"/repos/IvanLi-CN/dockrev/commits/{covered_lock_other}/pulls?per_page=100&page=1"
+]
 
+
+mismatched_association_paths = []
+
+def mismatched_head_publication_lock_fixture(path):
+    if path.endswith(f"/commits/{lock_commit_sha}"):
+        return lock_commit_payload
+    if path.endswith(f"/contents/VERSION?ref={lock_commit_sha}"):
+        return {"encoding": "base64", "content": "MC44MC4y\n"}
+    if path.endswith(f"/contents/VERSION?ref={covered_lock_other}") or path.endswith(
+        f"/contents/VERSION?ref={covered_lock_target}"
+    ):
+        return {"encoding": "base64", "content": "MC44MC4x\n"}
+    if path.endswith(f"/commits/{covered_lock_other}/pulls?per_page=100&page=1"):
+        mismatched_association_paths.append(path)
+        return [{
+            "state": "closed",
+            "merged_at": "2026-01-01T00:00:00Z",
+            "merge_commit_sha": covered_lock_target,
+            "base": {"ref": "main", "repo": {"full_name": "IvanLi-CN/dockrev"}},
+            "head": {"sha": covered_lock_target},
+        }]
+    raise AssertionError(f"unexpected mismatched publication lock API path: {path}")
+
+
+expect_exception(
+    release_lock.PublicationLockOwnershipError,
+    release_lock.publication_lock_matches_merge,
+    mismatched_head_publication_lock_fixture,
+    "IvanLi-CN/dockrev",
+    lock_commit_sha,
+    "0.80.2",
+    covered_lock_target,
+)
+assert mismatched_association_paths == [
+    f"/repos/IvanLi-CN/dockrev/commits/{covered_lock_other}/pulls?per_page=100&page=1"
+]
+
+
+wrong_base_repository_paths = []
+
+def wrong_base_repository_publication_lock_fixture(path):
+    if path.endswith(f"/commits/{lock_commit_sha}"):
+        return lock_commit_payload
+    if path.endswith(f"/contents/VERSION?ref={lock_commit_sha}"):
+        return {"encoding": "base64", "content": "MC44MC4y\n"}
+    if path.endswith(f"/contents/VERSION?ref={covered_lock_other}") or path.endswith(
+        f"/contents/VERSION?ref={covered_lock_target}"
+    ):
+        return {"encoding": "base64", "content": "MC44MC4x\n"}
+    if path.endswith(f"/commits/{covered_lock_other}/pulls?per_page=100&page=1"):
+        wrong_base_repository_paths.append(path)
+        return [{
+            "state": "closed",
+            "merged_at": "2026-01-01T00:00:00Z",
+            "merge_commit_sha": covered_lock_target,
+            "base": {"ref": "main", "repo": {"full_name": "IvanLi-CN/other-repo"}},
+            "head": {"sha": lock_commit_sha},
+        }]
+    raise AssertionError(f"unexpected wrong-base publication lock API path: {path}")
+
+
+expect_exception(
+    release_lock.PublicationLockOwnershipError,
+    release_lock.publication_lock_matches_merge,
+    wrong_base_repository_publication_lock_fixture,
+    "IvanLi-CN/dockrev",
+    lock_commit_sha,
+    "0.80.2",
+    covered_lock_target,
+)
+assert wrong_base_repository_paths == [
+    f"/repos/IvanLi-CN/dockrev/commits/{covered_lock_other}/pulls?per_page=100&page=1"
+]
+
+
+malformed_association_paths = []
 
 def malformed_publication_lock_fixture(path):
     if path.endswith(f"/commits/{lock_commit_sha}"):
@@ -238,6 +327,7 @@ def malformed_publication_lock_fixture(path):
     ):
         return {"encoding": "base64", "content": "MC44MC4x\n"}
     if path.endswith(f"/commits/{covered_lock_other}/pulls?per_page=100&page=1"):
+        malformed_association_paths.append(path)
         return [{"state": "closed", "base": {"ref": "main"}}]
     raise AssertionError(f"unexpected malformed publication lock API path: {path}")
 
@@ -251,6 +341,9 @@ expect_exception(
     "0.80.2",
     covered_lock_target,
 )
+assert malformed_association_paths == [
+    f"/repos/IvanLi-CN/dockrev/commits/{covered_lock_other}/pulls?per_page=100&page=1"
+]
 
 
 labels = policy.parse_labels(["type:patch", "channel:stable", "component:app"])

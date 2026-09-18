@@ -150,7 +150,7 @@ def _version_at_commit(fetch_json: Callable[[str], Any], repository: str, commit
 
 
 def _merged_main_associations(
-    fetch_json: Callable[[str], Any], repository: str, source_sha: str
+    fetch_json: Callable[[str], Any], repository: str, source_sha: str, identity_sha: str
 ) -> list[dict[str, Any]]:
     owner, name = _repository_parts(repository)
     associations: list[dict[str, Any]] = []
@@ -171,6 +171,10 @@ def _merged_main_associations(
             base_ref = base.get("ref")
             if not isinstance(base_ref, str) or not base_ref:
                 raise PublicationLockOwnershipError("publication lock pull request base ref is invalid")
+            base_repo = base.get("repo")
+            base_full_name = base_repo.get("full_name") if isinstance(base_repo, dict) else None
+            if not isinstance(base_full_name, str) or base_full_name.casefold() != repository.casefold():
+                raise PublicationLockOwnershipError("publication lock pull request base repository is invalid")
             head_sha = head.get("sha")
             state = pull.get("state")
             if not isinstance(state, str) or state not in {"open", "closed"}:
@@ -186,6 +190,10 @@ def _merged_main_associations(
                 continue
             if state != "closed" or not merged_at:
                 continue
+            if head_sha != identity_sha:
+                raise PublicationLockOwnershipError(
+                    "publication lock pull request head does not match its release identity"
+                )
             merge_sha = pull.get("merge_commit_sha")
             try:
                 release_policy.validate_sha(str(merge_sha), "publication identity merge SHA")
@@ -224,7 +232,7 @@ def publication_lock_matches_merge(
     if trailers["Release-Mode"] == "version-only-release-pr":
         return trailers["Covered-Product-Merge-SHA"] == covered_merge_sha
 
-    associations = _merged_main_associations(fetch_json, repository, identity_source_sha)
+    associations = _merged_main_associations(fetch_json, repository, identity_source_sha, lock_sha)
     if len(associations) != 1:
         raise PublicationLockOwnershipError(
             "publication lock identity does not resolve to exactly one merged main PR"
