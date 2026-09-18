@@ -109,7 +109,13 @@ async fn source_revalidation_requires_existing_successful_check_job() {
             .unwrap()
     );
 
-    assert_eq!(JobScope::from_str("SeRvIcE"), JobScope::Service);
+    assert!(auto_policy_source_identity_matches(
+        "SeRvIcE",
+        Some("stack"),
+        Some("service"),
+        Some("stack"),
+        Some("service"),
+    ));
 
     db.insert_job(api::types::JobListItem {
         id: "schedule-update".to_string(),

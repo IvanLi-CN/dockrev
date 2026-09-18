@@ -1,3 +1,8 @@
+fn canonical_auto_update_digest(digest: &str) -> String {
+    crate::snapshot_worker::normalize_digest(digest)
+        .unwrap_or_else(|| digest.trim().to_ascii_lowercase())
+}
+
 pub(super) fn auto_update_policy_from_row(
     mode: Option<String>,
     enabled: Option<i64>,
