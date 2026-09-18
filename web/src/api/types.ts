@@ -6,7 +6,6 @@ export type {
   CandidateSettlement,
   VersionInferenceState,
 } from './autoUpdateTypes'
-
 export type StackStatus = 'healthy' | 'degraded' | 'unknown'
 
 export type StackListItem = {
@@ -109,7 +108,6 @@ export type ServiceBackupRecordItem = {
 export type ServiceBackupRecordsResponse = {
   records: ServiceBackupRecordItem[]
 }
-
 export type AutoUpdatePolicyMode = 'inherit' | 'override' | 'disabled'
 export type AutoUpdateMatcherType = 'semver' | 'regex' | 'glob'
 export type AutoUpdateRuleAction = 'immediate' | 'delayed'
