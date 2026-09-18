@@ -153,6 +153,17 @@ error.
 transport gate declares `required_secrets: []`; OIDC allowlists and ruleset
 alignment remain owner actions outside this repository change.
 
+All other workflows expected to succeed are covered by `Notify failed
+workflow`. Its allowlist is checked in at
+`.github/release-failure-notification.json`; a failed `CI (PR)`, `Docs Pages`,
+`Label Gate`, `Release Preparation`, `Release completion`, or `Review Policy`
+run produces a generic notification with the workflow name, event, ref, head
+SHA, run ID, run attempt, run URL, and a rerun/recovery reminder. The notifier
+checks out only the repository default branch, never the failed workflow's
+caller code. Notification workflows are excluded from the allowlist to avoid
+recursive alerts. `Release` remains on the dedicated notifier because its
+payload requires verified release identity and same-SHA recovery context.
+
 ## Owner actions
 
 Maintainers must align the `main` ruleset with `Review Policy Gate`, `Label

@@ -11,6 +11,7 @@
 | Auto-update candidate settlement | 已完成 | candidate lifecycle, policy re-evaluation, conservative migration and compatibility projections complete | `auto-update-candidate-settlement/SPEC.md` | - |
 | PR label release identity | active | workflow/scripts/docs complete | `docs/adr/0008-pr-label-release-identity.md` | - |
 | Release channel promotion | active | beta/RC/stable identity contract | `release-channel-promotion/SPEC.md` | - |
+| Workflow failure notification | 已完成 | expected-success workflow failure sidecar and Release-specific routing complete | `workflow-failure-notification/SPEC.md` | - |
 | Update rollback diagnostics | active | not started | `update-rollback-diagnostics/SPEC.md` | - |
 | Service accepted state consistency | active | not started | `service-accepted-state-consistency/SPEC.md` | - |
 | Brand media variants | active | dark/light posters delivered; social variants pending | `brand-media-variants/SPEC.md` | - |
