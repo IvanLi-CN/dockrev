@@ -380,7 +380,8 @@ VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, NULL, ?8, ?9, 0, NULL, ?10, ?11, ?12,
         ?16, ?16, ?17)
 ON CONFLICT(service_id, candidate_digest) DO UPDATE SET
   image_ref = CASE
-    WHEN auto_update_candidates.image_ref = '' THEN excluded.image_ref
+    WHEN COALESCE(TRIM(auto_update_candidates.image_ref), '') = ''
+      THEN excluded.image_ref
     ELSE auto_update_candidates.image_ref
   END,
   raw_tag = CASE
@@ -474,7 +475,8 @@ ON CONFLICT(service_id, candidate_digest) DO UPDATE SET
         AND COALESCE(TRIM(excluded.current_digest), '') <> ''
       OR COALESCE(TRIM(auto_update_candidates.discovered_at), '') = ''
         AND COALESCE(TRIM(excluded.discovered_at), '') <> ''
-      OR auto_update_candidates.image_ref = '' AND excluded.image_ref <> ''
+      OR COALESCE(TRIM(auto_update_candidates.image_ref), '') = ''
+        AND COALESCE(TRIM(excluded.image_ref), '') <> ''
       OR auto_update_candidates.raw_tag = '' AND excluded.raw_tag <> ''
       THEN excluded.updated_at
     ELSE auto_update_candidates.updated_at

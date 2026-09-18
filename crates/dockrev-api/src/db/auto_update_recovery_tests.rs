@@ -407,7 +407,7 @@ async fn runtime_candidate_with_discovery_history_is_not_reported_as_missing() {
 
     db.call(|conn| {
         conn.execute(
-            "UPDATE auto_update_candidates SET discovered_at = '', current_digest = '' WHERE service_id = 'service' AND candidate_digest = 'sha256:runtime'",
+            "UPDATE auto_update_candidates SET image_ref = '   ', discovered_at = '', current_digest = '' WHERE service_id = 'service' AND candidate_digest = 'sha256:runtime'",
             [],
         )?;
         Ok(())
@@ -424,6 +424,7 @@ async fn runtime_candidate_with_discovery_history_is_not_reported_as_missing() {
         .unwrap();
     assert_eq!(repaired.discovered_at, "2026-04-30T00:00:00Z");
     assert_eq!(repaired.current_digest.as_deref(), Some("sha256:current"));
+    assert_eq!(repaired.image_ref, "ghcr.io/acme/app");
     let repaired_updated_at = repaired.updated_at.clone();
 
     db.hydrate_auto_update_candidates("2026-04-30T00:00:03Z")
