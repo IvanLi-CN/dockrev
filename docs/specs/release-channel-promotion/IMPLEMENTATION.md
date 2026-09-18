@@ -28,7 +28,16 @@
   baseline, intent, signed VERSION-only commit, direct reservation ref, and
   recovery ref. Legacy reservation commits remain readable only for
   compatibility. The direct reservation ref, recovery ref, and publication
-  lock must resolve to the same identity SHA and use existing job-scoped
+  lock for the new product version resolve to the same identity SHA. A lock on
+  the covered product's older VERSION is resolved to its exact owning merge and
+  does not block an unrelated historical boundary. Normal-preparation locks
+  require exactly one merged `main` PR whose head SHA matches the signed
+  release identity SHA and whose base repository matches the target repository.
+  `Release completion` validates the target-version publication lock as an
+  identity-only boundary: absent and current-identity locks are accepted,
+  foreign valid locks make the check fail, and malformed locks fail closed.
+  Publication acquires only
+  the new product-version lock. All writes use existing job-scoped
   `contents: write`; no additional CI permission is required.
   Recovery branches use the `recovery/` selector; automatic workflow-run
   preparation skips them and the helper rejects version-only preparation on

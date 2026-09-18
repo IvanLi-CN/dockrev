@@ -91,7 +91,6 @@ assert 'source="release-assets/${arch}/musl"' in release
 assert "Acquire immutable publication lock" in release
 assert "release-publication-lock/v${lock_version}" in release
 assert "identity_ref_sha" in release
-assert "covered_product_version" in release
 assert 'release-preparation/${identity_pr}/${identity_source}' in release
 assert 'test "${live_identity_sha}" = "${expected_identity_sha}"' in release
 assert "Revalidate release identity before publication" in release
@@ -201,6 +200,7 @@ for expected in quality["expected_pr_workflows"]:
 publication_lock_start = release.index('          identity_mode="$(jq -r')
 publication_lock_end = release.index("\n\n      - name: Revalidate release identity before publication", publication_lock_start)
 publication_lock_body = textwrap.dedent(release[publication_lock_start:publication_lock_end])
+assert "covered_product_version" not in publication_lock_body
 with tempfile.TemporaryDirectory() as directory:
     root = Path(directory)
     bin_dir = root / "bin"
@@ -297,7 +297,6 @@ raise SystemExit(2)
     locks = json.loads(state_path.read_text(encoding="utf-8"))
     assert locks == {
         "release-publication-lock/v0.1.1-rc.1": "e" * 40,
-        "release-publication-lock/v0.1.1-beta.1": "e" * 40,
     }
     subprocess.run([str(script)], check=True, env=env, cwd=ROOT)
     state_path.write_text(json.dumps({"release-publication-lock/v0.1.1-rc.1": "4" * 40}))

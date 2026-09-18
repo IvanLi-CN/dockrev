@@ -16,6 +16,7 @@ from pathlib import Path
 from typing import Any
 
 import release_baseline
+import release_lock
 import release_policy
 
 
@@ -211,8 +212,22 @@ def covered_product_has_existing_identity(
         lock_sha = lock_ref.get("object", {}).get("sha")
         if not isinstance(lock_sha, str) or not re.fullmatch(r"[0-9a-f]{40}", lock_sha):
             raise CompletionError("existing publication lock ref has no valid commit SHA")
-        if lock_sha != expected_recovery_identity_sha:
-            return True
+        try:
+            if release_lock.publication_lock_matches_merge(
+                lambda path: api_json(api_root, token, path),
+                repository,
+                lock_sha,
+                version,
+                covered_merge_sha,
+                allowed_identity_shas=(
+                    {expected_recovery_identity_sha}
+                    if expected_recovery_identity_sha is not None
+                    else set()
+                ),
+            ):
+                return True
+        except release_lock.PublicationLockOwnershipError as error:
+            raise CompletionError(str(error)) from error
     def tag_fetch(path: str) -> Any:
         try:
             return api_json(api_root, token, path)
@@ -325,6 +340,39 @@ def tag_is_reserved_by_other_pr(
                 break
             page += 1
     return True
+
+
+def target_publication_lock_is_owned(
+    api_root: str,
+    token: str,
+    repository: str,
+    version: str,
+    identity_sha: str,
+) -> bool:
+    """Return whether the target-version publication lock is absent or ours."""
+    owner, name = repository.split("/", 1)
+    lock_path = (
+        f"/repos/{owner}/{name}/git/ref/heads/"
+        f"{urllib.parse.quote(f'release-publication-lock/v{version}', safe='')}"
+    )
+    try:
+        lock_ref = api_json(api_root, token, lock_path)
+    except CompletionError as error:
+        if "GitHub API failed: 404" in str(error):
+            return True
+        raise
+    lock_sha = lock_ref.get("object", {}).get("sha") if isinstance(lock_ref, dict) else None
+    try:
+        release_policy.validate_sha(str(lock_sha), "publication lock commit SHA")
+    except release_policy.PolicyError as error:
+        raise CompletionError(str(error)) from error
+    try:
+        release_lock.validate_publication_lock_identity(
+            lambda path: api_json(api_root, token, path), repository, str(lock_sha), version
+        )
+    except release_lock.PublicationLockOwnershipError as error:
+        raise CompletionError(str(error)) from error
+    return str(lock_sha) == identity_sha
 
 
 def version_exists_at_commit(
@@ -707,7 +755,7 @@ def load_github_completion(
             token,
             repository,
             covered_merge_sha,
-            covered_product_version,
+            trailers["Product-Version"],
             expected_recovery_identity_sha=identity_sha,
             expected_recovery_pr_number=pr_number,
             expected_recovery_intent=trailers.get("Release-Intent", ""),
@@ -773,6 +821,10 @@ def load_github_completion(
     elif mode == "version-only-release-pr":
         version_for_tag = provenance["product_version"]
     tag_reserved = tag_is_available(api_root, token, repository, version_for_tag)
+    target_lock_owned = target_publication_lock_is_owned(
+        api_root, token, repository, version_for_tag, identity_sha
+    )
+    tag_reserved = tag_reserved and target_lock_owned
     if mode in {"normal-preparation", "version-only-release-pr"}:
         reservation_kwargs = {"identity_sha": identity_sha}
         if mode == "version-only-release-pr":

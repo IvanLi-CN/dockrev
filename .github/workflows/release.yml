@@ -584,11 +584,6 @@ jobs:
           }
 
           acquire_publication_lock "${VERSION}"
-          if [[ "${identity_mode}" == "version-only-release-pr" ]]; then
-            covered_version="$(jq -r '.covered_product_version // empty' <<<"${EXPECTED_IDENTITY_JSON}")"
-            [[ -n "${covered_version}" ]] || { echo "version-only identity is missing covered_product_version" >&2; exit 2; }
-            acquire_publication_lock "${covered_version}"
-          fi
 
       - name: Revalidate release identity before publication
         env:
