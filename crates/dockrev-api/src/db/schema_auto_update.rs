@@ -433,6 +433,29 @@ WHERE id IN (SELECT id FROM migration_invalid_auto_update_pending)
     Ok(())
 }
 
+pub(super) fn apply_migration_0023_add_auto_update_candidate_settlement_generation(
+    conn: &mut rusqlite::Connection,
+) -> anyhow::Result<()> {
+    let id = "0023_add_auto_update_candidate_settlement_generation";
+    if migration_applied(conn, id)? {
+        return Ok(());
+    }
+    let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
+    let columns = tx
+        .prepare("PRAGMA table_info(auto_update_candidates)")?
+        .query_map([], |row| row.get::<_, String>(1))?
+        .collect::<Result<BTreeSet<_>, _>>()?;
+    if !columns.contains("settlement_generation") {
+        tx.execute(
+            "ALTER TABLE auto_update_candidates ADD COLUMN settlement_generation INTEGER NOT NULL DEFAULT 0",
+            [],
+        )?;
+    }
+    record_migration_tx(&tx, id)?;
+    tx.commit()?;
+    Ok(())
+}
+
 fn apply_migration_0014_add_auto_update_candidates(
     conn: &mut rusqlite::Connection,
 ) -> anyhow::Result<()> {

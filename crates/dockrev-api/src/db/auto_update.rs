@@ -94,11 +94,12 @@ fn map_auto_update_candidate_row(
         superseded_at: row.get(29)?,
         superseded_by_candidate_id: row.get(30)?,
         hydration_origin: row.get(31)?,
+        evidence_generation: row.get(32)?,
     })
 }
 
-const AUTO_UPDATE_CANDIDATE_COLUMNS: &str = "id, stack_id, service_id, image_ref, raw_tag, candidate_digest, resolved_version, resolved_tags, status, reason, attempts, retry_at, discovered_at, source_job_id, source, current_tag, current_display_tag, current_digest, settled_at, created_at, updated_at, policy_status, policy_reason, policy_rule_id, policy_evaluated_at, policy_scope_type, policy_scope_id, update_job_id, last_error, superseded_at, superseded_by_candidate_id, hydration_origin";
-const AUTO_UPDATE_CANDIDATE_COLUMNS_QUALIFIED: &str = "c.id, c.stack_id, c.service_id, c.image_ref, c.raw_tag, c.candidate_digest, c.resolved_version, c.resolved_tags, c.status, c.reason, c.attempts, c.retry_at, c.discovered_at, c.source_job_id, c.source, c.current_tag, c.current_display_tag, c.current_digest, c.settled_at, c.created_at, c.updated_at, c.policy_status, c.policy_reason, c.policy_rule_id, c.policy_evaluated_at, c.policy_scope_type, c.policy_scope_id, c.update_job_id, c.last_error, c.superseded_at, c.superseded_by_candidate_id, c.hydration_origin";
+const AUTO_UPDATE_CANDIDATE_COLUMNS: &str = "id, stack_id, service_id, image_ref, raw_tag, candidate_digest, resolved_version, resolved_tags, status, reason, attempts, retry_at, discovered_at, source_job_id, source, current_tag, current_display_tag, current_digest, settled_at, created_at, updated_at, policy_status, policy_reason, policy_rule_id, policy_evaluated_at, policy_scope_type, policy_scope_id, update_job_id, last_error, superseded_at, superseded_by_candidate_id, hydration_origin, settlement_generation";
+const AUTO_UPDATE_CANDIDATE_COLUMNS_QUALIFIED: &str = "c.id, c.stack_id, c.service_id, c.image_ref, c.raw_tag, c.candidate_digest, c.resolved_version, c.resolved_tags, c.status, c.reason, c.attempts, c.retry_at, c.discovered_at, c.source_job_id, c.source, c.current_tag, c.current_display_tag, c.current_digest, c.settled_at, c.created_at, c.updated_at, c.policy_status, c.policy_reason, c.policy_rule_id, c.policy_evaluated_at, c.policy_scope_type, c.policy_scope_id, c.update_job_id, c.last_error, c.superseded_at, c.superseded_by_candidate_id, c.hydration_origin, c.settlement_generation";
 
 include!("auto_update_candidates.rs");
 
@@ -778,6 +779,7 @@ mod tests {
             reason: Some("digest_bound_version".to_string()),
             last_error: None,
             attempts: 1,
+            evidence_generation: 1,
             retry_at: None,
             settled_at: Some("2026-04-30T00:02:00Z".to_string()),
             now: "2026-04-30T00:02:00Z".to_string(),
@@ -796,6 +798,7 @@ mod tests {
                 reason: Some("version_inference_pending".to_string()),
                 last_error: None,
                 attempts: 2,
+                evidence_generation: 2,
                 retry_at: Some("2026-04-30T00:07:00Z".to_string()),
                 settled_at: None,
                 now: "2026-04-30T00:03:00Z".to_string(),
@@ -821,9 +824,10 @@ mod tests {
                 reason: Some("stale_digest_evidence".to_string()),
                 last_error: None,
                 attempts: 0,
+                evidence_generation: 0,
                 retry_at: None,
-                settled_at: Some("2026-04-30T00:01:00Z".to_string()),
-                now: "2026-04-30T00:04:00Z".to_string(),
+                settled_at: Some("2026-04-30T00:05:00Z".to_string()),
+                now: "2026-04-30T00:06:00Z".to_string(),
             })
             .await
             .unwrap();

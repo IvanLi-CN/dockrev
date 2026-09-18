@@ -164,7 +164,8 @@ SET status = ?3,
     attempts = ?8,
     retry_at = ?9,
     settled_at = ?10,
-    updated_at = ?11
+    updated_at = ?11,
+    settlement_generation = ?12
 WHERE service_id = ?1 AND candidate_digest = ?2
   AND status <> 'superseded'
   AND (
@@ -196,6 +197,7 @@ WHERE service_id = ?1 AND candidate_digest = ?2
     OR ?8 > attempts
     OR (?8 = attempts AND ?11 >= updated_at)
   )
+  AND ?12 > settlement_generation
 "#,
                 params![
                     input.service_id,
@@ -209,6 +211,7 @@ WHERE service_id = ?1 AND candidate_digest = ?2
                     input.retry_at,
                     input.settled_at,
                     input.now,
+                    input.evidence_generation,
                 ],
             )?;
             if changed == 0 {
@@ -223,6 +226,42 @@ WHERE service_id = ?1 AND candidate_digest = ?2
         })
         .await
         .context("settle auto update candidate")
+    }
+
+    pub async fn begin_auto_update_candidate_inference(
+        &self,
+        service_id: &str,
+        candidate_digest: &str,
+        now: &str,
+    ) -> anyhow::Result<Option<AutoUpdateCandidateRow>> {
+        let service_id = service_id.to_string();
+        let candidate_digest = candidate_digest.to_string();
+        let now = now.to_string();
+        self.call(move |conn| {
+            let changed = conn.execute(
+                r#"
+UPDATE auto_update_candidates
+SET settlement_generation = settlement_generation + 1,
+    updated_at = ?3
+WHERE service_id = ?1
+  AND candidate_digest = ?2
+  AND status = 'awaiting_inference'
+"#,
+                params![service_id, candidate_digest, now],
+            )?;
+            if changed == 0 {
+                return Ok(None);
+            }
+            Ok(conn
+                .query_row(
+                    &format!("SELECT {AUTO_UPDATE_CANDIDATE_COLUMNS} FROM auto_update_candidates WHERE service_id = ?1 AND candidate_digest = ?2"),
+                    params![service_id, candidate_digest],
+                    map_auto_update_candidate_row,
+                )
+                .optional()?)
+        })
+        .await
+        .context("begin auto update candidate inference")
     }
 
     pub async fn supersede_auto_update_candidates(
@@ -428,7 +467,8 @@ SET status = 'awaiting_inference',
     policy_reason = ?3,
     policy_rule_id = NULL,
     policy_evaluated_at = ?4,
-    updated_at = ?4
+    updated_at = ?4,
+    settlement_generation = settlement_generation + 1
 WHERE service_id = ?1
   AND candidate_digest = ?2
   AND status = 'unresolved'

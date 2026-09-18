@@ -212,6 +212,10 @@ async fn hydration_keeps_the_earliest_qualified_observation_as_one_consistent_re
             [],
         )?;
         conn.execute(
+            "INSERT INTO service_new_version_discoveries (service_id, image_ref, source_job_id, discovered_at, current_digest, current_display_tag, current_tag, candidate_tag, candidate_digest, candidate_display_tag) VALUES ('service', 'ghcr.io/acme/app:latest', 'check-old', '2026-04-30T00:00:30Z', 'sha256:current', '1.0.0', 'latest', '1.3.0', 'sha256:old', '1.3.0')",
+            [],
+        )?;
+        conn.execute(
             "INSERT INTO service_new_version_discoveries (service_id, image_ref, source_job_id, discovered_at, current_digest, current_display_tag, current_tag, candidate_tag, candidate_digest, candidate_display_tag) VALUES ('service', 'ghcr.io/acme/app:latest', 'missing-check', '2026-04-30T00:00:00Z', 'sha256:current', '1.0.0', 'latest', '1.4.0', 'sha256:multi', '1.4.0')",
             [],
         )?;
@@ -229,6 +233,7 @@ async fn hydration_keeps_the_earliest_qualified_observation_as_one_consistent_re
     .unwrap();
 
     for (id, created_by, reason, summary) in [
+        ("check-old", "schedule", "schedule", serde_json::json!({})),
         ("check-schedule", "schedule", "schedule", serde_json::json!({})),
         (
             "check-webhook-latest",
@@ -270,6 +275,14 @@ async fn hydration_keeps_the_earliest_qualified_observation_as_one_consistent_re
     assert_eq!(candidate.source, "schedule");
     assert_eq!(candidate.source_job_id, "check-schedule");
     assert_eq!(candidate.raw_tag, "1.4.0");
+    assert_eq!(
+        db.get_auto_update_candidate("service", "sha256:old")
+            .await
+            .unwrap()
+            .unwrap()
+            .status,
+        "superseded"
+    );
 }
 
 #[tokio::test]
@@ -616,6 +629,7 @@ async fn candidate_settlement_is_unique_and_idempotent() {
             reason: Some("inference_failed".to_string()),
             last_error: Some("temporary registry failure".to_string()),
             attempts: 1,
+            evidence_generation: 1,
             retry_at: Some("2026-04-30T00:01:00Z".to_string()),
             settled_at: Some("2026-04-30T00:01:00Z".to_string()),
             now: "2026-04-30T00:01:00Z".to_string(),
@@ -638,6 +652,7 @@ async fn candidate_settlement_is_unique_and_idempotent() {
             reason: Some("digest_bound_version".to_string()),
             last_error: None,
             attempts: 0,
+            evidence_generation: 2,
             retry_at: None,
             settled_at: Some("2026-04-30T00:02:00Z".to_string()),
             now: "2026-04-30T00:02:00Z".to_string(),
@@ -663,6 +678,7 @@ async fn candidate_settlement_is_unique_and_idempotent() {
             reason: Some("digest_bound_version".to_string()),
             last_error: None,
             attempts: 0,
+            evidence_generation: 2,
             retry_at: None,
             settled_at: Some("2026-04-30T00:02:00Z".to_string()),
             now: "2026-04-30T00:03:00Z".to_string(),
@@ -696,6 +712,7 @@ async fn stale_awaiting_inference_settlement_preserves_newer_retry_state() {
         reason: Some("version_inference_pending".to_string()),
         last_error: Some("newer registry failure".to_string()),
         attempts: 2,
+        evidence_generation: 3,
         retry_at: Some("2026-04-30T00:05:00Z".to_string()),
         settled_at: None,
         now: "2026-04-30T00:02:00Z".to_string(),
@@ -714,9 +731,10 @@ async fn stale_awaiting_inference_settlement_preserves_newer_retry_state() {
             reason: Some("version_inference_pending".to_string()),
             last_error: Some("older registry failure".to_string()),
             attempts: 1,
+            evidence_generation: 2,
             retry_at: Some("2026-04-30T00:04:00Z".to_string()),
             settled_at: None,
-            now: "2026-04-30T00:01:00Z".to_string(),
+            now: "2026-04-30T00:03:00Z".to_string(),
         })
         .await
         .unwrap();

@@ -38,6 +38,7 @@ struct DiscoveryHistoryRow {
     candidate_tag: String,
     candidate_digest: String,
     candidate_display_tag: String,
+    service_candidate_digest: Option<String>,
     job_type: Option<String>,
     job_status: Option<String>,
     job_created_by: Option<String>,
@@ -172,6 +173,7 @@ SELECT
   d.candidate_tag,
   d.candidate_digest,
   d.candidate_display_tag,
+  s.candidate_digest,
   j.type,
   j.status,
   j.created_by,
@@ -183,7 +185,6 @@ SELECT
 FROM service_new_version_discoveries d
 JOIN services s
   ON s.id = d.service_id
- AND s.candidate_digest = d.candidate_digest
 LEFT JOIN jobs j ON j.id = d.source_job_id
 WHERE TRIM(d.candidate_digest) <> ''
 ORDER BY d.service_id, d.candidate_digest, d.discovered_at ASC, d.id ASC
@@ -203,14 +204,15 @@ ORDER BY d.service_id, d.candidate_digest, d.discovered_at ASC, d.id ASC
             candidate_tag: row.get(9)?,
             candidate_digest: row.get(10)?,
             candidate_display_tag: row.get(11)?,
-            job_type: row.get(12)?,
-            job_status: row.get(13)?,
-            job_created_by: row.get(14)?,
-            job_reason: row.get(15)?,
-            job_summary_json: row.get(16)?,
-            job_scope: row.get(17)?,
-            job_stack_id: row.get(18)?,
-            job_service_id: row.get(19)?,
+            service_candidate_digest: row.get(12)?,
+            job_type: row.get(13)?,
+            job_status: row.get(14)?,
+            job_created_by: row.get(15)?,
+            job_reason: row.get(16)?,
+            job_summary_json: row.get(17)?,
+            job_scope: row.get(18)?,
+            job_stack_id: row.get(19)?,
+            job_service_id: row.get(20)?,
         })
     })?;
     rows.collect()
@@ -310,12 +312,20 @@ pub(super) fn hydrate_auto_update_candidates_tx(
     }
 
     let mut hydrated = Vec::new();
+    let mut current_candidates = BTreeMap::<String, String>::new();
     for ((service_id, candidate_digest), rows) in grouped {
         let source_row = rows
             .iter()
             .find(|row| is_complete_hydration(row))
             .unwrap_or(&rows[0]);
         let complete = is_complete_hydration(source_row);
+        if let Some(current_digest) = source_row
+            .service_candidate_digest
+            .as_deref()
+            .filter(|digest| non_empty(digest))
+        {
+            current_candidates.insert(service_id.clone(), current_digest.to_string());
+        }
         let (image_ref, raw_tag, current_tag, current_display_tag) = candidate_values(source_row);
         let source = if complete {
             qualified_source(source_row).unwrap_or("unknown")
@@ -488,8 +498,18 @@ ON CONFLICT(service_id, candidate_digest) DO UPDATE SET
             candidate_digest,
             candidate_id,
         };
-        supersede_previous_candidates(tx, &hydrated_row, now)?;
         hydrated.push(hydrated_row);
+    }
+    for (service_id, candidate_digest) in current_candidates {
+        supersede_previous_candidates(
+            tx,
+            &HydratedCandidateRow {
+                candidate_id: format!("{service_id}:{candidate_digest}"),
+                service_id,
+                candidate_digest,
+            },
+            now,
+        )?;
     }
     Ok(hydrated)
 }

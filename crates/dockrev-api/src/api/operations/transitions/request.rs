@@ -249,6 +249,7 @@ async fn enqueue_update_job_with_start(
     });
 
     let mut job_db = job.to_db();
+    let auto_policy_job = created_by == "auto-policy";
     job_db.created_by = created_by;
     job_db.reason = reason;
     let has_operation_targets = !operation_targets.is_empty();
@@ -276,8 +277,17 @@ async fn enqueue_update_job_with_start(
                 None
             }
         });
+        if auto_policy_job && expected_current_digest.is_none_or(|digest| digest.trim().is_empty())
+        {
+            return Err(ApiError::conflict(
+                "auto policy update is missing the current digest baseline",
+            )
+            .with_details(json!({
+                "reason": "auto_policy_baseline_missing"
+            })));
+        }
         let conflict = if let Some(expected_current_digest) = expected_current_digest {
-            state
+            match state
                 .db
                 .insert_service_operation_job_if_unblocked_with_current_digest(
                     job_db,
@@ -287,6 +297,18 @@ async fn enqueue_update_job_with_start(
                 )
                 .await
                 .map_err(map_internal)?
+            {
+                crate::db::ServiceOperationAcquireOutcome::Acquired(_) => None,
+                crate::db::ServiceOperationAcquireOutcome::Conflict(job) => Some(*job),
+                crate::db::ServiceOperationAcquireOutcome::StaleCurrentDigest => {
+                    return Err(ApiError::conflict(
+                        "service candidate changed while enqueueing auto policy update",
+                    )
+                    .with_details(json!({
+                        "reason": "candidate_changed"
+                    })));
+                }
+            }
         } else {
             state
                 .db

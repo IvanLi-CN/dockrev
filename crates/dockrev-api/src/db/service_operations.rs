@@ -43,6 +43,7 @@ pub(crate) struct ServiceOperationAcceptedStateLease {
 pub(crate) enum ServiceOperationAcquireOutcome {
     Acquired(Vec<ServiceOperationAcceptedStateLease>),
     Conflict(Box<JobListItem>),
+    StaleCurrentDigest,
 }
 
 #[derive(Clone, Debug)]
@@ -277,10 +278,7 @@ WHERE id = ?1
                             .optional()?
                             .unwrap_or(false);
                         if !matches {
-                            anyhow::bail!(
-                                "service current digest changed while enqueueing auto policy update: {}",
-                                target.service_id
-                            );
+                            return Ok(ServiceOperationAcquireOutcome::StaleCurrentDigest);
                         }
                     }
                 }
@@ -544,6 +542,9 @@ WHERE id = ?1 AND accepted_state_generation = ?2 AND accepted_state_generation %
         {
             ServiceOperationAcquireOutcome::Acquired(_) => Ok(None),
             ServiceOperationAcquireOutcome::Conflict(job) => Ok(Some(*job)),
+            ServiceOperationAcquireOutcome::StaleCurrentDigest => {
+                anyhow::bail!("stale current digest")
+            }
         }
     }
 
@@ -553,7 +554,7 @@ WHERE id = ?1 AND accepted_state_generation = ?2 AND accepted_state_generation %
         targets: Vec<ServiceOperationTarget>,
         initial_log: Option<JobLogLine>,
         expected_current_digest: &str,
-    ) -> anyhow::Result<Option<JobListItem>> {
+    ) -> anyhow::Result<ServiceOperationAcquireOutcome> {
         match self
             .insert_service_operation_job_with_accepted_state_if_unblocked_inner(
                 job,
@@ -563,8 +564,11 @@ WHERE id = ?1 AND accepted_state_generation = ?2 AND accepted_state_generation %
             )
             .await?
         {
-            ServiceOperationAcquireOutcome::Acquired(_) => Ok(None),
-            ServiceOperationAcquireOutcome::Conflict(job) => Ok(Some(*job)),
+            outcome @ ServiceOperationAcquireOutcome::Acquired(_)
+            | outcome @ ServiceOperationAcquireOutcome::StaleCurrentDigest => Ok(outcome),
+            ServiceOperationAcquireOutcome::Conflict(job) => {
+                Ok(ServiceOperationAcquireOutcome::Conflict(job))
+            }
         }
     }
 
@@ -856,7 +860,7 @@ INSERT INTO services (
         );
         job.summary_json = serde_json::json!({"mode": "apply"});
 
-        let error = db
+        let outcome = db
             .insert_service_operation_job_if_unblocked_with_current_digest(
                 job.to_db(),
                 vec![ServiceOperationTarget {
@@ -867,11 +871,11 @@ INSERT INTO services (
                 "sha256:not-the-current-digest",
             )
             .await
-            .expect_err("stale auto-policy enqueue must fail closed");
-        assert!(
-            format!("{error:#}").contains("current digest changed while enqueueing"),
-            "unexpected error: {error:#}"
-        );
+            .unwrap();
+        assert!(matches!(
+            outcome,
+            ServiceOperationAcquireOutcome::StaleCurrentDigest
+        ));
         assert!(db.get_job("job_stale_auto_policy").await.unwrap().is_none());
         assert_eq!(
             db.get_versioned_service_accepted_state(&service_id)
