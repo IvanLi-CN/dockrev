@@ -10,6 +10,7 @@ use rusqlite::{OptionalExtension as _, TransactionBehavior, params};
 use tokio_rusqlite::Connection;
 
 mod auto_update;
+mod auto_update_hydration;
 mod backups;
 mod discovery;
 mod github_packages;
@@ -360,6 +361,7 @@ pub struct AutoUpdateCandidateRow {
     pub last_error: Option<String>,
     pub superseded_at: Option<String>,
     pub superseded_by_candidate_id: Option<String>,
+    pub hydration_origin: Option<String>,
 }
 
 #[derive(Clone, Debug)]
@@ -416,6 +418,7 @@ pub struct DeployCheckReportSnapshotRow {
 pub struct NewVersionDiscoveryRow {
     pub service_id: String,
     pub image_ref: String,
+    pub source_job_id: String,
     pub discovered_at: String,
     pub current_digest: String,
     pub current_display_tag: String,

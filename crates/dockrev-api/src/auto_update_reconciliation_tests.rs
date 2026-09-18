@@ -36,6 +36,7 @@ mod reconciliation_tests {
         let history = vec![NewVersionDiscoveryRow {
             service_id: "svc".to_string(),
             image_ref: "ghcr.io/acme/app".to_string(),
+            source_job_id: "check".to_string(),
             discovered_at: "2026-04-30T00:00:00Z".to_string(),
             current_digest: "sha256:old".to_string(),
             current_display_tag: "1.0.0".to_string(),
@@ -96,10 +97,12 @@ mod reconciliation_tests {
             last_error: None,
             superseded_at: None,
             superseded_by_candidate_id: None,
+            hydration_origin: None,
         });
         let history = vec![NewVersionDiscoveryRow {
             service_id: "svc".to_string(),
             image_ref: "ghcr.io/acme/app".to_string(),
+            source_job_id: "check".to_string(),
             discovered_at: "2026-04-30T00:00:00Z".to_string(),
             current_digest: "sha256:old".to_string(),
             current_display_tag: "1.0.0".to_string(),
@@ -154,6 +157,7 @@ mod reconciliation_tests {
             last_error: None,
             superseded_at: None,
             superseded_by_candidate_id: None,
+            hydration_origin: None,
         };
         let digest_a = "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
         let digest_b = "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";

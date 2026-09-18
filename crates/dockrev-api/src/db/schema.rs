@@ -652,6 +652,7 @@ pub(super) fn migrate(conn: &mut rusqlite::Connection) -> anyhow::Result<()> {
     apply_migration_0017_add_auto_update_candidate_projection_context(conn)?;
     apply_migration_0018_add_auto_update_candidate_audit_fields(conn)?;
     apply_migration_0019_add_auto_update_candidate_resolved_tags(conn)?;
+    apply_migration_0020_hydrate_auto_update_candidates_from_discoveries(conn)?;
     schema_lifecycle_events::apply(conn)?;
     schema_job_history_retention::apply(conn)?;
     schema_backup_cleanup_state::apply(conn)?;

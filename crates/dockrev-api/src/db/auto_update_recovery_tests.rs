@@ -68,6 +68,212 @@ async fn lists_only_enqueued_auto_policy_jobs_for_recovery() {
         ["recovery-job"]
     );
 }
+
+#[tokio::test]
+async fn hydrates_missing_candidate_from_successful_webhook_discovery_idempotently() {
+    let db = Db::open(Path::new(":memory:")).await.unwrap();
+    db.call(|conn| {
+        conn.execute(
+            "INSERT INTO stacks (id, name, compose_type, compose_files_json, backup_targets_json, backup_retention_keep_last, backup_retention_delete_after_stable_seconds, created_at, updated_at, last_check_at) VALUES ('stack', 'stack', 'path', '[]', '[]', 0, 0, '2026-04-30', '2026-04-30', '2026-04-30')",
+            [],
+        )?;
+        conn.execute(
+            "INSERT INTO services (id, stack_id, name, image_ref, image_tag, current_digest, candidate_digest, auto_rollback, backup_targets_bind_paths_json, backup_targets_volume_names_json, created_at, updated_at) VALUES ('service', 'stack', 'service', 'ghcr.io/acme/app', 'latest', 'sha256:current', 'sha256:new', 0, '{}', '{}', '2026-04-30', '2026-04-30')",
+            [],
+        )?;
+        conn.execute(
+            "INSERT INTO service_new_version_discoveries (service_id, image_ref, source_job_id, discovered_at, current_digest, current_display_tag, current_tag, candidate_tag, candidate_digest, candidate_display_tag) VALUES ('service', 'ghcr.io/acme/app:latest', 'check-webhook', '2026-04-30T00:00:00Z', 'sha256:current', '1.0.0', 'latest', '1.4.0', 'sha256:new', '1.4.0')",
+            [],
+        )?;
+        Ok(())
+    })
+    .await
+    .unwrap();
+    db.insert_job(crate::api::types::JobListItem {
+        id: "check-webhook".to_string(),
+        r#type: crate::api::types::JobType::Check,
+        scope: crate::api::types::JobScope::Service,
+        stack_id: Some("stack".to_string()),
+        service_id: Some("service".to_string()),
+        status: "success".to_string(),
+        created_by: "webhook".to_string(),
+        reason: "webhook".to_string(),
+        created_at: "2026-04-30T00:00:00Z".to_string(),
+        started_at: None,
+        finished_at: Some("2026-04-30T00:00:00Z".to_string()),
+        allow_arch_mismatch: false,
+        backup_mode: "inherit".to_string(),
+        summary_json: serde_json::json!({"source": "github_webhook"}),
+    })
+    .await
+    .unwrap();
+
+    assert!(
+        db.get_auto_update_candidate("service", "sha256:new")
+            .await
+            .unwrap()
+            .is_none()
+    );
+    assert_eq!(
+        db.hydrate_auto_update_candidates("2026-04-30T00:01:00Z")
+            .await
+            .unwrap(),
+        1
+    );
+    let candidate = db
+        .get_auto_update_candidate("service", "sha256:new")
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(candidate.status, "ready");
+    assert_eq!(candidate.source, "github_webhook");
+    assert_eq!(candidate.source_job_id, "check-webhook");
+    assert_eq!(candidate.discovered_at, "2026-04-30T00:00:00Z");
+    assert_eq!(candidate.hydration_origin.as_deref(), Some("discovery_history"));
+    assert_eq!(candidate.resolved_version.as_deref(), Some("1.4.0"));
+
+    assert_eq!(
+        db.hydrate_auto_update_candidates("2026-04-30T00:02:00Z")
+            .await
+            .unwrap(),
+        1
+    );
+    let diagnostics = db
+        .list_candidate_hydration_diagnostics(&["service".to_string()])
+        .await
+        .unwrap();
+    assert_eq!(diagnostics.len(), 1);
+    assert_eq!(diagnostics[0].status, "hydrated");
+    assert_eq!(diagnostics[0].source.as_deref(), Some("github_webhook"));
+}
+
+#[tokio::test]
+async fn ambiguous_discovery_history_is_unresolved_and_cannot_authorize_policy() {
+    let db = Db::open(Path::new(":memory:")).await.unwrap();
+    db.call(|conn| {
+        conn.execute(
+            "INSERT INTO stacks (id, name, compose_type, compose_files_json, backup_targets_json, backup_retention_keep_last, backup_retention_delete_after_stable_seconds, created_at, updated_at, last_check_at) VALUES ('stack', 'stack', 'path', '[]', '[]', 0, 0, '2026-04-30', '2026-04-30', '2026-04-30')",
+            [],
+        )?;
+        conn.execute(
+            "INSERT INTO services (id, stack_id, name, image_ref, image_tag, current_digest, candidate_digest, auto_rollback, backup_targets_bind_paths_json, backup_targets_volume_names_json, created_at, updated_at) VALUES ('service', 'stack', 'service', 'ghcr.io/acme/app', 'latest', 'sha256:current', 'sha256:ambiguous', 0, '{}', '{}', '2026-04-30', '2026-04-30')",
+            [],
+        )?;
+        conn.execute(
+            "INSERT INTO service_new_version_discoveries (service_id, image_ref, source_job_id, discovered_at, current_digest, current_display_tag, current_tag, candidate_tag, candidate_digest, candidate_display_tag) VALUES ('service', '', '', '', '', '1.0.0', 'latest', 'latest', 'sha256:ambiguous', 'latest')",
+            [],
+        )?;
+        Ok(())
+    })
+    .await
+    .unwrap();
+
+    db.hydrate_auto_update_candidates("2026-04-30T00:01:00Z")
+        .await
+        .unwrap();
+    let candidate = db
+        .get_auto_update_candidate("service", "sha256:ambiguous")
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(candidate.status, "unresolved");
+    assert_eq!(candidate.reason.as_deref(), Some("migration_ambiguous_history"));
+    assert_eq!(candidate.source, "unknown");
+    assert_eq!(
+        candidate.hydration_origin.as_deref(),
+        Some("discovery_history_ambiguous")
+    );
+    let diagnostics = db
+        .list_candidate_hydration_diagnostics(&["service".to_string()])
+        .await
+        .unwrap();
+    assert_eq!(diagnostics[0].status, "ambiguous_history");
+    assert_eq!(
+        diagnostics[0].reason.as_deref(),
+        Some("migration_ambiguous_history")
+    );
+}
+
+#[tokio::test]
+async fn candidate_hydration_migration_copies_history_and_is_idempotent() {
+    let suffix = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_nanos();
+    let path = std::env::temp_dir().join(format!("dockrev-hydration-migration-{suffix}.sqlite3"));
+    {
+        let db = Db::open(&path).await.unwrap();
+        db.call(|conn| {
+            conn.execute(
+                "INSERT INTO stacks (id, name, compose_type, compose_files_json, backup_targets_json, backup_retention_keep_last, backup_retention_delete_after_stable_seconds, created_at, updated_at, last_check_at) VALUES ('stack', 'stack', 'path', '[]', '[]', 0, 0, '2026-04-30', '2026-04-30', '2026-04-30')",
+                [],
+            )?;
+            conn.execute(
+                "INSERT INTO services (id, stack_id, name, image_ref, image_tag, current_digest, candidate_digest, auto_rollback, backup_targets_bind_paths_json, backup_targets_volume_names_json, created_at, updated_at) VALUES ('service', 'stack', 'service', 'ghcr.io/acme/app', 'latest', 'sha256:current', 'sha256:migrated', 0, '{}', '{}', '2026-04-30', '2026-04-30')",
+                [],
+            )?;
+            conn.execute(
+                "INSERT INTO service_new_version_discoveries (service_id, image_ref, source_job_id, discovered_at, current_digest, current_display_tag, current_tag, candidate_tag, candidate_digest, candidate_display_tag) VALUES ('service', 'ghcr.io/acme/app:latest', 'check-schedule', '2026-04-30T00:00:00Z', 'sha256:current', '1.0.0', 'latest', '1.5.0', 'sha256:migrated', '1.5.0')",
+                [],
+            )?;
+            conn.execute(
+                "DELETE FROM schema_migrations WHERE id = '0020_hydrate_auto_update_candidates_from_discoveries'",
+                [],
+            )?;
+            conn.execute(
+                "ALTER TABLE auto_update_candidates DROP COLUMN hydration_origin",
+                [],
+            )?;
+            Ok(())
+        })
+        .await
+        .unwrap();
+        db.insert_job(crate::api::types::JobListItem {
+            id: "check-schedule".to_string(),
+            r#type: crate::api::types::JobType::Check,
+            scope: crate::api::types::JobScope::Service,
+            stack_id: Some("stack".to_string()),
+            service_id: Some("service".to_string()),
+            status: "success".to_string(),
+            created_by: "schedule".to_string(),
+            reason: "schedule".to_string(),
+            created_at: "2026-04-30T00:00:00Z".to_string(),
+            started_at: None,
+            finished_at: Some("2026-04-30T00:00:00Z".to_string()),
+            allow_arch_mismatch: false,
+            backup_mode: "inherit".to_string(),
+            summary_json: serde_json::json!({}),
+        })
+        .await
+        .unwrap();
+    }
+
+    let db = Db::open(&path).await.unwrap();
+    let candidate = db
+        .get_auto_update_candidate("service", "sha256:migrated")
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(candidate.source, "schedule");
+    assert_eq!(candidate.hydration_origin.as_deref(), Some("discovery_history"));
+    assert_eq!(candidate.discovered_at, "2026-04-30T00:00:00Z");
+    drop(db);
+
+    let db = Db::open(&path).await.unwrap();
+    let count = db
+        .call(|conn| {
+            Ok(conn.query_row(
+                "SELECT COUNT(*) FROM auto_update_candidates WHERE service_id = 'service' AND candidate_digest = 'sha256:migrated'",
+                [],
+                |row| row.get::<_, i64>(0),
+            )?)
+        })
+        .await
+        .unwrap();
+    assert_eq!(count, 1);
+    drop(db);
+    std::fs::remove_file(path).unwrap();
+}
 #[tokio::test]
 async fn candidate_settlement_is_unique_and_idempotent() {
     let db = Db::open(Path::new(":memory:")).await.unwrap();

@@ -8379,6 +8379,9 @@ html[data-theme="light"] .serviceLogsTerminal {
 }
 
 .autoPolicyFactValue {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
   color: var(--text);
   font-size: 13px;
   font-weight: 620;

@@ -282,6 +282,7 @@ WHERE id = ?1
                         ignore,
                         version_inference: None,
                         candidate_settlement: None,
+                        candidate_hydration: None,
                         auto_update: None,
                         new_version_discovery_count: None,
                         settings: ServiceSettings {
@@ -514,6 +515,7 @@ ORDER BY st.name ASC, sv.name ASC
                             ..VersionInferenceState::default()
                         }),
                         candidate_settlement: None,
+                        candidate_hydration: None,
                         auto_update: None,
                         new_version_discovery_count: None,
                         settings: ServiceSettings {

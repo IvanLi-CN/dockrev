@@ -377,6 +377,7 @@ async fn dry_run_does_not_execute() {
             ignore: None,
             version_inference: None,
             candidate_settlement: None,
+            candidate_hydration: None,
             auto_update: None,
             new_version_discovery_count: None,
             settings: ServiceSettings {
@@ -441,6 +442,7 @@ async fn update_job_refreshes_container_id_after_up() {
             ignore: None,
             version_inference: None,
             candidate_settlement: None,
+            candidate_hydration: None,
             auto_update: None,
             new_version_discovery_count: None,
             settings: ServiceSettings {
@@ -507,6 +509,7 @@ async fn update_job_emits_service_progress_events() {
             ignore: None,
             version_inference: None,
             candidate_settlement: None,
+            candidate_hydration: None,
             auto_update: None,
             new_version_discovery_count: None,
             settings: ServiceSettings {
@@ -590,6 +593,7 @@ async fn stack_update_batches_pull_and_up_once_for_selected_services() {
                 ignore: None,
                 version_inference: None,
                 candidate_settlement: None,
+                candidate_hydration: None,
                 auto_update: None,
                 new_version_discovery_count: None,
                 settings: ServiceSettings {
@@ -624,6 +628,7 @@ async fn stack_update_batches_pull_and_up_once_for_selected_services() {
                 ignore: None,
                 version_inference: None,
                 candidate_settlement: None,
+                candidate_hydration: None,
                 auto_update: None,
                 new_version_discovery_count: None,
                 settings: ServiceSettings {

@@ -75,6 +75,8 @@ pub struct Service {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub candidate_settlement: Option<CandidateSettlement>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub candidate_hydration: Option<CandidateHydrationDiagnostic>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub auto_update: Option<AutoUpdateProjection>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub new_version_discovery_count: Option<u32>,
@@ -157,6 +159,30 @@ pub struct CandidateSettlement {
     pub superseded_at: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub superseded_by_candidate_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub source: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub source_job_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub hydration_origin: Option<String>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CandidateHydrationDiagnostic {
+    pub status: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reason: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub candidate_digest: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub source: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub source_job_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub hydration_origin: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub discovered_at: Option<String>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]

@@ -7,6 +7,8 @@
 - 已实现候选事实表、幂等 settlement、digest-bound SemVer 门禁、策略重评估、重试/周期 reconciliation 和兼容 API/UI 投影；迁移对不可证明历史采用 fail-closed 处理。
 - 自动策略 update job 先持久化为 queued，再通过候选有效性 CAS 转为 running；候选替代会取消尚未启动的 queued job，并在 apply 尚未提交时请求停止已运行 job。
 - 候选来源以结构化 provenance 保存为 schedule、github_webhook 或 unknown；unknown 历史只保留审计，不获得自动部署授权。
+- migration 0020 与运行时 hydration 从 discovery history 选择最早可信的成功 check observation；缺失 image、baseline、source job 或合格来源时生成 unresolved 的 `migration_ambiguous_history` 审计事实，并保持 source unknown。
+- hydration 事务只创建 candidate fact、supersede 旧候选和跳过旧 pending；启动/周期 reconciliation 随后复用现有 evaluator 与 claim safety，不直接执行 Compose。
 - Validation: local checks complete; the shared-testbox Compose smoke is partially blocked by the existing metrics migration error <code>retained rollups cannot be recovered after raw retention</code> during the Compose V1 rejection setup. The V2 plugin and standalone lifecycle portions passed before that blocker.
 
 ## 实现顺序
@@ -47,17 +49,19 @@
 ### M5：API、UI、通知与历史
 
 - API 增加 candidate settlement 与 policy action 的可选字段，保持既有 payload 兼容。
+- Candidate settlement 增加可选 `source`、`sourceJobId`、`hydrationOrigin`；Service/Stack/Overview 增加只读 `candidateHydration` diagnostic。
 - UI 区分 inference waiting、unresolved、rule not matched、delayed、queued/running/completed。
+- UI 区分 candidate missing、hydrated 与 ambiguous history，并展示 source、source job 与 hydration origin。
 - SemVer preview 与后端严格解析语义一致。
 - 通知和历史读取 canonical settlement，并按 service + digest 去重。
 - 保持原始 job summary 不可变，把 settlement 作为独立事实展示。
 
 ### M6：迁移与有限补偿
 
-- 从 active pending、可证明的发现记录和现有 snapshot 建立 candidate 初始状态。
+- 从 active pending 与可证明的 discovery history 建立 candidate 初始状态；0020 保存 `hydration_origin=discovery_history` 及 source job provenance。
 - 对来源可证明为 schedule/GHCR webhook 且有 discoveredAt、仍是最新 digest 的候选执行一次有限 reconciliation。
 - 迁移恢复严格 SemVer 或 digest-bound display evidence；floating/不可解析版本保持等待或 unresolved，只有当前服务 candidate digest 才能保留 active authorization。
-- 来源不明、时间缺失、已 superseded 或历史终态记录不自动补发 update job。
+- 来源不明、image/baseline/source job/time 缺失、已 superseded 或历史终态记录不自动补发 update job；当前 digest 的不完整历史保留 `migration_ambiguous_history` audit reason。
 - 迁移脚本必须可重复执行，且不能把历史通知直接转换成新的自动部署授权。
 
 ## 计划修改边界

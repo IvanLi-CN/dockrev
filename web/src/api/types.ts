@@ -1,6 +1,11 @@
 import type { ServiceResourceOverviewItem, ServiceResourceOverviewResponse } from './serviceResourceTypes'
 import type { VersionInferenceState } from './autoUpdateTypes'
-export type { AutoUpdateProjection, CandidateSettlement, VersionInferenceState } from './autoUpdateTypes'
+export type {
+  AutoUpdateProjection,
+  CandidateHydrationDiagnostic,
+  CandidateSettlement,
+  VersionInferenceState,
+} from './autoUpdateTypes'
 
 export type StackStatus = 'healthy' | 'degraded' | 'unknown'
 
@@ -184,6 +189,7 @@ export type Service = {
   } | null
   versionInference?: VersionInferenceState | null
   candidateSettlement?: import('./autoUpdateTypes').CandidateSettlement | null
+  candidateHydration?: import('./autoUpdateTypes').CandidateHydrationDiagnostic | null
   autoUpdate?: import('./autoUpdateTypes').AutoUpdateProjection | null
   newVersionDiscoveryCount?: number | null
   settings: ServiceSettings
@@ -782,6 +788,7 @@ export type HomepageNavItem = {
   ignore?: Service['ignore']
   versionInference?: VersionInferenceState | null
   candidateSettlement?: import('./autoUpdateTypes').CandidateSettlement | null
+  candidateHydration?: import('./autoUpdateTypes').CandidateHydrationDiagnostic | null
   autoUpdate?: import('./autoUpdateTypes').AutoUpdateProjection | null
   newVersionDiscoveryCount?: number | null
   settings: ServiceSettings
