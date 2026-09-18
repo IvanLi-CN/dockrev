@@ -441,6 +441,112 @@ WHERE update_job_stop_controls.apply_committed_at IS NULL
     )?;
     tx.execute(
         r#"
+UPDATE auto_update_candidates AS keeper
+SET source_job_id = COALESCE(
+      (SELECT NULLIF(TRIM(other.source_job_id), '')
+       FROM migration_duplicate_auto_update_candidates mapping
+       JOIN auto_update_candidates other ON other.id = mapping.duplicate_id
+       WHERE mapping.keeper_id = keeper.id
+         AND LOWER(TRIM(other.source)) IN ('schedule', 'github_webhook')
+         AND NULLIF(TRIM(other.source_job_id), '') IS NOT NULL
+         AND NULLIF(TRIM(other.discovered_at), '') IS NOT NULL
+       ORDER BY other.discovered_at ASC, other.created_at ASC, other.id ASC LIMIT 1),
+      NULLIF(TRIM(keeper.source_job_id), ''), keeper.source_job_id),
+    source = COALESCE(
+      (SELECT other.source
+       FROM migration_duplicate_auto_update_candidates mapping
+       JOIN auto_update_candidates other ON other.id = mapping.duplicate_id
+       WHERE mapping.keeper_id = keeper.id
+         AND LOWER(TRIM(other.source)) IN ('schedule', 'github_webhook')
+         AND NULLIF(TRIM(other.source_job_id), '') IS NOT NULL
+         AND NULLIF(TRIM(other.discovered_at), '') IS NOT NULL
+       ORDER BY other.discovered_at ASC, other.created_at ASC, other.id ASC LIMIT 1),
+      NULLIF(TRIM(keeper.source), ''), keeper.source),
+    discovered_at = COALESCE(
+      (SELECT NULLIF(TRIM(other.discovered_at), '')
+       FROM migration_duplicate_auto_update_candidates mapping
+       JOIN auto_update_candidates other ON other.id = mapping.duplicate_id
+       WHERE mapping.keeper_id = keeper.id
+         AND LOWER(TRIM(other.source)) IN ('schedule', 'github_webhook')
+         AND NULLIF(TRIM(other.source_job_id), '') IS NOT NULL
+         AND NULLIF(TRIM(other.discovered_at), '') IS NOT NULL
+       ORDER BY other.discovered_at ASC, other.created_at ASC, other.id ASC LIMIT 1),
+      NULLIF(TRIM(keeper.discovered_at), ''), keeper.discovered_at),
+    resolved_version = COALESCE(
+      NULLIF(TRIM(keeper.resolved_version), ''),
+      (SELECT NULLIF(TRIM(other.resolved_version), '')
+       FROM migration_duplicate_auto_update_candidates mapping
+       JOIN auto_update_candidates other ON other.id = mapping.duplicate_id
+       WHERE mapping.keeper_id = keeper.id AND NULLIF(TRIM(other.resolved_version), '') IS NOT NULL
+       ORDER BY CASE other.status WHEN 'ready' THEN 2 WHEN 'awaiting_inference' THEN 1 ELSE 0 END DESC,
+                other.created_at ASC, other.id ASC LIMIT 1)),
+    status = CASE
+      WHEN keeper.status = 'superseded' THEN keeper.status
+      WHEN EXISTS (SELECT 1 FROM migration_duplicate_auto_update_candidates mapping
+                   JOIN auto_update_candidates other ON other.id = mapping.duplicate_id
+                   WHERE mapping.keeper_id = keeper.id AND other.status = 'ready') THEN 'ready'
+      WHEN EXISTS (SELECT 1 FROM migration_duplicate_auto_update_candidates mapping
+                   JOIN auto_update_candidates other ON other.id = mapping.duplicate_id
+                   WHERE mapping.keeper_id = keeper.id AND other.status = 'awaiting_inference') THEN 'awaiting_inference'
+      ELSE keeper.status END,
+    reason = COALESCE(
+      (SELECT NULLIF(TRIM(other.reason), '')
+       FROM migration_duplicate_auto_update_candidates mapping
+       JOIN auto_update_candidates other ON other.id = mapping.duplicate_id
+       WHERE mapping.keeper_id = keeper.id AND NULLIF(TRIM(other.reason), '') IS NOT NULL
+       ORDER BY CASE other.status WHEN 'ready' THEN 3 WHEN 'awaiting_inference' THEN 2 WHEN 'unresolved' THEN 1 ELSE 0 END DESC,
+                other.created_at ASC, other.id ASC LIMIT 1), keeper.reason),
+    attempts = MAX(keeper.attempts, COALESCE(
+      (SELECT MAX(other.attempts)
+       FROM migration_duplicate_auto_update_candidates mapping
+       JOIN auto_update_candidates other ON other.id = mapping.duplicate_id
+       WHERE mapping.keeper_id = keeper.id), 0)),
+    settled_at = COALESCE(keeper.settled_at,
+      (SELECT other.settled_at
+       FROM migration_duplicate_auto_update_candidates mapping
+       JOIN auto_update_candidates other ON other.id = mapping.duplicate_id
+       WHERE mapping.keeper_id = keeper.id AND other.settled_at IS NOT NULL
+       ORDER BY other.settled_at ASC, other.created_at ASC, other.id ASC LIMIT 1)),
+    policy_status = COALESCE(
+      (SELECT other.policy_status
+       FROM migration_duplicate_auto_update_candidates mapping
+       JOIN auto_update_candidates other ON other.id = mapping.duplicate_id
+       WHERE mapping.keeper_id = keeper.id AND other.policy_status IS NOT NULL
+         AND EXISTS (SELECT 1 FROM auto_update_pending active_pending
+                     WHERE active_pending.candidate_id = other.id
+                       AND active_pending.status IN ('pending', 'enqueuing', 'enqueued'))
+       ORDER BY other.created_at ASC, other.id ASC LIMIT 1), keeper.policy_status),
+    update_job_id = COALESCE(
+      (SELECT other.update_job_id
+       FROM migration_duplicate_auto_update_candidates mapping
+       JOIN auto_update_candidates other ON other.id = mapping.duplicate_id
+       WHERE mapping.keeper_id = keeper.id AND other.update_job_id IS NOT NULL
+         AND EXISTS (SELECT 1 FROM auto_update_pending active_pending
+                     WHERE active_pending.candidate_id = other.id
+                       AND active_pending.status IN ('pending', 'enqueuing', 'enqueued'))
+       ORDER BY other.created_at ASC, other.id ASC LIMIT 1), keeper.update_job_id),
+    hydration_origin = CASE
+      WHEN EXISTS (SELECT 1 FROM migration_duplicate_auto_update_candidates mapping
+                   JOIN auto_update_candidates other ON other.id = mapping.duplicate_id
+                   WHERE mapping.keeper_id = keeper.id AND other.hydration_origin = 'discovery_history')
+        THEN 'discovery_history'
+      ELSE COALESCE(keeper.hydration_origin, (SELECT other.hydration_origin
+        FROM migration_duplicate_auto_update_candidates mapping
+        JOIN auto_update_candidates other ON other.id = mapping.duplicate_id
+        WHERE mapping.keeper_id = keeper.id AND other.hydration_origin IS NOT NULL
+        ORDER BY other.created_at ASC, other.id ASC LIMIT 1)) END,
+    settlement_generation = MAX(keeper.settlement_generation, COALESCE(
+      (SELECT MAX(other.settlement_generation)
+       FROM migration_duplicate_auto_update_candidates mapping
+       JOIN auto_update_candidates other ON other.id = mapping.duplicate_id
+       WHERE mapping.keeper_id = keeper.id), 0)),
+    updated_at = ?1
+WHERE keeper.id IN (SELECT keeper_id FROM migration_duplicate_auto_update_candidates WHERE duplicate_id <> keeper_id)
+"#,
+        rusqlite::params![now],
+    )?;
+    tx.execute(
+        r#"
 UPDATE auto_update_pending
 SET candidate_id = (
   SELECT mapping.keeper_id

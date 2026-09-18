@@ -101,7 +101,8 @@ ON CONFLICT(scope_type, scope_id) DO UPDATE SET
         input: &AutoUpdatePendingInput,
         now: &str,
     ) -> anyhow::Result<AutoUpdatePendingRow> {
-        let input = input.clone();
+        let mut input = input.clone();
+        input.candidate_digest = canonical_auto_update_digest(&input.candidate_digest);
         let now = now.to_string();
         self.call(move |conn| {
             let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
@@ -367,7 +368,7 @@ WHERE id = ?1 AND status = 'pending'
     ) -> anyhow::Result<bool> {
         let pending_id = pending_id.to_string();
         let service_id = service_id.to_string();
-        let candidate_digest = candidate_digest.to_string();
+        let candidate_digest = canonical_auto_update_digest(candidate_digest);
         let policy_scope_type = policy_scope_type.to_string();
         let policy_scope_id = policy_scope_id.to_string();
         let rule_id = rule_id.to_string();
