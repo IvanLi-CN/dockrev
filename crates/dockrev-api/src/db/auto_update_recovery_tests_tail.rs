@@ -377,3 +377,136 @@ async fn cancelled_stale_queued_job_updates_candidate_projection() {
     assert_eq!(candidate.policy_scope_id.as_deref(), Some("stack"));
     assert_eq!(candidate.update_job_id.as_deref(), Some("stale-queued-job"));
 }
+
+#[tokio::test]
+async fn candidate_hydration_runs_from_a_real_pre_0020_database_fixture() {
+    let path = std::env::temp_dir().join(format!(
+        "dockrev-pre-0020-hydration-{}.sqlite3",
+        ulid::Ulid::new()
+    ));
+    {
+        let conn = rusqlite::Connection::open(&path).unwrap();
+        conn.execute_batch(
+            r#"
+CREATE TABLE schema_migrations (id TEXT PRIMARY KEY NOT NULL, applied_at TEXT NOT NULL);
+CREATE TABLE jobs (
+  id TEXT PRIMARY KEY NOT NULL,
+  type TEXT NOT NULL,
+  scope TEXT NOT NULL,
+  stack_id TEXT,
+  service_id TEXT,
+  status TEXT NOT NULL,
+  allow_arch_mismatch INTEGER NOT NULL,
+  backup_mode TEXT NOT NULL,
+  created_by TEXT NOT NULL,
+  reason TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  started_at TEXT,
+  finished_at TEXT,
+  summary_json TEXT NOT NULL
+);
+CREATE TABLE services (
+  id TEXT PRIMARY KEY NOT NULL,
+  stack_id TEXT NOT NULL,
+  name TEXT NOT NULL,
+  image_ref TEXT NOT NULL,
+  image_tag TEXT NOT NULL,
+  current_digest TEXT,
+  candidate_digest TEXT,
+  auto_rollback INTEGER NOT NULL,
+  backup_targets_bind_paths_json TEXT NOT NULL,
+  backup_targets_volume_names_json TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+CREATE TABLE update_job_stop_controls (
+  job_id TEXT PRIMARY KEY NOT NULL,
+  apply_committed_at TEXT,
+  stop_requested_at TEXT,
+  stop_requested_by TEXT,
+  recovery_snapshot_json TEXT,
+  recovery_attempted_at TEXT,
+  recovery_error TEXT,
+  updated_at TEXT NOT NULL
+);
+CREATE TABLE service_new_version_discoveries (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  service_id TEXT NOT NULL,
+  image_ref TEXT NOT NULL DEFAULT '',
+  source_job_id TEXT NOT NULL,
+  discovered_at TEXT NOT NULL,
+  current_digest TEXT NOT NULL DEFAULT '',
+  current_display_tag TEXT NOT NULL DEFAULT '',
+  current_tag TEXT NOT NULL DEFAULT '',
+  candidate_tag TEXT NOT NULL DEFAULT '',
+  candidate_digest TEXT NOT NULL,
+  candidate_display_tag TEXT NOT NULL DEFAULT ''
+);
+INSERT INTO schema_migrations (id, applied_at) VALUES
+  ('0007_remove_manual_stacks', '2026-01-01T00:00:00Z'),
+  ('0008_drop_version_inference_snapshots', '2026-01-01T00:00:00Z'),
+  ('0009_add_new_version_notifications', '2026-01-01T00:00:00Z'),
+  ('0010_add_new_version_discoveries', '2026-01-01T00:00:00Z'),
+  ('0011_track_candidate_display_tags_in_new_version_discoveries', '2026-01-01T00:00:00Z'),
+  ('0012_track_image_ref_in_new_version_discoveries', '2026-01-01T00:00:00Z'),
+  ('0013_add_update_job_stop_controls', '2026-01-01T00:00:00Z');
+INSERT INTO services (
+  id, stack_id, name, image_ref, image_tag, current_digest, candidate_digest,
+  auto_rollback, backup_targets_bind_paths_json, backup_targets_volume_names_json,
+  created_at, updated_at
+) VALUES (
+  'legacy-service', 'legacy-stack', 'app', 'ghcr.io/acme/app', 'latest',
+  'sha256:current', 'LEGACY', 0, '{}', '{}',
+  '2026-04-30T00:00:00Z', '2026-04-30T00:00:00Z'
+);
+INSERT INTO jobs (
+  id, type, scope, stack_id, service_id, status, allow_arch_mismatch, backup_mode,
+  created_by, reason, created_at, finished_at, summary_json
+) VALUES (
+  'legacy-schedule-check', 'check', 'service', 'legacy-stack', 'legacy-service',
+  'success', 0, 'inherit', 'schedule', 'schedule',
+  '2026-04-30T00:00:00Z', '2026-04-30T00:00:01Z', '{}'
+);
+INSERT INTO service_new_version_discoveries (
+  service_id, image_ref, source_job_id, discovered_at, current_digest,
+  current_display_tag, current_tag, candidate_tag, candidate_digest, candidate_display_tag
+) VALUES (
+  'legacy-service', 'ghcr.io/acme/app:latest', 'legacy-schedule-check',
+  '2026-04-30T00:00:00Z', 'sha256:current', '1.0.0', 'latest',
+  'latest', 'LEGACY', 'latest'
+);
+"#,
+        )
+        .unwrap();
+    }
+
+    let db = Db::open(&path).await.unwrap();
+    let candidate = db
+        .get_auto_update_candidate("legacy-service", "sha256:legacy")
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(candidate.source, "schedule");
+    assert_eq!(candidate.source_job_id, "legacy-schedule-check");
+    assert_eq!(candidate.discovered_at, "2026-04-30T00:00:00Z");
+    assert_eq!(candidate.hydration_origin.as_deref(), Some("discovery_history"));
+    assert_eq!(candidate.status, "awaiting_inference");
+    drop(db);
+
+    let db = Db::open(&path).await.unwrap();
+    let count = db
+        .call(|conn| {
+            Ok(conn.query_row(
+                "SELECT COUNT(*) FROM auto_update_candidates WHERE service_id = 'legacy-service' AND candidate_digest = 'sha256:legacy'",
+                [],
+                |row| row.get::<_, i64>(0),
+            )?)
+        })
+        .await
+        .unwrap();
+    assert_eq!(count, 1);
+    drop(db);
+    std::fs::remove_file(&path).unwrap();
+    let _ = std::fs::remove_file(path.with_extension("sqlite3-wal"));
+    let _ = std::fs::remove_file(path.with_extension("sqlite3-shm"));
+}

@@ -416,8 +416,11 @@ WHERE job_id = ?1
         let service_ids = service_ids.to_vec();
         self.call(move |conn| {
             let mut out = Vec::new();
+            let candidate_digest = super::canonical_digest_sql("c.candidate_digest");
+            let service_digest = super::canonical_digest_sql("s.candidate_digest");
+            let current_digest = super::canonical_digest_sql("s.current_digest");
             let mut stmt = conn.prepare(
-                &format!("SELECT {AUTO_UPDATE_CANDIDATE_COLUMNS_QUALIFIED} FROM auto_update_candidates c JOIN services s ON s.id = c.service_id WHERE c.service_id = ?1 AND (LOWER(TRIM(s.candidate_digest)) = LOWER(TRIM(c.candidate_digest)) OR (s.candidate_digest IS NULL AND c.policy_status = 'completed' AND LOWER(TRIM(s.current_digest)) = LOWER(TRIM(c.candidate_digest)))) ORDER BY c.discovered_at DESC, c.id DESC LIMIT 1"),
+                &format!("SELECT {AUTO_UPDATE_CANDIDATE_COLUMNS_QUALIFIED} FROM auto_update_candidates c JOIN services s ON s.id = c.service_id WHERE c.service_id = ?1 AND ({service_digest} = {candidate_digest} OR (s.candidate_digest IS NULL AND c.policy_status = 'completed' AND {current_digest} = {candidate_digest})) ORDER BY c.discovered_at DESC, c.id DESC LIMIT 1"),
             )?;
             for service_id in service_ids {
                 if let Ok(row) = stmt.query_row(params![service_id], map_auto_update_candidate_row) {
