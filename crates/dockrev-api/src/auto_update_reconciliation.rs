@@ -107,9 +107,21 @@ async fn has_valid_auto_policy_source(
     if !job.status.eq_ignore_ascii_case("success") {
         return Ok(false);
     }
-    if stack_id.is_some_and(|stack_id| job.stack_id.as_deref() != Some(stack_id))
-        || service_id.is_some_and(|service_id| job.service_id.as_deref() != Some(service_id))
-    {
+    let identity_matches = match (stack_id, service_id, job.scope.as_str()) {
+        (Some(stack_id), Some(service_id), "service") => {
+            job.stack_id.as_deref() == Some(stack_id)
+                && job.service_id.as_deref() == Some(service_id)
+        }
+        (Some(stack_id), Some(_), "stack") => {
+            job.stack_id.as_deref() == Some(stack_id) && job.service_id.is_none()
+        }
+        (Some(_), Some(_), "all") => job.stack_id.is_none() && job.service_id.is_none(),
+        (Some(stack_id), None, _) => job.stack_id.as_deref() == Some(stack_id),
+        (None, Some(service_id), "service") => job.service_id.as_deref() == Some(service_id),
+        (None, None, _) => true,
+        _ => false,
+    };
+    if !identity_matches {
         return Ok(false);
     }
     Ok(auto_policy_source(&job.reason, &job.summary_json, Some(&job.created_by)) == Some(source))

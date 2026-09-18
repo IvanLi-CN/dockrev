@@ -43,6 +43,7 @@ struct DiscoveryHistoryRow {
     job_created_by: Option<String>,
     job_reason: Option<String>,
     job_summary_json: Option<String>,
+    job_scope: Option<String>,
     job_stack_id: Option<String>,
     job_service_id: Option<String>,
 }
@@ -59,8 +60,20 @@ fn job_summary(row: &DiscoveryHistoryRow) -> serde_json::Value {
 }
 
 fn source_job_matches_discovery(row: &DiscoveryHistoryRow) -> bool {
-    row.job_stack_id.as_deref() == Some(row.stack_id.as_str())
-        && row.job_service_id.as_deref() == Some(row.service_id.as_str())
+    match row.job_scope.as_deref() {
+        Some(scope) if scope.eq_ignore_ascii_case("service") => {
+            row.job_stack_id.as_deref() == Some(row.stack_id.as_str())
+                && row.job_service_id.as_deref() == Some(row.service_id.as_str())
+        }
+        Some(scope) if scope.eq_ignore_ascii_case("stack") => {
+            row.job_stack_id.as_deref() == Some(row.stack_id.as_str())
+                && row.job_service_id.is_none()
+        }
+        Some(scope) if scope.eq_ignore_ascii_case("all") => {
+            row.job_stack_id.is_none() && row.job_service_id.is_none()
+        }
+        _ => false,
+    }
 }
 
 fn qualified_source(row: &DiscoveryHistoryRow) -> Option<&'static str> {
@@ -164,6 +177,7 @@ SELECT
   j.created_by,
   j.reason,
   j.summary_json,
+  j.scope,
   j.stack_id,
   j.service_id
 FROM service_new_version_discoveries d
@@ -194,8 +208,9 @@ ORDER BY d.service_id, d.candidate_digest, d.discovered_at ASC, d.id ASC
             job_created_by: row.get(14)?,
             job_reason: row.get(15)?,
             job_summary_json: row.get(16)?,
-            job_stack_id: row.get(17)?,
-            job_service_id: row.get(18)?,
+            job_scope: row.get(17)?,
+            job_stack_id: row.get(18)?,
+            job_service_id: row.get(19)?,
         })
     })?;
     rows.collect()
