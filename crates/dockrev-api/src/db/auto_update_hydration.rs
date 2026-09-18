@@ -69,22 +69,11 @@ fn reuse_equivalent_candidate_id(
     let rows = stmt.query_map(params![service_id], |row| {
         Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
     })?;
-    let mut equivalent = None;
     for row in rows {
         let (id, digest) = row?;
         if digest == candidate_digest {
             return Ok(Some(id));
         }
-        if equivalent.is_none() && canonical_candidate_digest(&digest) == candidate_digest {
-            equivalent = Some((id, digest));
-        }
-    }
-    if let Some((id, _)) = equivalent {
-        tx.execute(
-            "UPDATE auto_update_candidates SET candidate_digest = ?1 WHERE id = ?2",
-            params![candidate_digest, id],
-        )?;
-        return Ok(Some(id));
     }
     Ok(None)
 }

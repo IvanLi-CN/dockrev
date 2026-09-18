@@ -6,6 +6,18 @@ pub(crate) struct ServiceOperationTarget {
     pub(crate) stack_id: String,
 }
 
+#[derive(Clone, Debug)]
+pub(crate) struct AutoPolicyEnqueueGuard {
+    pub(crate) pending_id: String,
+    pub(crate) service_id: String,
+    pub(crate) candidate_id: String,
+    pub(crate) candidate_digest: String,
+    pub(crate) policy_scope_type: String,
+    pub(crate) policy_scope_id: String,
+    pub(crate) rule_id: String,
+    pub(crate) expected_current_digest: String,
+}
+
 #[derive(Clone, Debug, serde::Deserialize, serde::Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct ServiceAcceptedState {
@@ -44,6 +56,7 @@ pub(crate) enum ServiceOperationAcquireOutcome {
     Acquired(Vec<ServiceOperationAcceptedStateLease>),
     Conflict(Box<JobListItem>),
     StaleCurrentDigest,
+    StaleAutoPolicy,
 }
 
 #[derive(Clone, Debug)]
@@ -241,6 +254,7 @@ WHERE id = ?1
             targets,
             initial_log,
             None,
+            None,
         )
         .await
     }
@@ -251,6 +265,7 @@ WHERE id = ?1
         targets: Vec<ServiceOperationTarget>,
         initial_log: Option<JobLogLine>,
         expected_current_digest: Option<&str>,
+        auto_policy_guard: Option<&AutoPolicyEnqueueGuard>,
     ) -> anyhow::Result<ServiceOperationAcquireOutcome> {
         let event_job_id = job.id.clone();
         let event_scope = job.scope.as_str().to_string();
@@ -259,9 +274,90 @@ WHERE id = ?1
         let event_type = job.r#type.as_str().to_string();
         let job_id = job.id.clone();
         let expected_current_digest = expected_current_digest.map(str::to_string);
+        let auto_policy_guard = auto_policy_guard.cloned();
         let outcome = self
             .call(move |conn| {
                 let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
+                if let Some(guard) = auto_policy_guard.as_ref() {
+                    let pending_digest = super::canonical_digest_sql("p.candidate_digest");
+                    let candidate_digest = super::canonical_digest_sql("c.candidate_digest");
+                    let service_digest = super::canonical_digest_sql("s.candidate_digest");
+                    let expected_digest = super::canonical_digest_sql("?7");
+                    let current_digest = super::canonical_digest_sql("s.current_digest");
+                    let expected_current_digest = super::canonical_digest_sql("?8");
+                    let sql = format!(
+                        r#"
+SELECT 1
+FROM auto_update_pending p
+JOIN auto_update_candidates c ON c.id = p.candidate_id
+JOIN services s ON s.id = p.service_id
+WHERE p.id = ?1
+  AND p.status = 'enqueuing'
+  AND p.service_id = ?2
+  AND p.candidate_id = ?3
+  AND p.policy_scope_type = ?4
+  AND p.policy_scope_id = ?5
+  AND p.rule_id = ?6
+  AND {pending_digest} = {expected_digest}
+  AND {candidate_digest} = {expected_digest}
+  AND {service_digest} = {expected_digest}
+  AND {current_digest} = {expected_current_digest}
+  AND c.service_id = p.service_id
+  AND c.status <> 'superseded'
+  AND c.policy_status = 'delayed'
+  AND c.policy_rule_id = p.rule_id
+"#,
+                    );
+                    let valid = tx
+                        .query_row(
+                            &sql,
+                            params![
+                                &guard.pending_id,
+                                &guard.service_id,
+                                &guard.candidate_id,
+                                &guard.policy_scope_type,
+                                &guard.policy_scope_id,
+                                &guard.rule_id,
+                                &guard.candidate_digest,
+                                &guard.expected_current_digest,
+                            ],
+                            |_row| Ok(()),
+                        )
+                        .optional()?
+                        .is_some();
+                    if !valid {
+                        let changed = tx.execute(
+                            r#"
+UPDATE auto_update_pending
+SET status = 'skipped',
+    summary_json = CASE
+      WHEN json_valid(summary_json)
+        AND json_type(CASE WHEN json_valid(summary_json) THEN summary_json ELSE '{}' END) = 'object'
+        THEN json_set(summary_json, '$.skipReason', 'candidate_changed', '$.skippedAt', ?2)
+      ELSE json_object('skipReason', 'candidate_changed', 'skippedAt', ?2)
+    END,
+    updated_at = ?2
+WHERE id = ?1 AND status = 'enqueuing'
+"#,
+                            params![&guard.pending_id, &job.created_at],
+                        )?;
+                        if changed > 0 {
+                            tx.execute(
+                                r#"
+UPDATE auto_update_candidates
+SET policy_status = 'skipped',
+    policy_reason = 'candidate_changed',
+    policy_evaluated_at = ?2,
+    updated_at = ?2
+WHERE id = ?1 AND status <> 'superseded'
+"#,
+                                params![&guard.candidate_id, &job.created_at],
+                            )?;
+                        }
+                        tx.commit()?;
+                        return Ok(ServiceOperationAcquireOutcome::StaleAutoPolicy);
+                    }
+                }
                 if let Some(conflict) = find_blocking_job_tx(&tx, &targets)? {
                     tx.commit()?;
                     return Ok(ServiceOperationAcquireOutcome::Conflict(Box::new(conflict)));
@@ -550,6 +646,9 @@ WHERE id = ?1 AND accepted_state_generation = ?2 AND accepted_state_generation %
             ServiceOperationAcquireOutcome::StaleCurrentDigest => {
                 anyhow::bail!("stale current digest")
             }
+            ServiceOperationAcquireOutcome::StaleAutoPolicy => {
+                anyhow::bail!("stale auto policy candidate")
+            }
         }
     }
 
@@ -566,15 +665,34 @@ WHERE id = ?1 AND accepted_state_generation = ?2 AND accepted_state_generation %
                 targets,
                 initial_log,
                 Some(expected_current_digest),
+                None,
             )
             .await?
         {
             outcome @ ServiceOperationAcquireOutcome::Acquired(_)
-            | outcome @ ServiceOperationAcquireOutcome::StaleCurrentDigest => Ok(outcome),
+            | outcome @ ServiceOperationAcquireOutcome::StaleCurrentDigest
+            | outcome @ ServiceOperationAcquireOutcome::StaleAutoPolicy => Ok(outcome),
             ServiceOperationAcquireOutcome::Conflict(job) => {
                 Ok(ServiceOperationAcquireOutcome::Conflict(job))
             }
         }
+    }
+
+    pub(crate) async fn insert_service_operation_job_if_unblocked_with_auto_policy_guard(
+        &self,
+        job: JobListItem,
+        targets: Vec<ServiceOperationTarget>,
+        initial_log: Option<JobLogLine>,
+        guard: AutoPolicyEnqueueGuard,
+    ) -> anyhow::Result<ServiceOperationAcquireOutcome> {
+        self.insert_service_operation_job_with_accepted_state_if_unblocked_inner(
+            job,
+            targets,
+            initial_log,
+            Some(&guard.expected_current_digest),
+            Some(&guard),
+        )
+        .await
     }
 
     pub async fn find_latest_pending_update_blocking_service(
