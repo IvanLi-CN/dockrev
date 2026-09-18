@@ -262,6 +262,24 @@ async fn hydration_keeps_the_earliest_qualified_observation_as_one_consistent_re
         .unwrap();
     }
 
+    db.call(|conn| {
+        conn.execute(
+            "INSERT INTO jobs (id, type, scope, stack_id, service_id, status, allow_arch_mismatch, backup_mode, created_by, reason, created_at, started_at, summary_json) VALUES ('running-hydration-job', 'update', 'service', 'stack', 'service', 'running', 0, 'inherit', 'auto-policy', 'auto_policy', '2026-04-30T00:02:30Z', '2026-04-30T00:02:31Z', '{}')",
+            [],
+        )?;
+        conn.execute(
+            "INSERT INTO auto_update_pending (id, policy_scope_type, policy_scope_id, rule_id, stack_id, service_id, source_check_job_id, candidate_tag, candidate_display_tag, candidate_digest, current_display_tag, first_seen_at, due_at, min_age_seconds, min_version_lag, status, update_job_id, created_at, updated_at, summary_json) VALUES ('pending-old-hydration', 'stack', 'stack', 'rule', 'stack', 'service', 'check-old', '1.3.0', '1.3.0', 'sha256:old', '1.0.0', '2026-04-30T00:00:30Z', '2026-04-30T00:00:30Z', 0, 0, 'enqueued', 'running-hydration-job', '2026-04-30T00:02:30Z', '2026-04-30T00:02:30Z', '{}')",
+            [],
+        )?;
+        conn.execute(
+            "INSERT INTO update_job_stop_controls (job_id, updated_at) VALUES ('running-hydration-job', '2026-04-30T00:02:31Z')",
+            [],
+        )?;
+        Ok(())
+    })
+    .await
+    .unwrap();
+
     db.hydrate_auto_update_candidates("2026-04-30T00:03:00Z")
         .await
         .unwrap();
@@ -282,6 +300,21 @@ async fn hydration_keeps_the_earliest_qualified_observation_as_one_consistent_re
             .unwrap()
             .status,
         "superseded"
+    );
+    let old_pending = db
+        .get_auto_update_pending_by_id("pending-old-hydration")
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(old_pending.status, "skipped");
+    assert_eq!(
+        db.get_update_stop_control("running-hydration-job")
+            .await
+            .unwrap()
+            .unwrap()
+            .stop_requested_by
+            .as_deref(),
+        Some("auto-policy-supersession")
     );
 }
 
@@ -772,12 +805,20 @@ async fn queued_auto_policy_recovery_requires_exact_candidate_and_target_identit
             .unwrap());
 
         assert!(!db
-            .claim_queued_job_by_id(&job_id, "2026-04-30T00:01:05Z")
+            .claim_queued_job_by_id_for_recovery(&job_id, "2026-04-30T00:01:05Z")
             .await
             .unwrap());
         assert_eq!(
             db.get_job(&job_id).await.unwrap().unwrap().status,
             "cancelled"
+        );
+        assert_eq!(
+            db.get_auto_update_pending_by_id(&pending_id)
+                .await
+                .unwrap()
+                .unwrap()
+                .summary_json["skipReason"],
+            "migration_ambiguous_history"
         );
     }
 }

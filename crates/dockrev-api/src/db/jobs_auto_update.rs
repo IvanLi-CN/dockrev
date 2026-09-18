@@ -161,10 +161,38 @@ LIMIT ?1
         job_id: &str,
         started_at: &str,
     ) -> anyhow::Result<bool> {
+        self.claim_queued_job_by_id_with_skip_reason(
+            job_id,
+            started_at,
+            "policy_changed_before_start",
+        )
+        .await
+    }
+
+    pub async fn claim_queued_job_by_id_for_recovery(
+        &self,
+        job_id: &str,
+        started_at: &str,
+    ) -> anyhow::Result<bool> {
+        self.claim_queued_job_by_id_with_skip_reason(
+            job_id,
+            started_at,
+            "migration_ambiguous_history",
+        )
+        .await
+    }
+
+    async fn claim_queued_job_by_id_with_skip_reason(
+        &self,
+        job_id: &str,
+        started_at: &str,
+        skip_reason: &str,
+    ) -> anyhow::Result<bool> {
         let job_id = job_id.to_string();
         let query_job_id = job_id.clone();
         let started_at = started_at.to_string();
         let query_started_at = started_at.clone();
+        let skip_reason = skip_reason.to_string();
         let claimed = self
             .call(move |conn| {
                 Ok(conn.execute(
@@ -280,6 +308,7 @@ WHERE id = ?1
         if !claimed {
             let cancel_job_id = job_id.clone();
             let cancel_started_at = started_at.clone();
+            let cancel_skip_reason = skip_reason.clone();
             let cancelled = self.call(move |conn| {
                 let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
                 let changed = tx.execute(
@@ -296,13 +325,13 @@ WHERE id = ?1 AND status = 'queued' AND created_by = 'auto-policy'
 UPDATE auto_update_pending
 SET status = 'skipped',
     summary_json = CASE
-      WHEN json_valid(summary_json) THEN json_set(summary_json, '$.skipReason', 'policy_changed_before_start', '$.skippedAt', ?2)
-      ELSE json_object('skipReason', 'policy_changed_before_start', 'skippedAt', ?2)
+      WHEN json_valid(summary_json) THEN json_set(summary_json, '$.skipReason', ?3, '$.skippedAt', ?2)
+      ELSE json_object('skipReason', ?3, 'skippedAt', ?2)
     END,
     updated_at = ?2
 WHERE update_job_id = ?1 AND status = 'enqueued'
 "#,
-                        params![cancel_job_id, cancel_started_at],
+                        params![cancel_job_id, cancel_started_at, cancel_skip_reason],
                     )?;
                 }
                 tx.commit()?;

@@ -285,11 +285,17 @@ WHERE p.service_id = ?1
             )?;
             tx.execute(
                 r#"
-INSERT OR IGNORE INTO update_job_stop_controls (
+INSERT INTO update_job_stop_controls (
   job_id, stop_requested_at, stop_requested_by, updated_at
 )
 SELECT ?1, ?2, 'auto-policy-supersession', ?2
 WHERE EXISTS (SELECT 1 FROM jobs WHERE id = ?1 AND status = 'running')
+ON CONFLICT(job_id) DO UPDATE SET
+  stop_requested_at = COALESCE(update_job_stop_controls.stop_requested_at, excluded.stop_requested_at),
+  stop_requested_by = COALESCE(update_job_stop_controls.stop_requested_by, excluded.stop_requested_by),
+  updated_at = excluded.updated_at
+WHERE update_job_stop_controls.apply_committed_at IS NULL
+  AND update_job_stop_controls.stop_requested_at IS NULL
 "#,
                 params![update_job_id, now],
             )?;
