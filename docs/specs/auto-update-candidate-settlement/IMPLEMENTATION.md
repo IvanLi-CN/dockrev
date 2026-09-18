@@ -9,6 +9,8 @@
 - 候选来源以结构化 provenance 保存为 schedule、github_webhook 或 unknown；unknown 历史只保留审计，不获得自动部署授权。
 - migration 0020 与运行时 hydration 从 discovery history 选择最早可信的成功 check observation；缺失 image、baseline、source job 或合格来源时生成 unresolved 的 `migration_ambiguous_history` 审计事实，并保持 source unknown。
 - hydration 事务只创建 candidate fact、supersede 旧候选和跳过旧 pending；启动/周期 reconciliation 随后复用现有 evaluator 与 claim safety，不直接执行 Compose。
+- policy reconciliation 显式包含 `awaiting_inference` candidate；SemVer evaluator 仍返回 waiting 状态并保持无 pending/update job 的 fail-closed 语义。
+- hydration diagnostic 仅在当前 digest 没有 candidate row 且存在 discovery history 时报告 `candidate_missing`；已有运行时 candidate 不会被错误报告为缺失。
 - Validation: local checks complete; the shared-testbox Compose smoke is partially blocked by the existing metrics migration error <code>retained rollups cannot be recovered after raw retention</code> during the Compose V1 rejection setup. The V2 plugin and standalone lifecycle portions passed before that blocker.
 
 ## 实现顺序
@@ -164,6 +166,7 @@ reload candidate and evaluate current policy
 - superseded candidate and old pending tests；
 - delay/lag/policy-change tests；
 - API serialization and backward-compatibility tests。
+- runtime candidate hydration diagnostics and awaiting-inference reconciliation regression tests。
 
 ### Web validation
 

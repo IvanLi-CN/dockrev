@@ -15,6 +15,7 @@
 - “事件是状态”的隐含假设由“数据库事实源、事件即时唤醒、启动/周期 reconciliation 补偿”替代。
 - “延迟从 check 完成开始”的隐含假设由 candidate discoveredAt 起算替代。
 - “候选展示版本变化就是新候选”的隐含假设由 service + digest identity 替代。
+- hydration diagnostic 将 candidate missing 限定为真实缺失 candidate row；启动/周期 reconciliation 继续处理 awaiting inference candidate。
 
 ## Decision Trace
 
