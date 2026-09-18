@@ -408,15 +408,21 @@ ON CONFLICT(service_id, candidate_digest) DO UPDATE SET
       THEN auto_update_candidates.reason
     ELSE COALESCE(excluded.reason, auto_update_candidates.reason)
   END,
-  discovered_at = auto_update_candidates.discovered_at,
+  discovered_at = CASE
+    WHEN COALESCE(TRIM(auto_update_candidates.discovered_at), '') = ''
+      THEN excluded.discovered_at
+    ELSE auto_update_candidates.discovered_at
+  END,
   source_job_id = CASE
-    WHEN auto_update_candidates.hydration_origin IS NULL
+    WHEN COALESCE(TRIM(auto_update_candidates.source_job_id), '') = ''
+      OR auto_update_candidates.hydration_origin IS NULL
       OR auto_update_candidates.source = 'unknown'
       THEN excluded.source_job_id
     ELSE auto_update_candidates.source_job_id
   END,
   source = CASE
-    WHEN auto_update_candidates.hydration_origin IS NULL
+    WHEN COALESCE(TRIM(auto_update_candidates.source), '') = ''
+      OR auto_update_candidates.hydration_origin IS NULL
       OR auto_update_candidates.source = 'unknown'
       THEN excluded.source
     ELSE auto_update_candidates.source
@@ -429,7 +435,11 @@ ON CONFLICT(service_id, candidate_digest) DO UPDATE SET
     WHEN auto_update_candidates.current_display_tag = '' THEN excluded.current_display_tag
     ELSE auto_update_candidates.current_display_tag
   END,
-  current_digest = COALESCE(auto_update_candidates.current_digest, excluded.current_digest),
+  current_digest = CASE
+    WHEN COALESCE(TRIM(auto_update_candidates.current_digest), '') = ''
+      THEN excluded.current_digest
+    ELSE auto_update_candidates.current_digest
+  END,
   settled_at = CASE
     WHEN auto_update_candidates.settled_at IS NULL
       AND excluded.settled_at IS NOT NULL
@@ -460,7 +470,10 @@ ON CONFLICT(service_id, candidate_digest) DO UPDATE SET
           ELSE excluded.status
         END <> auto_update_candidates.status
       )
-      OR auto_update_candidates.current_digest IS NULL AND excluded.current_digest IS NOT NULL
+      OR COALESCE(TRIM(auto_update_candidates.current_digest), '') = ''
+        AND COALESCE(TRIM(excluded.current_digest), '') <> ''
+      OR COALESCE(TRIM(auto_update_candidates.discovered_at), '') = ''
+        AND COALESCE(TRIM(excluded.discovered_at), '') <> ''
       OR auto_update_candidates.image_ref = '' AND excluded.image_ref <> ''
       OR auto_update_candidates.raw_tag = '' AND excluded.raw_tag <> ''
       THEN excluded.updated_at
