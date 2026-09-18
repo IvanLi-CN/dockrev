@@ -20,6 +20,7 @@
 - queued recovery 必须同时匹配 pending 的 candidate identity、service scope、唯一 target、当前 service tag、candidate digest 和 expected current digest；缺失 candidate 绑定、target tag 或 scope/target service 不一致都会取消 queued action。
 - queued recovery 的 fail-closed 取消和损坏历史都保留 `migration_ambiguous_history` audit reason；普通运行时 claim 仍使用 `policy_changed_before_start`，不混淆两类来源。
 - hydration supersession 对已有或新建的 running stop-control 都写入 `auto-policy-supersession`，并尊重已提交 apply 的保护条件。
+- hydration supersession 使用数据库实际返回的 current candidate id，兼容运行时创建的非默认 candidate id，避免写入悬空的 `superseded_by_candidate_id`。
 - hydration 会恢复所有 qualifying discovery history 的 digest，并以当前 service candidate 统一 supersede 非当前历史 candidate，确保旧 pending/action 不能因迁移只看到当前 digest 而重新执行。
 - Validation: local checks complete; the shared-testbox Compose smoke is partially blocked by the existing metrics migration error <code>retained rollups cannot be recovered after raw retention</code> during the Compose V1 rejection setup. The V2 plugin and standalone lifecycle portions passed before that blocker.
 

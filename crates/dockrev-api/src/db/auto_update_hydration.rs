@@ -318,28 +318,29 @@ pub(super) fn hydrate_auto_update_candidates_tx(
     }
 
     let mut hydrated = Vec::new();
-    let mut current_candidates = BTreeMap::<String, String>::new();
+    let mut current_candidates = BTreeMap::<String, (String, String)>::new();
     for ((service_id, candidate_digest), rows) in grouped {
         let source_row = rows
             .iter()
             .find(|row| is_complete_hydration(row))
             .unwrap_or(&rows[0]);
         let complete = is_complete_hydration(source_row);
-        if let Some(current_digest) = source_row
-            .service_candidate_digest
-            .as_deref()
-            .filter(|digest| non_empty(digest))
-        {
-            current_candidates.insert(service_id.clone(), current_digest.to_string());
-        }
         let (image_ref, raw_tag, current_tag, current_display_tag) = candidate_values(source_row);
         let source = if complete {
             qualified_source(source_row).unwrap_or("unknown")
         } else {
             "unknown"
         };
-        let source_job_id = source_row.source_job_id.trim().to_string();
-        let discovered_at = source_row.discovered_at.trim().to_string();
+        let source_job_id = if complete {
+            source_row.source_job_id.trim().to_string()
+        } else {
+            String::new()
+        };
+        let discovered_at = if complete {
+            source_row.discovered_at.trim().to_string()
+        } else {
+            String::new()
+        };
         let resolved_version = complete
             .then(|| dockrev_common::normalized_semver_from_oci_version(&raw_tag))
             .flatten();
@@ -491,6 +492,17 @@ ON CONFLICT(service_id, candidate_digest) DO UPDATE SET
             params![service_id, candidate_digest],
             |row| row.get::<_, String>(0),
         )?;
+        if complete
+            && source_row
+                .service_candidate_digest
+                .as_deref()
+                .is_some_and(|digest| digest == candidate_digest)
+        {
+            current_candidates.insert(
+                service_id.clone(),
+                (candidate_digest.clone(), candidate_id.clone()),
+            );
+        }
         let hydrated_row = HydratedCandidateRow {
             service_id,
             candidate_digest,
@@ -498,11 +510,11 @@ ON CONFLICT(service_id, candidate_digest) DO UPDATE SET
         };
         hydrated.push(hydrated_row);
     }
-    for (service_id, candidate_digest) in current_candidates {
+    for (service_id, (candidate_digest, candidate_id)) in current_candidates {
         supersede_previous_candidates(
             tx,
             &HydratedCandidateRow {
-                candidate_id: format!("{service_id}:{candidate_digest}"),
+                candidate_id,
                 service_id,
                 candidate_digest,
             },
