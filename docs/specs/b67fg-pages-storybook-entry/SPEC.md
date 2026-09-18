@@ -58,6 +58,7 @@
 | --- | --- | --- | --- | --- |
 | `/storybook/` | Public URL | external | New | GitHub Pages 上公开的 Storybook 入口 |
 | `docs-pages` workflow | CI workflow | internal | Modify | 改为并行构建 + 汇总后部署 |
+| Pages artifact identity | CI artifact contract | internal | Modify | 上传与部署使用 `github-pages-${{ github.run_id }}-${{ github.run_attempt }}`，避免 workflow rerun 产生同名 artifact |
 | `assemble-pages-site.sh` | CLI | internal | New | 组装 docs 根目录 + `storybook/` 子目录 |
 | docs 顶栏 / 首页入口 | Docs navigation | internal | Modify | 统一跳到 `storybook.html` redirect 页面，再跳转到 `/storybook/` |
 
@@ -65,6 +66,7 @@
 
 - Given `pull_request` 命中 Pages 相关路径，When workflow 运行，Then `build-docs` 与 `build-storybook` 并行执行，随后进入 `assemble-pages`，且不执行部署。
 - Given `push main` 或 `workflow_dispatch`，When workflow 运行，Then 仅在前三个 job 成功后执行 `deploy`。
+- Given 同一个 workflow run 的 deploy 重试，When Pages artifact 再次上传并部署，Then artifact 名称按 `run_id` 与 `run_attempt` 隔离，且上传与部署选择同一个名称，不产生多匹配 artifact。
 - Given 组装后的站点目录，When 检查文件结构，Then 站点根下存在 `index.html`，且存在 `storybook/index.html`。
 - Given docs 顶栏与首页入口，When 在 GitHub Pages repo base 下访问，Then 先进入 `/<repo>/storybook.html` redirect 页面，再跳转到 `/<repo>/storybook/`。
 - Given Storybook 作为子路径部署，When 打开 `/storybook/`，Then `iframe.html`、`index.json`、`assets/*` 与 `sb-manager/*` 均可加载，无资源 404。
@@ -76,6 +78,7 @@
 - `bun run --cwd web lint`
 - `bun run --cwd web build`
 - `bun run --cwd web build-storybook -- --quiet`
+- `python3 .github/scripts/test_docs_pages_workflow_contract.py`
 - 本地组装后访问 docs 根页与 `storybook.html` redirect 页面，确认可跳转到 `/storybook/` 且静态资源可用。
 - Pages 组装烟测以最终渲染输出为准，校验 redirect 页面文案与 Storybook 入口存在，不依赖 `window.location.replace` 字面量继续出现在静态 HTML 中。
 
