@@ -43,6 +43,10 @@ assert "ref: ${{ github.event.repository.default_branch }}" in generic
 assert "ref: ${{ github.event.workflow_run.head_sha" not in generic
 assert "oidrune/.github/workflows/notify.yml@" in generic
 assert "python3 .github/scripts/workflow_failure_context.py" in generic
+pinned_refs = re.findall(r"oidrune/\.github/workflows/notify\.yml@([0-9a-f]+)", generic)
+assert pinned_refs, "generic notifier must call the pinned Oidrune workflow"
+assert all(len(ref) == 40 for ref in pinned_refs), pinned_refs
+assert len(set(pinned_refs)) == 1, pinned_refs
 
 for workflow_name in sorted(expected - {"Release"}):
     assert f'      - "{workflow_name}"' in generic, workflow_name
