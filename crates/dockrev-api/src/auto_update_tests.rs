@@ -108,6 +108,30 @@ async fn source_revalidation_requires_existing_successful_check_job() {
             .await
             .unwrap()
     );
+
+    db.insert_job(api::types::JobListItem {
+        id: "schedule-update".to_string(),
+        r#type: api::types::JobType::Update,
+        scope: JobScope::All,
+        stack_id: None,
+        service_id: None,
+        status: "success".to_string(),
+        created_by: "schedule".to_string(),
+        reason: "schedule".to_string(),
+        created_at: "2026-04-30T00:00:00Z".to_string(),
+        started_at: None,
+        finished_at: Some("2026-04-30T00:01:00Z".to_string()),
+        allow_arch_mismatch: false,
+        backup_mode: "inherit".to_string(),
+        summary_json: json!({}),
+    })
+    .await
+    .unwrap();
+    assert!(
+        !has_valid_auto_policy_source(&db, "schedule-update", "schedule", None, None)
+            .await
+            .unwrap()
+    );
 }
 
 #[test]

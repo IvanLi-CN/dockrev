@@ -200,6 +200,79 @@ async fn hydration_rejects_successful_source_job_from_another_service() {
 }
 
 #[tokio::test]
+async fn hydration_keeps_earliest_observation_and_latest_qualified_provenance() {
+    let db = Db::open(Path::new(":memory:")).await.unwrap();
+    db.call(|conn| {
+        conn.execute(
+            "INSERT INTO stacks (id, name, compose_type, compose_files_json, backup_targets_json, backup_retention_keep_last, backup_retention_delete_after_stable_seconds, created_at, updated_at, last_check_at) VALUES ('stack', 'stack', 'path', '[]', '[]', 0, 0, '2026-04-30', '2026-04-30', '2026-04-30')",
+            [],
+        )?;
+        conn.execute(
+            "INSERT INTO services (id, stack_id, name, image_ref, image_tag, current_digest, candidate_digest, auto_rollback, backup_targets_bind_paths_json, backup_targets_volume_names_json, created_at, updated_at) VALUES ('service', 'stack', 'service', 'ghcr.io/acme/app', 'latest', 'sha256:current', 'sha256:multi', 0, '{}', '{}', '2026-04-30', '2026-04-30')",
+            [],
+        )?;
+        conn.execute(
+            "INSERT INTO service_new_version_discoveries (service_id, image_ref, source_job_id, discovered_at, current_digest, current_display_tag, current_tag, candidate_tag, candidate_digest, candidate_display_tag) VALUES ('service', 'ghcr.io/acme/app:latest', 'missing-check', '2026-04-30T00:00:00Z', 'sha256:current', '1.0.0', 'latest', '1.4.0', 'sha256:multi', '1.4.0')",
+            [],
+        )?;
+        conn.execute(
+            "INSERT INTO service_new_version_discoveries (service_id, image_ref, source_job_id, discovered_at, current_digest, current_display_tag, current_tag, candidate_tag, candidate_digest, candidate_display_tag) VALUES ('service', 'ghcr.io/acme/app:latest', 'check-schedule', '2026-04-30T00:01:00Z', 'sha256:current', '1.0.0', 'latest', '1.4.0', 'sha256:multi', '1.4.1')",
+            [],
+        )?;
+        conn.execute(
+            "INSERT INTO service_new_version_discoveries (service_id, image_ref, source_job_id, discovered_at, current_digest, current_display_tag, current_tag, candidate_tag, candidate_digest, candidate_display_tag) VALUES ('service', 'ghcr.io/acme/app:latest', 'check-webhook-latest', '2026-04-30T00:02:00Z', 'sha256:current', '1.0.0', 'latest', '1.5.0', 'sha256:multi', '1.5.0')",
+            [],
+        )?;
+        Ok(())
+    })
+    .await
+    .unwrap();
+
+    for (id, created_by, reason, summary) in [
+        ("check-schedule", "schedule", "schedule", serde_json::json!({})),
+        (
+            "check-webhook-latest",
+            "webhook",
+            "webhook",
+            serde_json::json!({"source": "github_webhook"}),
+        ),
+    ] {
+        db.insert_job(crate::api::types::JobListItem {
+            id: id.to_string(),
+            r#type: crate::api::types::JobType::Check,
+            scope: crate::api::types::JobScope::Service,
+            stack_id: Some("stack".to_string()),
+            service_id: Some("service".to_string()),
+            status: "success".to_string(),
+            created_by: created_by.to_string(),
+            reason: reason.to_string(),
+            created_at: "2026-04-30T00:00:00Z".to_string(),
+            started_at: None,
+            finished_at: Some("2026-04-30T00:02:00Z".to_string()),
+            allow_arch_mismatch: false,
+            backup_mode: "inherit".to_string(),
+            summary_json: summary,
+        })
+        .await
+        .unwrap();
+    }
+
+    db.hydrate_auto_update_candidates("2026-04-30T00:03:00Z")
+        .await
+        .unwrap();
+    let candidate = db
+        .get_auto_update_candidate("service", "sha256:multi")
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(candidate.status, "ready");
+    assert_eq!(candidate.discovered_at, "2026-04-30T00:00:00Z");
+    assert_eq!(candidate.source, "github_webhook");
+    assert_eq!(candidate.source_job_id, "check-webhook-latest");
+    assert_eq!(candidate.raw_tag, "1.5.0");
+}
+
+#[tokio::test]
 async fn runtime_candidate_with_discovery_history_is_not_reported_as_missing() {
     let db = Db::open(Path::new(":memory:")).await.unwrap();
     db.call(|conn| {

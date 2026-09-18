@@ -104,6 +104,9 @@ async fn has_valid_auto_policy_source(
     let Some(job) = db.get_job(source_job_id).await? else {
         return Ok(false);
     };
+    if !job.r#type.as_str().eq_ignore_ascii_case("check") {
+        return Ok(false);
+    }
     if !job.status.eq_ignore_ascii_case("success") {
         return Ok(false);
     }
