@@ -346,6 +346,130 @@ WHERE id IN (
     Ok(())
 }
 
+fn deduplicate_auto_update_candidate_digests_tx(
+    tx: &rusqlite::Transaction<'_>,
+    now: &str,
+) -> anyhow::Result<()> {
+    let candidate_digest = super::canonical_digest_sql("candidate.candidate_digest");
+    let other_digest = super::canonical_digest_sql("other.candidate_digest");
+    let sql = format!(
+        r#"
+CREATE TEMP TABLE migration_duplicate_auto_update_candidates AS
+SELECT
+  candidate.id AS duplicate_id,
+  (
+    SELECT other.id
+    FROM auto_update_candidates other
+    WHERE other.service_id = candidate.service_id
+      AND {other_digest} = {candidate_digest}
+    ORDER BY
+      CASE WHEN other.status = 'superseded' THEN 0 ELSE 1 END DESC,
+      CASE WHEN EXISTS (
+        SELECT 1
+        FROM auto_update_pending active_pending
+        WHERE active_pending.candidate_id = other.id
+          AND active_pending.status IN ('pending', 'enqueuing', 'enqueued')
+      ) THEN 1 ELSE 0 END DESC,
+      CASE WHEN other.hydration_origin = 'discovery_history' THEN 1 ELSE 0 END DESC,
+      CASE other.status
+        WHEN 'ready' THEN 3
+        WHEN 'awaiting_inference' THEN 2
+        WHEN 'unresolved' THEN 1
+        ELSE 0
+      END DESC,
+      CASE WHEN COALESCE(TRIM(other.image_ref), '') <> '' THEN 1 ELSE 0 END DESC,
+      CASE WHEN COALESCE(TRIM(other.discovered_at), '') <> '' THEN 1 ELSE 0 END DESC,
+      other.discovered_at ASC,
+      other.created_at ASC,
+      other.id ASC
+    LIMIT 1
+  ) AS keeper_id
+FROM auto_update_candidates candidate
+WHERE NULLIF(TRIM(candidate.candidate_digest), '') IS NOT NULL
+"#
+    );
+    tx.execute(&sql, [])?;
+    tx.execute(
+        r#"
+UPDATE jobs
+SET status = 'cancelled',
+    finished_at = ?1
+WHERE id IN (
+  SELECT duplicate.update_job_id
+  FROM migration_duplicate_auto_update_candidates mapping
+  JOIN auto_update_candidates duplicate ON duplicate.id = mapping.duplicate_id
+  WHERE mapping.duplicate_id <> mapping.keeper_id
+    AND duplicate.update_job_id IS NOT NULL
+    AND NOT EXISTS (
+      SELECT 1
+      FROM auto_update_pending active_pending
+      WHERE active_pending.update_job_id = duplicate.update_job_id
+        AND active_pending.status IN ('pending', 'enqueuing', 'enqueued')
+    )
+)
+  AND status = 'queued'
+  AND created_by = 'auto-policy'
+"#,
+        rusqlite::params![now],
+    )?;
+    tx.execute(
+        r#"
+INSERT INTO update_job_stop_controls (
+  job_id, stop_requested_at, stop_requested_by, updated_at
+)
+SELECT duplicate.update_job_id, ?1, 'migration-canonical-digest', ?1
+FROM migration_duplicate_auto_update_candidates mapping
+JOIN auto_update_candidates duplicate ON duplicate.id = mapping.duplicate_id
+JOIN jobs j ON j.id = duplicate.update_job_id
+WHERE mapping.duplicate_id <> mapping.keeper_id
+  AND duplicate.update_job_id IS NOT NULL
+  AND j.status = 'running'
+  AND NOT EXISTS (
+    SELECT 1
+    FROM auto_update_pending active_pending
+    WHERE active_pending.update_job_id = duplicate.update_job_id
+      AND active_pending.status IN ('pending', 'enqueuing', 'enqueued')
+  )
+ON CONFLICT(job_id) DO UPDATE SET
+  stop_requested_at = COALESCE(update_job_stop_controls.stop_requested_at, excluded.stop_requested_at),
+  stop_requested_by = COALESCE(update_job_stop_controls.stop_requested_by, excluded.stop_requested_by),
+  updated_at = excluded.updated_at
+WHERE update_job_stop_controls.apply_committed_at IS NULL
+  AND update_job_stop_controls.stop_requested_at IS NULL
+"#,
+        rusqlite::params![now],
+    )?;
+    tx.execute(
+        r#"
+UPDATE auto_update_pending
+SET candidate_id = (
+  SELECT mapping.keeper_id
+  FROM migration_duplicate_auto_update_candidates mapping
+  WHERE mapping.duplicate_id = auto_update_pending.candidate_id
+)
+WHERE candidate_id IN (
+  SELECT duplicate_id
+  FROM migration_duplicate_auto_update_candidates
+  WHERE duplicate_id <> keeper_id
+)
+"#,
+        [],
+    )?;
+    tx.execute(
+        r#"
+DELETE FROM auto_update_candidates
+WHERE id IN (
+  SELECT duplicate_id
+  FROM migration_duplicate_auto_update_candidates
+  WHERE duplicate_id <> keeper_id
+)
+"#,
+        [],
+    )?;
+    tx.execute_batch("DROP TABLE migration_duplicate_auto_update_candidates")?;
+    Ok(())
+}
+
 pub(super) fn apply_migration_0024_normalize_auto_update_digest_identity(
     conn: &mut rusqlite::Connection,
 ) -> anyhow::Result<()> {
@@ -363,24 +487,14 @@ pub(super) fn apply_migration_0024_normalize_auto_update_digest_identity(
         );
         tx.execute(&sql, [])?;
     }
-    let candidate_digest = super::canonical_digest_sql("auto_update_candidates.candidate_digest");
-    let other_digest = super::canonical_digest_sql("other.candidate_digest");
-    let sql = format!(
-        r#"
-UPDATE auto_update_candidates
-SET candidate_digest = {candidate_digest}
-WHERE candidate_digest IS NOT NULL
-  AND TRIM(candidate_digest) <> ''
-  AND NOT EXISTS (
-    SELECT 1
-    FROM auto_update_candidates other
-    WHERE other.id <> auto_update_candidates.id
-      AND other.service_id = auto_update_candidates.service_id
-      AND {other_digest} = {candidate_digest}
-  )
-"#
-    );
-    tx.execute(&sql, [])?;
+    deduplicate_auto_update_candidate_digests_tx(&tx, &now)?;
+    let digest = super::canonical_digest_sql("candidate_digest");
+    tx.execute(
+        &format!(
+            "UPDATE auto_update_candidates SET candidate_digest = {digest} WHERE candidate_digest IS NOT NULL AND TRIM(candidate_digest) <> ''"
+        ),
+        [],
+    )?;
     record_migration_tx(&tx, id)?;
     tx.commit()?;
     Ok(())
@@ -681,8 +795,30 @@ WHERE p.status IN ('pending', 'enqueuing', 'enqueued')
   AND COALESCE(TRIM(p.candidate_digest), '') <> ''
   AND COALESCE(TRIM(p.first_seen_at), '') <> ''
   AND COALESCE(TRIM(json_extract(CASE WHEN json_valid(p.summary_json) THEN p.summary_json ELSE '{{}}' END, '$.imageRef')), '') <> ''
+  AND LOWER(j.type) = 'check'
   AND LOWER(j.status) = 'success'
   AND s.stack_id = p.stack_id
+  AND (
+    (
+      LOWER(j.reason) = 'schedule'
+      AND LOWER(j.created_by) = 'schedule'
+    )
+    OR (
+      LOWER(j.created_by) IN ('webhook', 'github')
+      AND LOWER(COALESCE(json_extract(CASE WHEN json_valid(j.summary_json) THEN j.summary_json ELSE '{{}}' END, '$.source'), '')) = 'github_webhook'
+    )
+  )
+  AND (
+    (LOWER(j.scope) = 'service'
+      AND j.stack_id = p.stack_id
+      AND j.service_id = p.service_id)
+    OR (LOWER(j.scope) = 'stack'
+      AND j.stack_id = p.stack_id
+      AND j.service_id IS NULL)
+    OR (LOWER(j.scope) = 'all'
+      AND j.stack_id IS NULL
+      AND j.service_id IS NULL)
+  )
   AND (
     LOWER(j.reason) = 'schedule'
     OR LOWER(COALESCE(json_extract(CASE WHEN json_valid(j.summary_json) THEN j.summary_json ELSE '{{}}' END, '$.source'), '')) = 'github_webhook'
@@ -735,7 +871,29 @@ WHERE candidate_id IS NULL
   AND EXISTS (
     SELECT 1 FROM jobs j
     WHERE j.id = auto_update_pending.source_check_job_id
+      AND LOWER(j.type) = 'check'
       AND LOWER(j.status) = 'success'
+      AND (
+        (
+          LOWER(j.reason) = 'schedule'
+          AND LOWER(j.created_by) = 'schedule'
+        )
+        OR (
+          LOWER(j.created_by) IN ('webhook', 'github')
+          AND LOWER(COALESCE(json_extract(CASE WHEN json_valid(j.summary_json) THEN j.summary_json ELSE '{{}}' END, '$.source'), '')) = 'github_webhook'
+        )
+      )
+      AND (
+        (LOWER(j.scope) = 'service'
+          AND j.stack_id = auto_update_pending.stack_id
+          AND j.service_id = auto_update_pending.service_id)
+        OR (LOWER(j.scope) = 'stack'
+          AND j.stack_id = auto_update_pending.stack_id
+          AND j.service_id IS NULL)
+        OR (LOWER(j.scope) = 'all'
+          AND j.stack_id IS NULL
+          AND j.service_id IS NULL)
+      )
       AND (
         LOWER(j.reason) = 'schedule'
         OR LOWER(COALESCE(json_extract(CASE WHEN json_valid(j.summary_json) THEN j.summary_json ELSE '{{}}' END, '$.source'), '')) = 'github_webhook'
@@ -744,6 +902,44 @@ WHERE candidate_id IS NULL
 "#
     );
     tx.execute(&sql, [])?;
+    tx.execute(
+        r#"
+UPDATE jobs
+SET status = 'cancelled',
+    finished_at = ?1
+WHERE id IN (
+  SELECT update_job_id
+  FROM auto_update_pending
+  WHERE candidate_id IS NULL
+    AND status IN ('pending', 'enqueuing', 'enqueued')
+    AND update_job_id IS NOT NULL
+)
+  AND status = 'queued'
+  AND created_by = 'auto-policy'
+"#,
+        params![&now],
+    )?;
+    tx.execute(
+        r#"
+INSERT INTO update_job_stop_controls (
+  job_id, stop_requested_at, stop_requested_by, updated_at
+)
+SELECT p.update_job_id, ?1, 'migration-ambiguous-history', ?1
+FROM auto_update_pending p
+JOIN jobs j ON j.id = p.update_job_id
+WHERE p.candidate_id IS NULL
+  AND p.status IN ('pending', 'enqueuing', 'enqueued')
+  AND p.update_job_id IS NOT NULL
+  AND j.status = 'running'
+ON CONFLICT(job_id) DO UPDATE SET
+  stop_requested_at = COALESCE(update_job_stop_controls.stop_requested_at, excluded.stop_requested_at),
+  stop_requested_by = COALESCE(update_job_stop_controls.stop_requested_by, excluded.stop_requested_by),
+  updated_at = excluded.updated_at
+WHERE update_job_stop_controls.apply_committed_at IS NULL
+  AND update_job_stop_controls.stop_requested_at IS NULL
+"#,
+        params![&now],
+    )?;
     tx.execute(
         r#"
 UPDATE auto_update_pending

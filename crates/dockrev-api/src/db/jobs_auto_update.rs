@@ -195,7 +195,16 @@ LIMIT ?1
         let skip_reason = skip_reason.to_string();
         let claimed = self
             .call(move |conn| {
-                Ok(conn.execute(
+                let candidate_digest = super::canonical_digest_sql("c.candidate_digest");
+                let pending_digest = super::canonical_digest_sql("p.candidate_digest");
+                let service_digest = super::canonical_digest_sql("s.candidate_digest");
+                let target_digest =
+                    super::canonical_digest_sql("json_extract(target.value, '$.targetDigest')");
+                let expected_current_digest = super::canonical_digest_sql(
+                    "json_extract(target.value, '$.autoPolicyContext.expectedCurrentDigest')",
+                );
+                let service_current_digest = super::canonical_digest_sql("s.current_digest");
+                let sql = format!(
                     r#"
 UPDATE jobs
 SET status = 'running', started_at = ?2
@@ -208,11 +217,11 @@ WHERE id = ?1
     JOIN services s ON s.id = p.service_id
     JOIN auto_update_candidates c
       ON c.service_id = p.service_id
-     AND c.candidate_digest = p.candidate_digest
+     AND {candidate_digest} = {pending_digest}
     JOIN jobs source_job ON source_job.id = p.source_check_job_id
     WHERE p.update_job_id = jobs.id
       AND p.status = 'enqueued'
-      AND s.candidate_digest = p.candidate_digest
+      AND {service_digest} = {pending_digest}
       AND p.candidate_id = c.id
       AND c.status <> 'superseded'
       AND c.policy_status = 'queued'
@@ -226,7 +235,7 @@ WHERE id = ?1
           AND LOWER(source_job.created_by) = 'schedule')
         OR (LOWER(c.source) = 'github_webhook'
           AND LOWER(source_job.created_by) IN ('webhook', 'github')
-          AND LOWER(COALESCE(json_extract(CASE WHEN json_valid(source_job.summary_json) THEN source_job.summary_json ELSE '{}' END, '$.source'), '')) = 'github_webhook')
+          AND LOWER(COALESCE(json_extract(CASE WHEN json_valid(source_job.summary_json) THEN source_job.summary_json ELSE '{{}}' END, '$.source'), '')) = 'github_webhook')
       )
       AND (
         (LOWER(source_job.scope) = 'service'
@@ -242,14 +251,14 @@ WHERE id = ?1
       AND LOWER(jobs.scope) = 'service'
       AND jobs.stack_id = p.stack_id
       AND jobs.service_id = p.service_id
-      AND json_array_length(CASE WHEN json_valid(jobs.summary_json) THEN jobs.summary_json ELSE '{}' END, '$.targets') = 1
+      AND json_array_length(CASE WHEN json_valid(jobs.summary_json) THEN jobs.summary_json ELSE '{{}}' END, '$.targets') = 1
       AND EXISTS (
         SELECT 1
-        FROM json_each(CASE WHEN json_valid(jobs.summary_json) THEN jobs.summary_json ELSE '{}' END, '$.targets') AS target
+        FROM json_each(CASE WHEN json_valid(jobs.summary_json) THEN jobs.summary_json ELSE '{{}}' END, '$.targets') AS target
         WHERE json_extract(target.value, '$.serviceId') = p.service_id
           AND NULLIF(TRIM(json_extract(target.value, '$.targetTag')), '') = NULLIF(TRIM(s.image_tag), '')
-          AND LOWER(NULLIF(TRIM(json_extract(target.value, '$.targetDigest')), '')) = LOWER(NULLIF(TRIM(p.candidate_digest), ''))
-          AND LOWER(NULLIF(TRIM(json_extract(target.value, '$.autoPolicyContext.expectedCurrentDigest')), '')) = LOWER(NULLIF(TRIM(s.current_digest), ''))
+          AND {target_digest} = {pending_digest}
+          AND {expected_current_digest} = {service_current_digest}
       )
       AND (
         (
@@ -299,9 +308,9 @@ WHERE id = ?1
         )
       )
   )
-"#,
-                    params![query_job_id, query_started_at],
-                )? == 1)
+"#
+                );
+                Ok(conn.execute(&sql, params![query_job_id, query_started_at])? == 1)
             })
             .await
             .context("claim queued job by id")?;
