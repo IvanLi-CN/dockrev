@@ -12,7 +12,7 @@
 - hydration 事务只创建 candidate fact、supersede 旧候选和跳过旧 pending；启动/周期 reconciliation 随后复用现有 evaluator 与 claim safety，不直接执行 Compose。
 - policy reconciliation 显式包含 `awaiting_inference` candidate；SemVer evaluator 仍返回 waiting 状态并保持无 pending/update job 的 fail-closed 语义。
 - hydration diagnostic 仅在当前 digest 没有 candidate row 且存在 discovery history 时报告 `candidate_missing`；已有运行时 candidate 不会被错误报告为缺失。
-- 自动策略 job 插入事务内重新确认 service current digest；pending claim 与 enqueue 共同要求成功 Check、授权 source/creator pairing 和稳定的 scope identity，避免 stale candidate 或非 Check source 获得执行授权。
+- 自动策略 job 插入事务内重新确认 service current digest，并以 candidate/pending/policy scope 的完整 context 做原子 enqueue guard；缺少 candidate provenance 时 fail-closed，不回退到 digest-only 插入路径。pending claim 与 enqueue 共同要求成功 Check、授权 source/creator pairing 和稳定的 scope identity，避免 stale candidate 或非 Check source 获得执行授权。
 - `JobScope` source scope 解析对大小写不敏感，与 migration predicate 保持一致；不合格的历史 queued/running action 分别取消或写入 stop control，保留 `migration_ambiguous_history` 审计原因。
 - inference 开始时以原子递增 `settlement_generation` 发出唯一 evidence CAS token；settlement 只能提交与当前 token 精确匹配的 generation，迟到的旧 inference 结果不能覆盖更新的 retry 或 ready 结果。
 - recovery queued auto-policy job 在恢复执行前重新验证成功 Check、schedule/GHCR webhook provenance、creator/scope identity、candidate target digest、expected current digest、当前 service digest、candidate 和 policy；缺少任一基线则 fail-closed，不能绕过 source/current-digest 门禁。

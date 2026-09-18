@@ -323,8 +323,14 @@ WHERE service_id = ?1
         let now = now.to_string();
         self.call(move |conn| {
             let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
+            let candidate_digest_expr = super::canonical_digest_sql("candidate_digest");
+            let service_candidate_digest = super::canonical_digest_sql("s.candidate_digest");
+            let replacement_digest = super::canonical_digest_sql("replacement.candidate_digest");
+            let pending_digest = super::canonical_digest_sql("p.candidate_digest");
+            let joined_candidate_digest = super::canonical_digest_sql("c.candidate_digest");
             let mut superseded = tx.execute(
-                r#"
+                &format!(
+                    r#"
 UPDATE auto_update_candidates
 SET status = 'superseded',
     reason = 'newer_candidate',
@@ -335,17 +341,19 @@ SET status = 'superseded',
     updated_at = ?3,
     superseded_at = ?3,
     superseded_by_candidate_id = ?4
-WHERE service_id = ?1 AND candidate_digest <> ?2
+WHERE service_id = ?1 AND {candidate_digest_expr} <> ?2
   AND status IN ('awaiting_inference', 'ready', 'unresolved')
   AND EXISTS (
     SELECT 1 FROM services s
-    WHERE s.id = ?1 AND s.candidate_digest = ?2
+    WHERE s.id = ?1 AND {service_candidate_digest} = ?2
   )
 "#,
+                ),
                 params![service_id, candidate_digest, now, candidate_id],
             )?;
             superseded += tx.execute(
-                r#"
+                &format!(
+                    r#"
 UPDATE auto_update_candidates
 SET status = 'superseded',
     reason = 'candidate_not_current',
@@ -360,35 +368,37 @@ SET status = 'superseded',
       FROM services s
       JOIN auto_update_candidates replacement
         ON replacement.service_id = s.id
-       AND replacement.candidate_digest = s.candidate_digest
+       AND {replacement_digest} = {service_candidate_digest}
       WHERE s.id = ?1
     )
 WHERE id = ?4
   AND service_id = ?1
-  AND candidate_digest = ?2
+  AND {candidate_digest_expr} = ?2
   AND status IN ('awaiting_inference', 'ready', 'unresolved')
   AND EXISTS (
     SELECT 1
     FROM services s
     WHERE s.id = ?1
-      AND (s.candidate_digest IS NULL OR s.candidate_digest <> ?2)
+      AND (s.candidate_digest IS NULL OR {service_candidate_digest} <> ?2)
   )
 "#,
+                ),
                 params![service_id, candidate_digest, now, candidate_id],
             )?;
 
             let pending_rows = {
-                let mut stmt = tx.prepare(r#"
+                let mut stmt = tx.prepare(&format!(r#"
 SELECT p.id, p.update_job_id, p.summary_json, j.status
 FROM auto_update_pending p
 JOIN auto_update_candidates c
-  ON c.service_id = p.service_id AND c.candidate_digest = p.candidate_digest
+  ON c.service_id = p.service_id AND {joined_candidate_digest} = {pending_digest}
 LEFT JOIN jobs j ON j.id = p.update_job_id
 WHERE p.service_id = ?1
   AND p.status IN ('pending', 'enqueuing', 'enqueued')
   AND c.status = 'superseded'
-  AND (p.candidate_digest <> ?2 OR c.id = ?3)
-"#)?;
+  AND ({pending_digest} <> ?2 OR c.id = ?3)
+"#
+                ))?;
                 stmt.query_map(
                     params![service_id, candidate_digest, candidate_id],
                     |row| {

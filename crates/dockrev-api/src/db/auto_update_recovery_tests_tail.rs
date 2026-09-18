@@ -510,3 +510,327 @@ INSERT INTO service_new_version_discoveries (
     let _ = std::fs::remove_file(path.with_extension("sqlite3-wal"));
     let _ = std::fs::remove_file(path.with_extension("sqlite3-shm"));
 }
+
+#[tokio::test]
+async fn auto_policy_enqueue_guard_rejects_superseded_pending_without_creating_a_job() {
+    let db = Db::open(Path::new(":memory:")).await.unwrap();
+    db.call(|conn| {
+        conn.execute(
+            "INSERT INTO stacks (id, name, compose_type, compose_files_json, backup_targets_json, backup_retention_keep_last, backup_retention_delete_after_stable_seconds, created_at, updated_at, last_check_at) VALUES ('stack', 'stack', 'path', '[]', '[]', 0, 0, '2026-04-30', '2026-04-30', '2026-04-30')",
+            [],
+        )?;
+        conn.execute(
+            "INSERT INTO services (id, stack_id, name, image_ref, image_tag, current_digest, candidate_digest, auto_rollback, backup_targets_bind_paths_json, backup_targets_volume_names_json, created_at, updated_at) VALUES ('service', 'stack', 'service', 'ghcr.io/acme/app', 'latest', 'sha256:current', 'sha256:old', 0, '{}', '{}', '2026-04-30', '2026-04-30')",
+            [],
+        )?;
+        conn.execute(
+            "INSERT INTO auto_update_policies (scope_type, scope_id, mode, enabled, rules_json, created_at, updated_at) VALUES ('stack', 'stack', 'override', 1, '[{\"id\":\"rule\",\"enabled\":true}]', '2026-04-30T00:00:00Z', '2026-04-30T00:00:00Z')",
+            [],
+        )?;
+        Ok(())
+    })
+    .await
+    .unwrap();
+    db.insert_job(crate::api::types::JobListItem {
+        id: "source-check".to_string(),
+        r#type: crate::api::types::JobType::Check,
+        scope: crate::api::types::JobScope::Service,
+        stack_id: Some("stack".to_string()),
+        service_id: Some("service".to_string()),
+        status: "success".to_string(),
+        created_by: "schedule".to_string(),
+        reason: "schedule".to_string(),
+        created_at: "2026-04-30T00:00:00Z".to_string(),
+        started_at: None,
+        finished_at: Some("2026-04-30T00:00:01Z".to_string()),
+        allow_arch_mismatch: false,
+        backup_mode: "inherit".to_string(),
+        summary_json: serde_json::json!({}),
+    })
+    .await
+    .unwrap();
+    let candidate = db
+        .upsert_auto_update_candidate(
+            &candidate_input(
+                "candidate-old",
+                "sha256:old",
+                "ready",
+                "2026-04-30T00:00:00Z",
+            ),
+            "2026-04-30T00:00:00Z",
+        )
+        .await
+        .unwrap();
+    db.set_auto_update_candidate_policy(
+        "service",
+        "sha256:old",
+        "delayed",
+        Some("policy_matched"),
+        Some("rule"),
+        "2026-04-30T00:00:01Z",
+    )
+    .await
+    .unwrap();
+    let pending = db
+        .reserve_auto_update_pending(
+            &AutoUpdatePendingInput {
+                id: "pending-race".to_string(),
+                policy_scope_type: "stack".to_string(),
+                policy_scope_id: "stack".to_string(),
+                rule_id: "rule".to_string(),
+                stack_id: "stack".to_string(),
+                service_id: "service".to_string(),
+                source_check_job_id: "source-check".to_string(),
+                candidate_tag: "latest".to_string(),
+                candidate_display_tag: "1.4.0".to_string(),
+                candidate_digest: "sha256:old".to_string(),
+                current_display_tag: "1.0.0".to_string(),
+                first_seen_at: "2026-04-30T00:00:00Z".to_string(),
+                due_at: "2026-04-30T00:00:00Z".to_string(),
+                min_age_seconds: 0,
+                min_version_lag: 0,
+                summary_json: serde_json::json!({
+                    "currentDigest": "sha256:current",
+                    "policyUpdatedAt": "2026-04-30T00:00:00Z"
+                }),
+                candidate_id: Some(candidate.id.clone()),
+            },
+            "2026-04-30T00:00:02Z",
+        )
+        .await
+        .unwrap();
+    assert!(db
+        .try_claim_auto_update_pending_if_current(
+            &pending.id,
+            "service",
+            "sha256:old",
+            "stack",
+            "stack",
+            "rule",
+            "2026-04-30T00:00:03Z",
+        )
+        .await
+        .unwrap());
+
+    let replacement = db
+        .upsert_auto_update_candidate(
+            &candidate_input(
+                "candidate-new",
+                "sha256:new",
+                "ready",
+                "2026-04-30T00:01:00Z",
+            ),
+            "2026-04-30T00:01:00Z",
+        )
+        .await
+        .unwrap();
+    db.call(|conn| {
+        conn.execute(
+            "UPDATE services SET candidate_digest = 'sha256:new' WHERE id = 'service'",
+            [],
+        )?;
+        Ok(())
+    })
+    .await
+    .unwrap();
+    db.supersede_auto_update_candidates(
+        "service",
+        "sha256:new",
+        &replacement.discovered_at,
+        &replacement.id,
+        "2026-04-30T00:01:01Z",
+    )
+    .await
+    .unwrap();
+
+    let mut job = crate::api::types::JobRecord::new_running(
+        "race-job".to_string(),
+        crate::api::types::JobType::Update,
+        crate::api::types::JobScope::Service,
+        Some("stack".to_string()),
+        Some("service".to_string()),
+        "2026-04-30T00:01:02Z",
+    );
+    job.status = "queued".to_string();
+    job.started_at = None;
+    let outcome = db
+        .insert_service_operation_job_if_unblocked_with_auto_policy_guard(
+            job.to_db(),
+            vec![crate::db::ServiceOperationTarget {
+                service_id: "service".to_string(),
+                stack_id: "stack".to_string(),
+            }],
+            None,
+            crate::db::AutoPolicyEnqueueGuard {
+                pending_id: pending.id.clone(),
+                service_id: "service".to_string(),
+                candidate_id: candidate.id,
+                candidate_digest: "sha256:old".to_string(),
+                policy_scope_type: "stack".to_string(),
+                policy_scope_id: "stack".to_string(),
+                rule_id: "rule".to_string(),
+                expected_current_digest: "sha256:current".to_string(),
+            },
+        )
+        .await
+        .unwrap();
+    assert!(matches!(
+        outcome,
+        crate::db::ServiceOperationAcquireOutcome::StaleAutoPolicy
+    ));
+    assert!(db.get_job("race-job").await.unwrap().is_none());
+    assert_eq!(
+        db.get_auto_update_pending_by_id(&pending.id)
+            .await
+            .unwrap()
+            .unwrap()
+            .status,
+        "skipped"
+    );
+}
+
+#[tokio::test]
+async fn skipping_pending_auto_update_stops_attached_jobs_idempotently() {
+    let db = Db::open(Path::new(":memory:")).await.unwrap();
+    let pending_input = |id: &str| AutoUpdatePendingInput {
+        id: id.to_string(),
+        policy_scope_type: "stack".to_string(),
+        policy_scope_id: "stack".to_string(),
+        rule_id: format!("rule-{id}"),
+        stack_id: "stack".to_string(),
+        service_id: "service".to_string(),
+        source_check_job_id: "check".to_string(),
+        candidate_tag: "latest".to_string(),
+        candidate_display_tag: "1.4.0".to_string(),
+        candidate_digest: format!("sha256:{id}"),
+        current_display_tag: "1.0.0".to_string(),
+        first_seen_at: "2026-04-30T00:00:00Z".to_string(),
+        due_at: "2026-04-30T00:00:00Z".to_string(),
+        min_age_seconds: 0,
+        min_version_lag: 0,
+        summary_json: serde_json::json!({}),
+        candidate_id: None,
+    };
+    let queued = db
+        .reserve_auto_update_pending(&pending_input("queued"), "2026-04-30T00:00:00Z")
+        .await
+        .unwrap();
+    assert!(db.try_claim_auto_update_pending(&queued.id, "2026-04-30T00:00:01Z").await.unwrap());
+    db.insert_job(crate::api::types::JobListItem {
+        id: "queued-auto-policy-job".to_string(),
+        r#type: crate::api::types::JobType::Update,
+        scope: crate::api::types::JobScope::Service,
+        stack_id: Some("stack".to_string()),
+        service_id: Some("service".to_string()),
+        status: "queued".to_string(),
+        created_by: "auto-policy".to_string(),
+        reason: "auto_policy".to_string(),
+        created_at: "2026-04-30T00:00:02Z".to_string(),
+        started_at: None,
+        finished_at: None,
+        allow_arch_mismatch: false,
+        backup_mode: "inherit".to_string(),
+        summary_json: serde_json::json!({}),
+    })
+    .await
+    .unwrap();
+    assert!(db.mark_auto_update_pending_enqueued(&queued.id, "queued-auto-policy-job", "2026-04-30T00:00:03Z").await.unwrap());
+    db.mark_auto_update_pending_skipped(&queued.id, "policy_changed", "2026-04-30T00:00:04Z")
+        .await
+        .unwrap();
+    db.mark_auto_update_pending_skipped(&queued.id, "should_not_replace", "2026-04-30T00:00:05Z")
+        .await
+        .unwrap();
+    assert_eq!(db.get_job("queued-auto-policy-job").await.unwrap().unwrap().status, "cancelled");
+    assert_eq!(db.get_auto_update_pending_by_id(&queued.id).await.unwrap().unwrap().summary_json["skipReason"], "policy_changed");
+
+    let running = db
+        .reserve_auto_update_pending(&pending_input("running"), "2026-04-30T00:00:00Z")
+        .await
+        .unwrap();
+    assert!(db.try_claim_auto_update_pending(&running.id, "2026-04-30T00:00:01Z").await.unwrap());
+    db.insert_job(crate::api::types::JobListItem {
+        id: "running-auto-policy-job".to_string(),
+        r#type: crate::api::types::JobType::Update,
+        scope: crate::api::types::JobScope::Service,
+        stack_id: Some("stack".to_string()),
+        service_id: Some("service".to_string()),
+        status: "running".to_string(),
+        created_by: "auto-policy".to_string(),
+        reason: "auto_policy".to_string(),
+        created_at: "2026-04-30T00:00:02Z".to_string(),
+        started_at: Some("2026-04-30T00:00:02Z".to_string()),
+        finished_at: None,
+        allow_arch_mismatch: false,
+        backup_mode: "inherit".to_string(),
+        summary_json: serde_json::json!({}),
+    })
+    .await
+    .unwrap();
+    assert!(db.mark_auto_update_pending_enqueued(&running.id, "running-auto-policy-job", "2026-04-30T00:00:03Z").await.unwrap());
+    db.mark_auto_update_pending_skipped(&running.id, "superseded", "2026-04-30T00:00:04Z")
+        .await
+        .unwrap();
+    assert_eq!(
+        db.get_update_stop_control("running-auto-policy-job")
+            .await
+            .unwrap()
+            .unwrap()
+            .stop_requested_by
+            .as_deref(),
+        Some("auto-policy-skip")
+    );
+}
+
+#[tokio::test]
+async fn candidate_upsert_keeps_earliest_qualified_provenance_tuple() {
+    let db = Db::open(Path::new(":memory:")).await.unwrap();
+    let mut candidate = candidate_input(
+        "candidate-provenance",
+        "sha256:provenance",
+        "ready",
+        "2026-04-30T00:02:00Z",
+    );
+    candidate.source_job_id = "schedule-check".to_string();
+    db.upsert_auto_update_candidate(&candidate, "2026-04-30T00:02:00Z")
+        .await
+        .unwrap();
+    candidate.source_job_id = "webhook-check".to_string();
+    candidate.source = "github_webhook".to_string();
+    candidate.discovered_at = "2026-04-30T00:01:00Z".to_string();
+    db.upsert_auto_update_candidate(&candidate, "2026-04-30T00:03:00Z")
+        .await
+        .unwrap();
+    let row = db
+        .get_auto_update_candidate("service", "sha256:provenance")
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(row.source_job_id, "webhook-check");
+    assert_eq!(row.source, "github_webhook");
+    assert_eq!(row.discovered_at, "2026-04-30T00:01:00Z");
+}
+
+#[tokio::test]
+async fn unresolved_candidate_can_be_reopened_for_force_inference() {
+    let db = Db::open(Path::new(":memory:")).await.unwrap();
+    db.upsert_auto_update_candidate(
+        &candidate_input(
+            "candidate-unresolved",
+            "sha256:unresolved",
+            "unresolved",
+            "2026-04-30T00:00:00Z",
+        ),
+        "2026-04-30T00:00:00Z",
+    )
+    .await
+    .unwrap();
+    assert!(db.reopen_auto_update_candidate_inference("service", "sha256:unresolved", "force", "2026-04-30T01:00:00Z").await.unwrap());
+    let candidate = db
+        .get_auto_update_candidate("service", "sha256:unresolved")
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(candidate.status, "awaiting_inference");
+    assert_eq!(candidate.policy_status.as_deref(), Some("waiting_inference"));
+}

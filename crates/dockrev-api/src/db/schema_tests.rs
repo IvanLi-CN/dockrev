@@ -731,3 +731,59 @@ INSERT INTO new_version_notifications (
     let _ = std::fs::remove_file(db_path.with_extension("sqlite3-wal"));
     let _ = std::fs::remove_file(db_path.with_extension("sqlite3-shm"));
 }
+
+#[tokio::test]
+async fn hydration_migration_survives_equivalent_legacy_candidate_rows() {
+    let db_path = temporary_db_path();
+    let db = Db::open(&db_path).await.unwrap();
+    db.call(|conn| {
+        conn.execute(
+            "INSERT INTO stacks (id, name, compose_type, compose_files_json, backup_targets_json, backup_retention_keep_last, backup_retention_delete_after_stable_seconds, created_at, updated_at, last_check_at) VALUES ('legacy-stack', 'legacy-stack', 'path', '[]', '[]', 0, 0, '2026-04-30', '2026-04-30', '2026-04-30')",
+            [],
+        )?;
+        conn.execute(
+            "INSERT INTO services (id, stack_id, name, image_ref, image_tag, current_digest, candidate_digest, auto_rollback, backup_targets_bind_paths_json, backup_targets_volume_names_json, created_at, updated_at) VALUES ('legacy-service', 'legacy-stack', 'service', 'ghcr.io/acme/app', 'latest', 'sha256:current', 'ABC', 0, '{}', '{}', '2026-04-30', '2026-04-30')",
+            [],
+        )?;
+        conn.execute(
+            "INSERT INTO jobs (id, type, scope, stack_id, service_id, status, allow_arch_mismatch, backup_mode, created_by, reason, created_at, finished_at, summary_json) VALUES ('legacy-check', 'check', 'service', 'legacy-stack', 'legacy-service', 'success', 0, 'inherit', 'schedule', 'schedule', '2026-04-30T00:00:00Z', '2026-04-30T00:00:01Z', '{}')",
+            [],
+        )?;
+        conn.execute(
+            "INSERT INTO service_new_version_discoveries (service_id, image_ref, source_job_id, discovered_at, current_digest, current_display_tag, current_tag, candidate_tag, candidate_digest, candidate_display_tag) VALUES ('legacy-service', 'ghcr.io/acme/app:latest', 'legacy-check', '2026-04-30T00:00:00Z', 'sha256:current', '1.0.0', 'latest', 'latest', 'ABC', '1.2.3')",
+            [],
+        )?;
+        for (id, digest) in [("legacy-uppercase", "ABC"), ("legacy-prefixed", "sha256:abc")] {
+            conn.execute(
+                "INSERT INTO auto_update_candidates (id, stack_id, service_id, image_ref, raw_tag, candidate_digest, status, reason, attempts, discovered_at, source_job_id, source, current_tag, current_display_tag, current_digest, created_at, updated_at) VALUES (?1, 'legacy-stack', 'legacy-service', 'ghcr.io/acme/app', 'latest', ?2, 'awaiting_inference', 'version_inference_pending', 0, '2026-04-30T00:00:00Z', 'legacy-check', 'schedule', 'latest', '1.0.0', 'sha256:current', '2026-04-30T00:00:00Z', '2026-04-30T00:00:00Z')",
+                rusqlite::params![id, digest],
+            )?;
+        }
+        conn.execute(
+            "DELETE FROM schema_migrations WHERE id IN ('0020_hydrate_auto_update_candidates_from_discoveries', '0024_normalize_auto_update_digest_identity')",
+            [],
+        )?;
+        Ok(())
+    })
+    .await
+    .unwrap();
+    drop(db);
+
+    let db = Db::open(&db_path).await.unwrap();
+    let candidates = db
+        .call(|conn| {
+            let mut stmt = conn.prepare(
+                "SELECT candidate_digest FROM auto_update_candidates WHERE service_id = 'legacy-service' ORDER BY id",
+            )?;
+            Ok(stmt
+                .query_map([], |row| row.get::<_, String>(0))?
+                .collect::<Result<Vec<_>, _>>()?)
+        })
+        .await
+        .unwrap();
+    assert_eq!(candidates, vec!["sha256:abc"]);
+    drop(db);
+    std::fs::remove_file(&db_path).unwrap();
+    let _ = std::fs::remove_file(db_path.with_extension("sqlite3-wal"));
+    let _ = std::fs::remove_file(db_path.with_extension("sqlite3-shm"));
+}
