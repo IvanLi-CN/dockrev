@@ -254,25 +254,49 @@ async fn enqueue_update_job_with_start(
     let has_operation_targets = !operation_targets.is_empty();
     if !has_operation_targets {
         state.db.insert_job(job_db).await.map_err(map_internal)?;
-    } else if let Some(conflict) = state
-        .db
-        .insert_service_operation_job_if_unblocked(
-            job_db,
-            operation_targets,
-            Some(JobLogLine {
-                ts: now.clone(),
-                level: "info".to_string(),
-                msg: if start_immediately {
-                    "update started".to_string()
-                } else {
-                    "update queued".to_string()
-                },
-            }),
-        )
-        .await
-        .map_err(map_internal)?
-    {
-        return Err(service_operation_conflict_error(&conflict));
+    } else {
+        let initial_log = Some(JobLogLine {
+            ts: now.clone(),
+            level: "info".to_string(),
+            msg: if start_immediately {
+                "update started".to_string()
+            } else {
+                "update queued".to_string()
+            },
+        });
+        let expected_current_digest = req.targets.as_deref().and_then(|targets| {
+            let values = targets
+                .iter()
+                .filter_map(|target| target.auto_policy_context.as_ref())
+                .filter_map(|context| context.expected_current_digest.as_deref())
+                .collect::<Vec<_>>();
+            if values.len() == 1 {
+                values.into_iter().next()
+            } else {
+                None
+            }
+        });
+        let conflict = if let Some(expected_current_digest) = expected_current_digest {
+            state
+                .db
+                .insert_service_operation_job_if_unblocked_with_current_digest(
+                    job_db,
+                    operation_targets,
+                    initial_log,
+                    expected_current_digest,
+                )
+                .await
+                .map_err(map_internal)?
+        } else {
+            state
+                .db
+                .insert_service_operation_job_if_unblocked(job_db, operation_targets, initial_log)
+                .await
+                .map_err(map_internal)?
+        };
+        if let Some(conflict) = conflict {
+            return Err(service_operation_conflict_error(&conflict));
+        }
     }
     if matches!(&req.mode, UpdateMode::Apply) {
         state

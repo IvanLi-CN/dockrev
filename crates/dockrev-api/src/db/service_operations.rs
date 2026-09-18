@@ -235,18 +235,54 @@ WHERE id = ?1
         targets: Vec<ServiceOperationTarget>,
         initial_log: Option<JobLogLine>,
     ) -> anyhow::Result<ServiceOperationAcquireOutcome> {
+        self.insert_service_operation_job_with_accepted_state_if_unblocked_inner(
+            job,
+            targets,
+            initial_log,
+            None,
+        )
+        .await
+    }
+
+    async fn insert_service_operation_job_with_accepted_state_if_unblocked_inner(
+        &self,
+        job: JobListItem,
+        targets: Vec<ServiceOperationTarget>,
+        initial_log: Option<JobLogLine>,
+        expected_current_digest: Option<&str>,
+    ) -> anyhow::Result<ServiceOperationAcquireOutcome> {
         let event_job_id = job.id.clone();
         let event_scope = job.scope.as_str().to_string();
         let event_stack_id = job.stack_id.clone();
         let event_service_id = job.service_id.clone();
         let event_type = job.r#type.as_str().to_string();
         let job_id = job.id.clone();
+        let expected_current_digest = expected_current_digest.map(str::to_string);
         let outcome = self
             .call(move |conn| {
                 let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
                 if let Some(conflict) = find_blocking_job_tx(&tx, &targets)? {
                     tx.commit()?;
                     return Ok(ServiceOperationAcquireOutcome::Conflict(Box::new(conflict)));
+                }
+
+                if let Some(expected_current_digest) = expected_current_digest.as_deref() {
+                    for target in &targets {
+                        let matches = tx
+                            .query_row(
+                                "SELECT LOWER(NULLIF(TRIM(current_digest), '')) = LOWER(NULLIF(TRIM(?2), '')) FROM services WHERE id = ?1",
+                                params![target.service_id, expected_current_digest],
+                                |row| row.get::<_, bool>(0),
+                            )
+                            .optional()?
+                            .unwrap_or(false);
+                        if !matches {
+                            anyhow::bail!(
+                                "service current digest changed while enqueueing auto policy update: {}",
+                                target.service_id
+                            );
+                        }
+                    }
                 }
 
                 insert_job_tx(&tx, &job)?;
@@ -503,6 +539,27 @@ WHERE id = ?1 AND accepted_state_generation = ?2 AND accepted_state_generation %
                 job,
                 targets,
                 initial_log,
+            )
+            .await?
+        {
+            ServiceOperationAcquireOutcome::Acquired(_) => Ok(None),
+            ServiceOperationAcquireOutcome::Conflict(job) => Ok(Some(*job)),
+        }
+    }
+
+    pub async fn insert_service_operation_job_if_unblocked_with_current_digest(
+        &self,
+        job: JobListItem,
+        targets: Vec<ServiceOperationTarget>,
+        initial_log: Option<JobLogLine>,
+        expected_current_digest: &str,
+    ) -> anyhow::Result<Option<JobListItem>> {
+        match self
+            .insert_service_operation_job_with_accepted_state_if_unblocked_inner(
+                job,
+                targets,
+                initial_log,
+                Some(expected_current_digest),
             )
             .await?
         {
@@ -783,5 +840,46 @@ INSERT INTO services (
             .await
             .unwrap();
         assert_eq!(applied, AcceptedStateCasOutcome::Applied { generation: 4 });
+    }
+
+    #[tokio::test]
+    async fn auto_policy_enqueue_rechecks_current_digest_inside_operation_transaction() {
+        let db = Db::open(Path::new(":memory:")).await.unwrap();
+        let (stack_id, service_id) = seed_service(&db).await;
+        let mut job = crate::api::types::JobRecord::new_running(
+            "job_stale_auto_policy".to_string(),
+            JobType::Update,
+            JobScope::Service,
+            Some(stack_id.clone()),
+            Some(service_id.clone()),
+            "2026-08-30T00:01:00Z",
+        );
+        job.summary_json = serde_json::json!({"mode": "apply"});
+
+        let error = db
+            .insert_service_operation_job_if_unblocked_with_current_digest(
+                job.to_db(),
+                vec![ServiceOperationTarget {
+                    service_id: service_id.clone(),
+                    stack_id,
+                }],
+                None,
+                "sha256:not-the-current-digest",
+            )
+            .await
+            .expect_err("stale auto-policy enqueue must fail closed");
+        assert!(
+            format!("{error:#}").contains("current digest changed while enqueueing"),
+            "unexpected error: {error:#}"
+        );
+        assert!(db.get_job("job_stale_auto_policy").await.unwrap().is_none());
+        assert_eq!(
+            db.get_versioned_service_accepted_state(&service_id)
+                .await
+                .unwrap()
+                .unwrap()
+                .generation,
+            0
+        );
     }
 }

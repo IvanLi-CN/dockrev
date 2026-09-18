@@ -539,6 +539,34 @@ WHERE id = ?1
         )
       )
   )
+  AND EXISTS (
+    SELECT 1
+    FROM auto_update_candidates c
+    JOIN jobs source_job ON source_job.id = auto_update_pending.source_check_job_id
+    WHERE c.id = auto_update_pending.candidate_id
+      AND LOWER(c.source) IN ('schedule', 'github_webhook')
+      AND LOWER(source_job.type) = 'check'
+      AND LOWER(source_job.status) = 'success'
+      AND (
+        (LOWER(c.source) = 'schedule'
+          AND LOWER(source_job.reason) = 'schedule'
+          AND LOWER(source_job.created_by) = 'schedule')
+        OR (LOWER(c.source) = 'github_webhook'
+          AND LOWER(source_job.created_by) IN ('webhook', 'github')
+          AND LOWER(COALESCE(json_extract(CASE WHEN json_valid(source_job.summary_json) THEN source_job.summary_json ELSE '{}' END, '$.source'), '')) = 'github_webhook')
+      )
+      AND (
+        (LOWER(source_job.scope) = 'service'
+          AND source_job.stack_id = c.stack_id
+          AND source_job.service_id = c.service_id)
+        OR (LOWER(source_job.scope) = 'stack'
+          AND source_job.stack_id = c.stack_id
+          AND source_job.service_id IS NULL)
+        OR (LOWER(source_job.scope) = 'all'
+          AND source_job.stack_id IS NULL
+          AND source_job.service_id IS NULL)
+      )
+  )
   AND json_extract(auto_update_pending.summary_json, '$.policyUpdatedAt') IS NOT NULL
 "#,
                 params![

@@ -116,6 +116,8 @@ pub struct AutoUpdateJobContext {
     pub rule_id: String,
     pub policy_scope_type: String,
     pub policy_scope_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub expected_current_digest: Option<String>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -335,11 +337,13 @@ impl JobScope {
     }
 
     pub fn from_str(input: &str) -> Self {
-        match input {
-            "service" => Self::Service,
-            "stack" => Self::Stack,
-            _ => Self::All,
+        if input.eq_ignore_ascii_case("service") {
+            return Self::Service;
         }
+        if input.eq_ignore_ascii_case("stack") {
+            return Self::Stack;
+        }
+        Self::All
     }
 }
 

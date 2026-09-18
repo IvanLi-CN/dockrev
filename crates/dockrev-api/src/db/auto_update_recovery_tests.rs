@@ -1126,6 +1126,107 @@ async fn pending_claim_rejects_a_service_candidate_that_changed_after_preflight(
 }
 
 #[tokio::test]
+async fn pending_claim_rejects_an_unqualified_source_job() {
+    let db = Db::open(Path::new(":memory:")).await.unwrap();
+    db.call(|conn| {
+        conn.execute(
+            "INSERT INTO stacks (id, name, compose_type, compose_files_json, backup_targets_json, backup_retention_keep_last, backup_retention_delete_after_stable_seconds, created_at, updated_at, last_check_at) VALUES ('stack', 'stack', 'path', '[]', '[]', 0, 0, '2026-04-30', '2026-04-30', '2026-04-30')",
+            [],
+        )?;
+        conn.execute(
+            "INSERT INTO services (id, stack_id, name, image_ref, image_tag, current_digest, candidate_digest, auto_rollback, backup_targets_bind_paths_json, backup_targets_volume_names_json, created_at, updated_at) VALUES ('service', 'stack', 'service', 'ghcr.io/acme/app', 'latest', 'sha256:current', 'sha256:unqualified', 0, '{}', '{}', '2026-04-30', '2026-04-30')",
+            [],
+        )?;
+        conn.execute(
+            "INSERT INTO auto_update_policies (scope_type, scope_id, mode, enabled, rules_json, created_at, updated_at) VALUES ('stack', 'stack', 'override', 1, '[{\"id\":\"rule\",\"enabled\":true}]', '2026-04-30T00:00:00Z', '2026-04-30T00:00:00Z')",
+            [],
+        )?;
+        Ok(())
+    })
+    .await
+    .unwrap();
+    db.upsert_auto_update_candidate(
+        &candidate_input(
+            "candidate-unqualified-source",
+            "sha256:unqualified",
+            "ready",
+            "2026-04-30T00:00:00Z",
+        ),
+        "2026-04-30T00:00:00Z",
+    )
+    .await
+    .unwrap();
+    db.set_auto_update_candidate_policy(
+        "service",
+        "sha256:unqualified",
+        "delayed",
+        Some("policy_matched"),
+        Some("rule"),
+        "2026-04-30T00:00:00Z",
+    )
+    .await
+    .unwrap();
+    db.insert_job(crate::api::types::JobListItem {
+        id: "unqualified-source".to_string(),
+        r#type: crate::api::types::JobType::Update,
+        scope: crate::api::types::JobScope::Service,
+        stack_id: Some("stack".to_string()),
+        service_id: Some("service".to_string()),
+        status: "success".to_string(),
+        created_by: "schedule".to_string(),
+        reason: "schedule".to_string(),
+        created_at: "2026-04-30T00:00:00Z".to_string(),
+        started_at: None,
+        finished_at: Some("2026-04-30T00:00:01Z".to_string()),
+        allow_arch_mismatch: false,
+        backup_mode: "inherit".to_string(),
+        summary_json: serde_json::json!({}),
+    })
+    .await
+    .unwrap();
+    let pending = db
+        .reserve_auto_update_pending(
+            &AutoUpdatePendingInput {
+                id: "pending-unqualified-source".to_string(),
+                policy_scope_type: "stack".to_string(),
+                policy_scope_id: "stack".to_string(),
+                rule_id: "rule".to_string(),
+                stack_id: "stack".to_string(),
+                service_id: "service".to_string(),
+                source_check_job_id: "unqualified-source".to_string(),
+                candidate_tag: "latest".to_string(),
+                candidate_display_tag: "1.4.0".to_string(),
+                candidate_digest: "sha256:unqualified".to_string(),
+                current_display_tag: "1.0.0".to_string(),
+                first_seen_at: "2026-04-30T00:00:00Z".to_string(),
+                due_at: "2026-04-30T00:00:00Z".to_string(),
+                min_age_seconds: 0,
+                min_version_lag: 0,
+                summary_json: serde_json::json!({
+                    "currentDigest": "sha256:current",
+                    "policyUpdatedAt": "2026-04-30T00:00:00Z"
+                }),
+                candidate_id: Some("candidate-unqualified-source".to_string()),
+            },
+            "2026-04-30T00:00:00Z",
+        )
+        .await
+        .unwrap();
+    assert!(!db
+        .try_claim_auto_update_pending_if_current(
+            &pending.id,
+            "service",
+            "sha256:unqualified",
+            "stack",
+            "stack",
+            "rule",
+            "2026-04-30T00:00:01Z",
+        )
+        .await
+        .unwrap());
+}
+
+#[tokio::test]
 async fn completed_candidate_remains_visible_after_service_candidate_is_cleared() {
     let db = Db::open(Path::new(":memory:")).await.unwrap();
     db.call(|conn| {

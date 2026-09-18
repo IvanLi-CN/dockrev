@@ -1045,12 +1045,28 @@ async fn enqueue_pending(
             .await?;
         return Ok(None);
     };
+    if !has_valid_auto_policy_source(
+        &state.db,
+        &pending.source_check_job_id,
+        &settlement.source,
+        Some(&pending.service_id),
+        Some(&pending.stack_id),
+    )
+    .await?
+    {
+        state
+            .db
+            .mark_auto_update_pending_skipped(&pending.id, "unqualified_source", now)
+            .await?;
+        return Ok(None);
+    }
     target.auto_policy_context = Some(AutoUpdateJobContext {
         pending_id: pending.id.clone(),
         candidate_id: pending.candidate_id.clone().unwrap_or_default(),
         rule_id: pending.rule_id.clone(),
         policy_scope_type: pending.policy_scope_type.clone(),
         policy_scope_id: pending.policy_scope_id.clone(),
+        expected_current_digest: service.image.digest.clone(),
     });
 
     if !state
