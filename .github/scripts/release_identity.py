@@ -479,7 +479,7 @@ def resolve_version_only_reservation(
         covered_product_version,
         allowed_lock_sha=identity_sha,
         covered_merge_sha=covered_merge_sha,
-        allowed_identity_shas={identity_sha, merge_sha},
+        allowed_identity_shas={identity_sha},
     ):
         raise IdentityError("covered product merge already has an immutable release identity")
     merge_commit = api_json(api_root, token, f"/repos/{owner}/{name}/commits/{merge_sha}")
@@ -529,7 +529,7 @@ def resolve_version_only_reservation(
         covered_product_version,
         allowed_lock_sha=identity_sha,
         covered_merge_sha=covered_merge_sha,
-        allowed_identity_shas={identity_sha, merge_sha},
+        allowed_identity_shas={identity_sha},
     ):
         raise IdentityError("covered product merge gained an immutable release identity")
     return resolve_from_payload(
