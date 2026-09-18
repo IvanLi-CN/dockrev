@@ -485,3 +485,118 @@ INSERT INTO auto_update_pending (
     let _ = std::fs::remove_file(wal_path);
     let _ = std::fs::remove_file(shm_path);
 }
+
+#[tokio::test]
+async fn source_provenance_migration_invalidates_pending_candidate_job_mismatch() {
+    let db_path = temporary_db_path();
+    let db = Db::open(&db_path).await.unwrap();
+    db.call(|conn| {
+        conn.execute(
+            "INSERT INTO stacks (id, name, compose_type, compose_files_json, backup_targets_json, backup_retention_keep_last, backup_retention_delete_after_stable_seconds, created_at, updated_at, last_check_at) VALUES ('stack', 'stack', 'path', '[]', '[]', 0, 0, '2026-04-30', '2026-04-30', '2026-04-30')",
+            [],
+        )?;
+        conn.execute(
+            "INSERT INTO services (id, stack_id, name, image_ref, image_tag, current_digest, candidate_digest, auto_rollback, backup_targets_bind_paths_json, backup_targets_volume_names_json, created_at, updated_at) VALUES ('service', 'stack', 'service', 'ghcr.io/acme/app', 'latest', 'sha256:current', 'sha256:candidate', 0, '{}', '{}', '2026-04-30', '2026-04-30')",
+            [],
+        )?;
+        for id in ["candidate-check", "pending-check"] {
+            conn.execute(
+                "INSERT INTO jobs (id, type, scope, stack_id, service_id, status, allow_arch_mismatch, backup_mode, created_by, reason, created_at, summary_json) VALUES (?1, 'check', 'service', 'stack', 'service', 'success', 0, 'inherit', 'schedule', 'schedule', '2026-04-30T00:00:00Z', '{}')",
+                [id],
+            )?;
+        }
+        Ok(())
+    })
+    .await
+    .unwrap();
+    let candidate = db
+        .upsert_auto_update_candidate(
+            &AutoUpdateCandidateInput {
+                id: "service:sha256:candidate".to_string(),
+                stack_id: "stack".to_string(),
+                service_id: "service".to_string(),
+                image_ref: "ghcr.io/acme/app".to_string(),
+                raw_tag: "latest".to_string(),
+                candidate_digest: "sha256:candidate".to_string(),
+                resolved_version: Some("1.4.0".to_string()),
+                status: "ready".to_string(),
+                reason: Some("digest_bound_version".to_string()),
+                attempts: 1,
+                retry_at: None,
+                discovered_at: "2026-04-30T00:00:00Z".to_string(),
+                source_job_id: "candidate-check".to_string(),
+                source: "schedule".to_string(),
+                current_tag: "latest".to_string(),
+                current_display_tag: "1.0.0".to_string(),
+                current_digest: Some("sha256:current".to_string()),
+            },
+            "2026-04-30T00:00:00Z",
+        )
+        .await
+        .unwrap();
+    db.reserve_auto_update_pending(
+        &AutoUpdatePendingInput {
+            id: "pending-mismatched-source".to_string(),
+            policy_scope_type: "service".to_string(),
+            policy_scope_id: "service".to_string(),
+            rule_id: "rule".to_string(),
+            stack_id: "stack".to_string(),
+            service_id: "service".to_string(),
+            source_check_job_id: "pending-check".to_string(),
+            candidate_tag: "latest".to_string(),
+            candidate_display_tag: "1.4.0".to_string(),
+            candidate_digest: "sha256:candidate".to_string(),
+            current_display_tag: "1.0.0".to_string(),
+            first_seen_at: "2026-04-30T00:00:00Z".to_string(),
+            due_at: "2026-04-30T00:00:00Z".to_string(),
+            min_age_seconds: 0,
+            min_version_lag: 0,
+            summary_json: serde_json::json!({
+                "currentDigest": "sha256:current"
+            }),
+            candidate_id: Some(candidate.id),
+        },
+        "2026-04-30T00:00:00Z",
+    )
+    .await
+    .unwrap();
+    db.call(|conn| {
+        conn.execute(
+            "DELETE FROM schema_migrations WHERE id = '0022_harden_auto_update_source_provenance'",
+            [],
+        )?;
+        Ok(())
+    })
+    .await
+    .unwrap();
+    drop(db);
+
+    let db = Db::open(&db_path).await.unwrap();
+    let pending = db
+        .call(|conn| {
+            Ok(conn.query_row(
+                "SELECT candidate_id, status, summary_json FROM auto_update_pending WHERE id = 'pending-mismatched-source'",
+                [],
+                |row| {
+                    Ok((
+                        row.get::<_, Option<String>>(0)?,
+                        row.get::<_, String>(1)?,
+                        row.get::<_, String>(2)?,
+                    ))
+                },
+            )?)
+        })
+        .await
+        .unwrap();
+    assert_eq!(pending.0, None);
+    assert_eq!(pending.1, "skipped");
+    assert_eq!(
+        serde_json::from_str::<serde_json::Value>(&pending.2).unwrap()["skipReason"],
+        "migration_ambiguous_history"
+    );
+
+    drop(db);
+    std::fs::remove_file(&db_path).unwrap();
+    let _ = std::fs::remove_file(db_path.with_extension("sqlite3-wal"));
+    let _ = std::fs::remove_file(db_path.with_extension("sqlite3-shm"));
+}

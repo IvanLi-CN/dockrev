@@ -701,6 +701,7 @@ pub async fn reconcile_inference_for_digest(
                 reason: reason.map(str::to_string),
                 last_error,
                 attempts,
+                // `begin_auto_update_candidate_inference` reserves this exact CAS token.
                 evidence_generation: candidate.evidence_generation,
                 retry_at,
                 settled_at: (resolved.is_some() || terminal).then_some(now.to_string()),
