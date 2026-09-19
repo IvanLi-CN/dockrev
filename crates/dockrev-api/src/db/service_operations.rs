@@ -284,8 +284,8 @@ WHERE id = ?1
                     let candidate_digest = super::strict_canonical_digest_sql("c.candidate_digest");
                     let service_digest = super::strict_canonical_digest_sql("s.candidate_digest");
                     let expected_digest = super::strict_canonical_digest_sql("?7");
-                    let current_digest = super::canonical_digest_sql("s.current_digest");
-                    let expected_current_digest = super::canonical_digest_sql("?8");
+                    let current_digest = super::strict_canonical_digest_sql("s.current_digest");
+                    let expected_current_digest = super::strict_canonical_digest_sql("?8");
                     let sql = format!(
                         r#"
 SELECT 1
@@ -440,10 +440,10 @@ WHERE id = ?1 AND status <> 'superseded'
                 }
 
                 if let Some(expected_current_digest) = expected_current_digest.as_deref() {
-                    let current_digest = super::canonical_digest_sql("current_digest");
-                    let expected_digest = super::canonical_digest_sql("?2");
+                    let current_digest = super::strict_canonical_digest_sql("current_digest");
+                    let expected_digest = super::strict_canonical_digest_sql("?2");
                     let sql = format!(
-                        "SELECT {current_digest} = {expected_digest} FROM services WHERE id = ?1"
+                        "SELECT COALESCE(({current_digest} = {expected_digest}), 0) FROM services WHERE id = ?1"
                     );
                     for target in &targets {
                         let matches = tx
@@ -1091,10 +1091,12 @@ INSERT INTO services (
         let db = Db::open(Path::new(":memory:")).await.unwrap();
         let (stack_id, service_id) = seed_service(&db).await;
         let current_service_id = service_id.clone();
+        let legacy_current_digest =
+            "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
         db.call(move |conn| {
             conn.execute(
-                "UPDATE services SET current_digest = 'OLD' WHERE id = ?1",
-                [current_service_id.as_str()],
+                "UPDATE services SET current_digest = ?1 WHERE id = ?2",
+                params![legacy_current_digest, current_service_id],
             )?;
             Ok(())
         })
@@ -1117,7 +1119,7 @@ INSERT INTO services (
                     stack_id,
                 }],
                 None,
-                "sha256:old",
+                "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
             )
             .await
             .unwrap();

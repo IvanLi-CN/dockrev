@@ -636,8 +636,60 @@ pub(super) fn list_candidate_hydration_diagnostics_conn(
     let candidate_digest = super::strict_canonical_digest_sql("c.candidate_digest");
     let service_digest = super::strict_canonical_digest_sql("s.candidate_digest");
     let discovery_digest = super::strict_canonical_digest_sql("d.candidate_digest");
+    let discovery_current_digest = super::strict_canonical_digest_sql("d.current_digest");
     let invalid_discovery = format!(
-        "EXISTS (SELECT 1 FROM service_new_version_discoveries d WHERE d.service_id = s.id AND TRIM(d.candidate_digest) <> '' AND ({discovery_digest}) IS NULL)"
+        r#"EXISTS (
+  SELECT 1
+  FROM service_new_version_discoveries d
+  LEFT JOIN jobs j ON j.id = d.source_job_id
+  WHERE d.service_id = s.id
+    AND (({discovery_digest}) = ({service_digest}) OR ({discovery_digest}) IS NULL)
+    AND (
+      NULLIF(TRIM(d.image_ref), '') IS NULL
+      OR NULLIF(TRIM(d.source_job_id), '') IS NULL
+      OR NULLIF(TRIM(d.discovered_at), '') IS NULL
+      OR ({discovery_current_digest}) IS NULL
+      OR NULLIF(TRIM(d.current_tag), '') IS NULL
+      OR ({discovery_digest}) IS NULL
+      OR (NULLIF(TRIM(d.candidate_tag), '') IS NULL
+        AND NULLIF(TRIM(d.candidate_display_tag), '') IS NULL)
+      OR j.id IS NULL
+      OR NOT (
+        (
+          LOWER(j.type) = 'check'
+          AND LOWER(j.status) = 'success'
+          AND LOWER(j.reason) = 'schedule'
+          AND LOWER(j.created_by) = 'schedule'
+        )
+        OR (
+          LOWER(j.type) = 'check'
+          AND LOWER(j.status) = 'success'
+          AND LOWER(j.created_by) IN ('webhook', 'github')
+          AND LOWER(COALESCE(
+            json_extract(CASE WHEN json_valid(j.summary_json) THEN j.summary_json ELSE '{{}}' END, '$.source'),
+            ''
+          )) = 'github_webhook'
+        )
+      )
+      OR NOT (
+        (
+          LOWER(j.scope) = 'service'
+          AND LOWER(j.stack_id) = LOWER(s.stack_id)
+          AND LOWER(j.service_id) = LOWER(s.id)
+        )
+        OR (
+          LOWER(j.scope) = 'stack'
+          AND LOWER(j.stack_id) = LOWER(s.stack_id)
+          AND j.service_id IS NULL
+        )
+        OR (
+          LOWER(j.scope) = 'all'
+          AND j.stack_id IS NULL
+          AND j.service_id IS NULL
+        )
+      )
+    )
+)"#
     );
     let sql = format!(
         r#"
@@ -687,7 +739,7 @@ WHERE s.id IN ({placeholders})
         let candidate_digest: Option<String> = row.get(2)?;
         let hydration_origin: Option<String> = row.get(7)?;
         let invalid_discovery: bool = row.get(9)?;
-        let status = if candidate_id.is_none() && invalid_discovery {
+        let status = if invalid_discovery {
             "ambiguous_history"
         } else if candidate_id.is_none() {
             "candidate_missing"

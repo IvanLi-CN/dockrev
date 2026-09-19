@@ -195,15 +195,15 @@ LIMIT ?1
         let skip_reason = skip_reason.to_string();
         let claimed = self
             .call(move |conn| {
-                let candidate_digest = super::canonical_digest_sql("c.candidate_digest");
-                let pending_digest = super::canonical_digest_sql("p.candidate_digest");
-                let service_digest = super::canonical_digest_sql("s.candidate_digest");
+                let candidate_digest = super::strict_canonical_digest_sql("c.candidate_digest");
+                let pending_digest = super::strict_canonical_digest_sql("p.candidate_digest");
+                let service_digest = super::strict_canonical_digest_sql("s.candidate_digest");
                 let target_digest =
-                    super::canonical_digest_sql("json_extract(target.value, '$.targetDigest')");
-                let expected_current_digest = super::canonical_digest_sql(
+                    super::strict_canonical_digest_sql("json_extract(target.value, '$.targetDigest')");
+                let expected_current_digest = super::strict_canonical_digest_sql(
                     "json_extract(target.value, '$.autoPolicyContext.expectedCurrentDigest')",
                 );
-                let service_current_digest = super::canonical_digest_sql("s.current_digest");
+                let service_current_digest = super::strict_canonical_digest_sql("s.current_digest");
                 let sql = format!(
                     r#"
 UPDATE jobs

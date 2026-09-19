@@ -817,3 +817,62 @@ async fn hydration_migration_survives_equivalent_legacy_candidate_rows() {
     let _ = std::fs::remove_file(db_path.with_extension("sqlite3-wal"));
     let _ = std::fs::remove_file(db_path.with_extension("sqlite3-shm"));
 }
+
+#[tokio::test]
+async fn invalid_digest_migration_rejects_blank_candidate_identities() {
+    let db_path = temporary_db_path();
+    let db = Db::open(&db_path).await.unwrap();
+    db.call(|conn| {
+        conn.execute(
+            "INSERT INTO stacks (id, name, compose_type, compose_files_json, backup_targets_json, backup_retention_keep_last, backup_retention_delete_after_stable_seconds, created_at, updated_at, last_check_at) VALUES ('blank-stack', 'blank-stack', 'path', '[]', '[]', 0, 0, '2026-04-30', '2026-04-30', '2026-04-30')",
+            [],
+        )?;
+        conn.execute(
+            "INSERT INTO services (id, stack_id, name, image_ref, image_tag, current_digest, candidate_digest, auto_rollback, backup_targets_bind_paths_json, backup_targets_volume_names_json, created_at, updated_at) VALUES ('blank-service', 'blank-stack', 'service', 'ghcr.io/acme/app', 'latest', 'sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa', '   ', 0, '{}', '{}', '2026-04-30', '2026-04-30')",
+            [],
+        )?;
+        conn.execute(
+            "INSERT INTO auto_update_pending (id, policy_scope_type, policy_scope_id, rule_id, stack_id, service_id, source_check_job_id, candidate_tag, candidate_display_tag, candidate_digest, current_display_tag, current_digest, first_seen_at, due_at, min_age_seconds, min_version_lag, status, update_job_id, created_at, updated_at, summary_json) VALUES ('blank-pending', 'stack', 'blank-stack', 'rule', 'blank-stack', 'blank-service', 'missing-check', 'latest', 'latest', '   ', '1.0.0', 'sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa', '2026-04-30T00:00:00Z', '2026-04-30T00:00:00Z', 0, 0, 'pending', NULL, '2026-04-30T00:00:00Z', '2026-04-30T00:00:00Z', '{}')",
+            [],
+        )?;
+        conn.execute(
+            "DELETE FROM schema_migrations WHERE id = '0026_reject_invalid_auto_update_digest_identity'",
+            [],
+        )?;
+        Ok(())
+    })
+    .await
+    .unwrap();
+    drop(db);
+
+    let db = Db::open(&db_path).await.unwrap();
+    let result = db
+        .call(|conn| {
+            let service_digest = conn.query_row(
+                "SELECT candidate_digest FROM services WHERE id = 'blank-service'",
+                [],
+                |row| row.get::<_, Option<String>>(0),
+            )?;
+            let pending_status = conn.query_row(
+                "SELECT status, json_extract(summary_json, '$.skipReason') FROM auto_update_pending WHERE id = 'blank-pending'",
+                [],
+                |row| Ok((row.get::<_, String>(0)?, row.get::<_, Option<String>>(1)?)),
+            )?;
+            Ok((service_digest, pending_status))
+        })
+        .await
+        .unwrap();
+    assert_eq!(result.0, None);
+    assert_eq!(
+        result.1,
+        (
+            "skipped".to_string(),
+            Some("migration_ambiguous_history".to_string())
+        )
+    );
+
+    drop(db);
+    std::fs::remove_file(&db_path).unwrap();
+    let _ = std::fs::remove_file(db_path.with_extension("sqlite3-wal"));
+    let _ = std::fs::remove_file(db_path.with_extension("sqlite3-shm"));
+}

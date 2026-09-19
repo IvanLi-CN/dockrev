@@ -580,6 +580,26 @@ async fn ambiguous_discovery_history_is_unresolved_and_cannot_authorize_policy()
     );
     assert_eq!(diagnostics[0].source_job_id, None);
     assert_eq!(diagnostics[0].discovered_at, None);
+
+    let candidate_id = candidate.id.clone();
+    db.call(move |conn| {
+        conn.execute(
+            "UPDATE auto_update_candidates SET hydration_origin = NULL WHERE id = ?1",
+            [candidate_id.as_str()],
+        )?;
+        Ok(())
+    })
+    .await
+    .unwrap();
+    let diagnostics = db
+        .list_candidate_hydration_diagnostics(&["service".to_string()])
+        .await
+        .unwrap();
+    assert_eq!(diagnostics[0].status, "ambiguous_history");
+    assert_eq!(
+        diagnostics[0].reason.as_deref(),
+        Some("migration_ambiguous_history")
+    );
 }
 
 #[tokio::test]
@@ -771,43 +791,57 @@ async fn queued_auto_policy_recovery_requires_exact_candidate_and_target_identit
     let cases = [
         (
             "missing-candidate",
-            "missing",
+            "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
             None,
             "latest",
             "service",
             false,
+            "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
         ),
         (
             "mismatched-tag",
-            "tag",
+            "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
             Some("candidate"),
             "stable",
             "service",
             false,
+            "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
         ),
         (
             "wrong-scope",
-            "scope",
+            "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
             Some("candidate"),
             "latest",
             "stack",
             false,
+            "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
         ),
         (
             "wrong-target-service",
-            "target",
+            "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
             Some("other-service"),
             "latest",
             "service",
             false,
+            "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
         ),
         (
             "prefixless-target",
-            "prefixless",
+            "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
             Some("candidate"),
             "latest",
             "service",
             true,
+            "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+        ),
+        (
+            "malformed-current",
+            "1111111111111111111111111111111111111111111111111111111111111111",
+            Some("candidate"),
+            "latest",
+            "service",
+            false,
+            "not-a-digest",
         ),
     ];
 
@@ -818,6 +852,7 @@ async fn queued_auto_policy_recovery_requires_exact_candidate_and_target_identit
         target_tag,
         job_scope,
         expected_claim,
+        current_digest,
     ) in cases
     {
         let service_id = format!("service-{suffix}");
@@ -827,15 +862,16 @@ async fn queued_auto_policy_recovery_requires_exact_candidate_and_target_identit
         let mut input = candidate_input(&candidate_id, &digest, "ready", "2026-04-30T00:00:00Z");
         input.service_id = service_id.clone();
         input.source_job_id = source_job_id.clone();
-        input.current_digest = Some("sha256:current".to_string());
+        input.current_digest = Some(current_digest.to_string());
         db.call({
             let service_id = service_id.clone();
             let digest = digest.clone();
             let source_job_id = source_job_id.clone();
+            let current_digest = current_digest.to_string();
             move |conn| {
                 conn.execute(
-                    "INSERT INTO services (id, stack_id, name, image_ref, image_tag, current_digest, candidate_digest, auto_rollback, backup_targets_bind_paths_json, backup_targets_volume_names_json, created_at, updated_at) VALUES (?1, 'stack', ?1, 'ghcr.io/acme/app', 'latest', 'sha256:current', ?2, 0, '{}', '{}', '2026-04-30', '2026-04-30')",
-                    rusqlite::params![service_id, digest],
+                    "INSERT INTO services (id, stack_id, name, image_ref, image_tag, current_digest, candidate_digest, auto_rollback, backup_targets_bind_paths_json, backup_targets_volume_names_json, created_at, updated_at) VALUES (?1, 'stack', ?1, 'ghcr.io/acme/app', 'latest', ?2, ?3, 0, '{}', '{}', '2026-04-30', '2026-04-30')",
+                    rusqlite::params![service_id, current_digest, digest],
                 )?;
                 conn.execute(
                     "INSERT INTO jobs (id, type, scope, stack_id, service_id, status, allow_arch_mismatch, backup_mode, created_by, reason, created_at, summary_json) VALUES (?1, 'check', 'service', 'stack', ?2, 'success', 0, 'inherit', 'schedule', 'schedule', '2026-04-30T00:00:00Z', '{}')",
@@ -936,7 +972,7 @@ async fn queued_auto_policy_recovery_requires_exact_candidate_and_target_identit
                     "targetTag": target_tag,
                     "targetDigest": target_digest,
                     "autoPolicyContext": {
-                        "expectedCurrentDigest": "sha256:current"
+                        "expectedCurrentDigest": current_digest
                     }
                 }]
             }),

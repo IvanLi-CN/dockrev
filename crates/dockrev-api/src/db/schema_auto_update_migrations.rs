@@ -68,7 +68,7 @@ pub(super) fn apply_migration_0026_reject_invalid_auto_update_digest_identity(
     let pending_update_digest = super::strict_canonical_digest_sql("candidate_digest");
     tx.execute(
         &format!(
-            "UPDATE jobs SET status = 'cancelled', finished_at = ?1 WHERE id IN (SELECT p.update_job_id FROM auto_update_pending p WHERE p.status IN ('pending', 'enqueuing', 'enqueued') AND p.update_job_id IS NOT NULL AND NULLIF(TRIM(p.candidate_digest), '') IS NOT NULL AND ({pending_digest}) IS NULL) AND status = 'queued' AND created_by = 'auto-policy'"
+            "UPDATE jobs SET status = 'cancelled', finished_at = ?1 WHERE id IN (SELECT p.update_job_id FROM auto_update_pending p WHERE p.status IN ('pending', 'enqueuing', 'enqueued') AND p.update_job_id IS NOT NULL AND p.candidate_digest IS NOT NULL AND ({pending_digest}) IS NULL) AND status = 'queued' AND created_by = 'auto-policy'"
         ),
         params![&now],
     )?;
@@ -84,7 +84,7 @@ JOIN jobs j ON j.id = p.update_job_id
 WHERE p.status IN ('pending', 'enqueuing', 'enqueued')
   AND p.update_job_id IS NOT NULL
   AND j.status = 'running'
-  AND NULLIF(TRIM(p.candidate_digest), '') IS NOT NULL
+  AND p.candidate_digest IS NOT NULL
   AND ({pending_digest}) IS NULL
 ON CONFLICT(job_id) DO UPDATE SET
   stop_requested_at = COALESCE(update_job_stop_controls.stop_requested_at, excluded.stop_requested_at),
@@ -110,7 +110,7 @@ SET candidate_id = NULL,
     END,
     updated_at = ?1
 WHERE status IN ('pending', 'enqueuing', 'enqueued')
-  AND NULLIF(TRIM(candidate_digest), '') IS NOT NULL
+  AND candidate_digest IS NOT NULL
   AND ({pending_update_digest}) IS NULL
 "#
         ),
@@ -133,7 +133,7 @@ SET status = 'unresolved',
     hydration_origin = 'discovery_history_ambiguous',
     updated_at = ?1
 WHERE status NOT IN ('superseded', 'completed')
-  AND NULLIF(TRIM(candidate_digest), '') IS NOT NULL
+  AND candidate_digest IS NOT NULL
   AND ({candidate_digest}) IS NULL
 "#
         ),
@@ -142,7 +142,7 @@ WHERE status NOT IN ('superseded', 'completed')
     let service_digest = super::strict_canonical_digest_sql("candidate_digest");
     tx.execute(
         &format!(
-            "UPDATE services SET candidate_digest = NULL WHERE NULLIF(TRIM(candidate_digest), '') IS NOT NULL AND ({service_digest}) IS NULL"
+            "UPDATE services SET candidate_digest = NULL WHERE candidate_digest IS NOT NULL AND ({service_digest}) IS NULL"
         ),
         [],
     )?;

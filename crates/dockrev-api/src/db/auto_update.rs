@@ -375,14 +375,14 @@ WHERE id = ?1 AND status = 'pending'
         let now = now.to_string();
         self.call(move |conn| {
             let pending_candidate_digest =
-                super::canonical_digest_sql("auto_update_pending.candidate_digest");
-            let candidate_digest_expr = super::canonical_digest_sql("c.candidate_digest");
-            let service_candidate_digest = super::canonical_digest_sql("s.candidate_digest");
-            let expected_candidate_digest = super::canonical_digest_sql("?3");
-            let pending_current_digest = super::canonical_digest_sql(
+                super::strict_canonical_digest_sql("auto_update_pending.candidate_digest");
+            let candidate_digest_expr = super::strict_canonical_digest_sql("c.candidate_digest");
+            let service_candidate_digest = super::strict_canonical_digest_sql("s.candidate_digest");
+            let expected_candidate_digest = super::strict_canonical_digest_sql("?3");
+            let pending_current_digest = super::strict_canonical_digest_sql(
                 "NULLIF(TRIM(COALESCE(NULLIF(TRIM(auto_update_pending.current_digest), ''), json_extract(CASE WHEN json_valid(auto_update_pending.summary_json) THEN auto_update_pending.summary_json ELSE '{}' END, '$.currentDigest'))), '')",
             );
-            let service_current_digest = super::canonical_digest_sql("s.current_digest");
+            let service_current_digest = super::strict_canonical_digest_sql("s.current_digest");
             let sql = format!(
                 r#"
 UPDATE auto_update_pending
@@ -1111,7 +1111,7 @@ mod tests {
                 [],
             )?;
             conn.execute(
-                "INSERT INTO services (id, stack_id, name, image_ref, image_tag, current_digest, candidate_digest, auto_rollback, backup_targets_bind_paths_json, backup_targets_volume_names_json, created_at, updated_at) VALUES ('service', 'stack', 'service', 'ghcr.io/acme/app', 'latest', 'OLD', 'NEW', 0, '{}', '{}', '2026-04-30', '2026-04-30')",
+                "INSERT INTO services (id, stack_id, name, image_ref, image_tag, current_digest, candidate_digest, auto_rollback, backup_targets_bind_paths_json, backup_targets_volume_names_json, created_at, updated_at) VALUES ('service', 'stack', 'service', 'ghcr.io/acme/app', 'latest', 'sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa', 'sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb', 0, '{}', '{}', '2026-04-30', '2026-04-30')",
                 [],
             )?;
             conn.execute(
@@ -1125,7 +1125,7 @@ mod tests {
         db.upsert_auto_update_candidate(
             &candidate_input(
                 "candidate-policy-recheck",
-                "sha256:new",
+                "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
                 "ready",
                 "2026-04-30T00:00:00Z",
             ),
@@ -1135,7 +1135,7 @@ mod tests {
         .unwrap();
         db.set_auto_update_candidate_policy(
             "service",
-            "sha256:new",
+            "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
             "delayed",
             Some("policy_matched"),
             Some("rule"),
@@ -1177,7 +1177,7 @@ mod tests {
                     source_check_job_id: "check".to_string(),
                     candidate_tag: "latest".to_string(),
                     candidate_display_tag: "1.4.0".to_string(),
-                    candidate_digest: "sha256:new".to_string(),
+                    candidate_digest: "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb".to_string(),
                     current_display_tag: "1.0.0".to_string(),
                     first_seen_at: "2026-04-30T00:00:00Z".to_string(),
                     due_at: "2026-04-30T00:00:00Z".to_string(),
@@ -1185,7 +1185,7 @@ mod tests {
                     min_version_lag: 0,
                     summary_json: serde_json::json!({
                         "policyUpdatedAt": "2026-04-30T00:01:00Z",
-                        "currentDigest": "OLD"
+                        "currentDigest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
                     }),
                     candidate_id: Some("candidate-policy-recheck".to_string()),
                 },
@@ -1197,7 +1197,7 @@ mod tests {
             db.try_claim_auto_update_pending_if_current(
                 &pending.id,
                 "service",
-                "sha256:new",
+                "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
                 "stack",
                 "stack",
                 "rule",
@@ -1217,7 +1217,7 @@ mod tests {
             !db.try_claim_auto_update_pending_if_current(
                 &pending.id,
                 "service",
-                "sha256:new",
+                "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
                 "stack",
                 "stack",
                 "rule",
@@ -1457,9 +1457,6 @@ mod tests {
         })
         .await
         .unwrap();
-        db.create_update_stop_control("running-auto-update-job", "2026-04-30T00:00:31Z")
-            .await
-            .unwrap();
         assert!(
             db.try_claim_auto_update_pending(&running_pending.id, "2026-04-30T00:00:32Z")
                 .await

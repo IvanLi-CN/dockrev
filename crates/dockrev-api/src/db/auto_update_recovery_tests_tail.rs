@@ -766,7 +766,7 @@ async fn auto_policy_enqueue_guard_rejects_changed_candidate_without_creating_a_
             [],
         )?;
         conn.execute(
-            "INSERT INTO services (id, stack_id, name, image_ref, image_tag, current_digest, candidate_digest, auto_rollback, backup_targets_bind_paths_json, backup_targets_volume_names_json, created_at, updated_at) VALUES ('service', 'stack', 'service', 'ghcr.io/acme/app', 'latest', 'sha256:current', 'sha256:old', 0, '{}', '{}', '2026-04-30', '2026-04-30')",
+            "INSERT INTO services (id, stack_id, name, image_ref, image_tag, current_digest, candidate_digest, auto_rollback, backup_targets_bind_paths_json, backup_targets_volume_names_json, created_at, updated_at) VALUES ('service', 'stack', 'service', 'ghcr.io/acme/app', 'latest', 'sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc', 'sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa', 0, '{}', '{}', '2026-04-30', '2026-04-30')",
             [],
         )?;
         conn.execute(
@@ -799,7 +799,7 @@ async fn auto_policy_enqueue_guard_rejects_changed_candidate_without_creating_a_
         .upsert_auto_update_candidate(
             &candidate_input(
                 "candidate-old",
-                "sha256:old",
+                "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
                 "ready",
                 "2026-04-30T00:00:00Z",
             ),
@@ -809,7 +809,7 @@ async fn auto_policy_enqueue_guard_rejects_changed_candidate_without_creating_a_
         .unwrap();
     db.set_auto_update_candidate_policy(
         "service",
-        "sha256:old",
+        "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
         "delayed",
         Some("policy_matched"),
         Some("rule"),
@@ -838,14 +838,14 @@ async fn auto_policy_enqueue_guard_rejects_changed_candidate_without_creating_a_
                 source_check_job_id: "source-check".to_string(),
                 candidate_tag: "latest".to_string(),
                 candidate_display_tag: "1.4.0".to_string(),
-                candidate_digest: "sha256:old".to_string(),
+                candidate_digest: "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa".to_string(),
                 current_display_tag: "1.0.0".to_string(),
                 first_seen_at: "2026-04-30T00:00:00Z".to_string(),
                 due_at: "2026-04-30T00:00:00Z".to_string(),
                 min_age_seconds: 0,
                 min_version_lag: 0,
                 summary_json: serde_json::json!({
-                    "currentDigest": "sha256:current",
+                    "currentDigest": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
                     "policyUpdatedAt": "2026-04-30T00:00:00Z"
                 }),
                 candidate_id: Some(candidate.id.clone()),
@@ -858,7 +858,7 @@ async fn auto_policy_enqueue_guard_rejects_changed_candidate_without_creating_a_
         .try_claim_auto_update_pending_if_current(
             &pending.id,
             "service",
-            "sha256:old",
+            "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
             "stack",
             "stack",
             "rule",
@@ -869,7 +869,7 @@ async fn auto_policy_enqueue_guard_rejects_changed_candidate_without_creating_a_
 
     db.call(|conn| {
         conn.execute(
-            "UPDATE services SET candidate_digest = 'sha256:new' WHERE id = 'service'",
+            "UPDATE services SET candidate_digest = 'sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb' WHERE id = 'service'",
             [],
         )?;
         Ok(())
@@ -899,11 +899,11 @@ async fn auto_policy_enqueue_guard_rejects_changed_candidate_without_creating_a_
                 pending_id: pending.id.clone(),
                 service_id: "service".to_string(),
                 candidate_id: candidate.id,
-                candidate_digest: "sha256:old".to_string(),
+                candidate_digest: "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa".to_string(),
                 policy_scope_type: "stack".to_string(),
                 policy_scope_id: "stack".to_string(),
                 rule_id: "rule".to_string(),
-                expected_current_digest: "sha256:current".to_string(),
+                expected_current_digest: "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc".to_string(),
             },
         )
         .await
@@ -1020,7 +1020,7 @@ async fn auto_policy_enqueue_guard_rejects_malformed_candidate_digest() {
         )
         .await
         .unwrap();
-    assert!(db
+    assert!(!db
         .try_claim_auto_update_pending_if_current(
             &pending.id,
             "service",
@@ -1080,7 +1080,7 @@ async fn auto_policy_enqueue_guard_rejects_malformed_candidate_digest() {
             .unwrap()
             .unwrap()
             .status,
-        "skipped"
+        "pending"
     );
 }
 

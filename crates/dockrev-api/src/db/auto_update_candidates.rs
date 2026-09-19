@@ -438,13 +438,19 @@ WHERE id = ?1 AND status = 'queued' AND created_by = 'auto-policy'
                     if update_job_status.as_deref() == Some("running") {
                         tx.execute(
                             r#"
-UPDATE update_job_stop_controls
-SET stop_requested_at = ?2,
-    stop_requested_by = 'auto-policy-supersession',
-    updated_at = ?2
-WHERE job_id = ?1
-  AND stop_requested_at IS NULL
-  AND apply_committed_at IS NULL
+INSERT INTO update_job_stop_controls (
+  job_id, stop_requested_at, stop_requested_by, updated_at
+)
+SELECT ?1, ?2, 'auto-policy-supersession', ?2
+WHERE EXISTS (
+  SELECT 1 FROM jobs WHERE id = ?1 AND status = 'running'
+)
+ON CONFLICT(job_id) DO UPDATE SET
+  stop_requested_at = COALESCE(update_job_stop_controls.stop_requested_at, excluded.stop_requested_at),
+  stop_requested_by = COALESCE(update_job_stop_controls.stop_requested_by, excluded.stop_requested_by),
+  updated_at = excluded.updated_at
+WHERE update_job_stop_controls.apply_committed_at IS NULL
+  AND update_job_stop_controls.stop_requested_at IS NULL
 "#,
                             params![update_job_id, now],
                         )?;
