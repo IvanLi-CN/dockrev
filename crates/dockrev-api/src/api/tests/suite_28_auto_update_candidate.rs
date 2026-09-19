@@ -57,6 +57,172 @@ fn auto_update_discovery_summary(
     })
 }
 
+#[test]
+fn candidate_provenance_serializes_in_service_stack_and_overview_contracts() {
+    let settlement = crate::api::types::CandidateSettlement {
+        status: "ready".to_string(),
+        raw_tag: Some("latest".to_string()),
+        candidate_digest: Some("sha256:new".to_string()),
+        resolved_version: Some("1.4.0".to_string()),
+        resolved_tags: Some(vec!["1.4.0".to_string()]),
+        reason: Some("digest_bound_version".to_string()),
+        attempts: 1,
+        retry_at: None,
+        discovered_at: Some("2026-04-30T00:00:00Z".to_string()),
+        last_error: None,
+        superseded_at: None,
+        superseded_by_candidate_id: None,
+        source: Some("github_webhook".to_string()),
+        source_job_id: Some("check-webhook".to_string()),
+        hydration_origin: Some("discovery_history".to_string()),
+    };
+    let hydration = crate::api::types::CandidateHydrationDiagnostic {
+        status: "hydrated".to_string(),
+        reason: None,
+        candidate_digest: Some("sha256:new".to_string()),
+        source: Some("github_webhook".to_string()),
+        source_job_id: Some("check-webhook".to_string()),
+        hydration_origin: Some("discovery_history".to_string()),
+        discovered_at: Some("2026-04-30T00:00:00Z".to_string()),
+    };
+    let settings = crate::api::types::ServiceSettings {
+        auto_rollback: false,
+        backup_targets: crate::api::types::BackupTargetOverrides {
+            bind_paths: BTreeMap::new(),
+            volume_names: BTreeMap::new(),
+        },
+        repo_url: None,
+    };
+    let service = crate::api::types::Service {
+        id: "service".to_string(),
+        name: "web".to_string(),
+        image: crate::api::types::ComposeRef {
+            reference: "ghcr.io/acme/web".to_string(),
+            tag: "latest".to_string(),
+            digest: Some("sha256:current".to_string()),
+            resolved_tag: None,
+            resolved_tags: None,
+        },
+        homepage: None,
+        update_guard: None,
+        candidate: None,
+        ignore: None,
+        version_inference: None,
+        candidate_settlement: Some(settlement.clone()),
+        candidate_hydration: Some(hydration.clone()),
+        auto_update: None,
+        new_version_discovery_count: None,
+        settings: settings.clone(),
+        archived: None,
+    };
+
+    let service_json = serde_json::to_value(&service).unwrap();
+    assert_eq!(
+        service_json["candidateSettlement"]["sourceJobId"],
+        "check-webhook"
+    );
+    assert_eq!(
+        service_json["candidateHydration"]["hydrationOrigin"],
+        "discovery_history"
+    );
+    assert!(service_json["candidateSettlement"].get("source_job_id").is_none());
+
+    let stack_json = serde_json::to_value(crate::api::types::GetStackResponse {
+        stack: crate::api::types::StackResponse {
+            id: "stack".to_string(),
+            name: "stack".to_string(),
+            compose: crate::api::types::ComposeConfig {
+                kind: "path".to_string(),
+                compose_files: vec![],
+                env_file: None,
+            },
+            services: vec![crate::api::types::StackServiceResponse {
+                service,
+                lifecycle_state: crate::api::types::ServiceLifecycleState::Unknown,
+            }],
+            archived: Some(false),
+        },
+    })
+    .unwrap();
+    assert_eq!(
+        stack_json["stack"]["services"][0]["candidateSettlement"]["source"],
+        "github_webhook"
+    );
+
+    let resource = crate::api::types::ServiceResourceOverviewItem {
+        service_id: "service".to_string(),
+        sampled_at: None,
+        cpu_percent: None,
+        mem_used_bytes: None,
+        mem_limit_bytes: None,
+        net_rx_rate_bps: None,
+        net_tx_rate_bps: None,
+        stale: true,
+        sample_count: 0,
+    };
+    let overview_json = serde_json::to_value(crate::api::types::HomepageNavResponse {
+        generated_at: "2026-04-30T00:01:00Z".to_string(),
+        last_check_at: None,
+        resource_summary: crate::api::types::ServiceResourceOverviewResponse {
+            enabled: false,
+            window: "1h".to_string(),
+            generated_at: "2026-04-30T00:01:00Z".to_string(),
+            stale_after_seconds: 300,
+            services: vec![resource.clone()],
+        },
+        items: vec![crate::api::types::HomepageNavItem {
+            stack_id: "stack".to_string(),
+            stack_name: "stack".to_string(),
+            service_id: "service".to_string(),
+            service_name: "web".to_string(),
+            image_ref: "ghcr.io/acme/web".to_string(),
+            image_tag: "latest".to_string(),
+            image_digest: Some("sha256:current".to_string()),
+            image_resolved_tag: None,
+            image_resolved_tags: None,
+            is_dockrev: false,
+            homepage: crate::api::types::ServiceHomepage::default(),
+            candidate: None,
+            ignore: None,
+            version_inference: None,
+            candidate_settlement: Some(settlement),
+            candidate_hydration: Some(hydration),
+            auto_update: None,
+            new_version_discovery_count: None,
+            settings,
+            archived: None,
+            resource,
+        }],
+    })
+    .unwrap();
+    assert_eq!(
+        overview_json["items"][0]["candidateHydration"]["sourceJobId"],
+        "check-webhook"
+    );
+
+    let sparse = serde_json::to_value(crate::api::types::CandidateSettlement {
+        status: "unresolved".to_string(),
+        raw_tag: None,
+        candidate_digest: None,
+        resolved_version: None,
+        resolved_tags: None,
+        reason: Some("migration_ambiguous_history".to_string()),
+        attempts: 0,
+        retry_at: None,
+        discovered_at: None,
+        last_error: None,
+        superseded_at: None,
+        superseded_by_candidate_id: None,
+        source: None,
+        source_job_id: None,
+        hydration_origin: None,
+    })
+    .unwrap();
+    assert!(sparse.get("source").is_none());
+    assert!(sparse.get("sourceJobId").is_none());
+    assert!(sparse.get("hydrationOrigin").is_none());
+}
+
 #[tokio::test]
 async fn digest_bound_snapshot_settles_candidate_and_re_evaluates_policy() {
     let state = test_state(":memory:").await;
