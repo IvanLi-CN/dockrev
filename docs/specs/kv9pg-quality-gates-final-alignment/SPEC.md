@@ -102,7 +102,7 @@
 
 ### Testing
 
-- `python3 /Users/ivan/.style-playbook-skills/skills/style-topic-quality-gates/scripts/check_quality_gates.py --repo-root . --declaration .github/quality-gates.json --allow-unchecked-branch-protection`
+- `python3 .agents/skills/quality-gates/assets/scripts/check_quality_gates.py --repo-root . --declaration .github/quality-gates.json --allow-unchecked-branch-protection`
 - `go run github.com/rhysd/actionlint/cmd/actionlint@latest .github/workflows/*.yml`
 - `bash scripts/test-worktree-bootstrap.sh`
 - `bash ./.github/scripts/release-channel-contract-check.sh`
