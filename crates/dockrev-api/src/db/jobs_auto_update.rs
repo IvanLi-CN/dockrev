@@ -198,6 +198,9 @@ LIMIT ?1
                 let candidate_digest = super::strict_canonical_digest_sql("c.candidate_digest");
                 let pending_digest = super::strict_canonical_digest_sql("p.candidate_digest");
                 let service_digest = super::strict_canonical_digest_sql("s.candidate_digest");
+                let candidate_current_digest =
+                    super::strict_canonical_digest_sql("c.current_digest");
+                let pending_current_digest = super::strict_canonical_digest_sql("p.current_digest");
                 let target_digest =
                     super::strict_canonical_digest_sql("json_extract(target.value, '$.targetDigest')");
                 let expected_current_digest = super::strict_canonical_digest_sql(
@@ -225,6 +228,8 @@ WHERE id = ?1
       AND p.candidate_id = c.id
       AND c.status <> 'superseded'
       AND c.policy_status = 'queued'
+      AND {candidate_current_digest} = {pending_current_digest}
+      AND {pending_current_digest} = {service_current_digest}
       AND c.source_job_id = p.source_check_job_id
       AND LOWER(source_job.type) = 'check'
       AND LOWER(source_job.status) = 'success'

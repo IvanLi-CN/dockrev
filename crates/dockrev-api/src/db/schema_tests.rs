@@ -269,6 +269,7 @@ CREATE TABLE jobs (
 CREATE TABLE services (
   id TEXT PRIMARY KEY NOT NULL,
   stack_id TEXT NOT NULL,
+  current_digest TEXT,
   candidate_digest TEXT
 );
 CREATE TABLE update_job_stop_controls (
@@ -311,11 +312,11 @@ INSERT INTO schema_migrations (id, applied_at) VALUES
   ('0011_track_candidate_display_tags_in_new_version_discoveries', '2026-01-01T00:00:00Z'),
   ('0012_track_image_ref_in_new_version_discoveries', '2026-01-01T00:00:00Z'),
   ('0013_add_update_job_stop_controls', '2026-01-01T00:00:00Z');
-INSERT INTO services (id, stack_id, candidate_digest)
+INSERT INTO services (id, stack_id, current_digest, candidate_digest)
 VALUES
-  ('service-1', 'stack-1', '0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef'),
-  ('service-3', 'stack-1', 'sha256:2222222222222222222222222222222222222222222222222222222222222222'),
-  ('service-4', 'stack-1', 'sha256:noncheck');
+  ('service-1', 'stack-1', 'sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa', '0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef'),
+  ('service-3', 'stack-1', 'sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa', 'sha256:2222222222222222222222222222222222222222222222222222222222222222'),
+  ('service-4', 'stack-1', 'sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa', 'sha256:noncheck');
 INSERT INTO jobs (
   id, type, scope, stack_id, service_id, status, allow_arch_mismatch, backup_mode, created_by,
   reason, created_at, summary_json
@@ -342,12 +343,12 @@ INSERT INTO auto_update_pending (
    'schedule-check', 'latest', 'latest', '0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef', '1.0.0',
    '2026-04-30T00:00:00Z', '2026-04-30T00:15:00Z', 900, 0,
    'pending', NULL, '2026-04-30T00:00:00Z', '2026-04-30T00:00:00Z',
-   '{"imageRef":"ghcr.io/acme/app:latest","currentDigest":"sha256:old"}'),
+   '{"imageRef":"ghcr.io/acme/app:latest","currentDigest":"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}'),
   ('pending-duplicate', 'stack', 'stack-1', 'rule-1', 'stack-1', 'service-1',
    'schedule-check', 'latest', 'latest', 'sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef', '1.0.0',
    '2026-04-30T00:00:01Z', '2026-04-30T00:15:00Z', 900, 0,
    'enqueued', 'queued-duplicate-job', '2026-04-30T00:00:01Z', '2026-04-30T00:00:01Z',
-   '{"imageRef":"ghcr.io/acme/app:latest","currentDigest":"sha256:old"}'),
+   '{"imageRef":"ghcr.io/acme/app:latest","currentDigest":"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}'),
   ('pending-ambiguous', 'stack', 'stack-1', 'rule-1', 'stack-1', 'service-2',
    'unknown-check', 'latest', 'latest', 'sha256:other', '1.0.0',
    '2026-04-30T00:00:00Z', '2026-04-30T00:15:00Z', 900, 0,
@@ -356,12 +357,12 @@ INSERT INTO auto_update_pending (
    'schedule-check', '1.2.3', '1.2.3', 'sha256:2222222222222222222222222222222222222222222222222222222222222222', '1.0.0',
    '2026-04-30T00:00:00Z', '2026-04-30T00:15:00Z', 900, 0,
    'pending', NULL, '2026-04-30T00:00:00Z', '2026-04-30T00:00:00Z',
-   '{"imageRef":"ghcr.io/acme/app:1.2.3","currentDigest":"sha256:old"}'),
+   '{"imageRef":"ghcr.io/acme/app:1.2.3","currentDigest":"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}'),
   ('pending-noncheck', 'stack', 'stack-1', 'rule-noncheck', 'stack-1', 'service-4',
    'non-check-schedule', 'latest', 'latest', 'sha256:noncheck', '1.0.0',
    '2026-04-30T00:00:00Z', '2026-04-30T00:15:00Z', 900, 0,
    'enqueued', 'queued-noncheck-job', '2026-04-30T00:00:00Z', '2026-04-30T00:00:00Z',
-   '{"imageRef":"ghcr.io/acme/app:latest","currentDigest":"sha256:old"}');
+   '{"imageRef":"ghcr.io/acme/app:latest","currentDigest":"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}');
 "#,
         )
         .unwrap();
@@ -618,7 +619,7 @@ async fn source_provenance_migration_invalidates_pending_candidate_job_mismatch(
     )
     .await
     .unwrap();
-    db.call(|conn| {
+    db.call(move |conn| {
         conn.execute(
             "DELETE FROM schema_migrations WHERE id = '0022_harden_auto_update_source_provenance'",
             [],
@@ -657,6 +658,118 @@ async fn source_provenance_migration_invalidates_pending_candidate_job_mismatch(
     std::fs::remove_file(&db_path).unwrap();
     let _ = std::fs::remove_file(db_path.with_extension("sqlite3-wal"));
     let _ = std::fs::remove_file(db_path.with_extension("sqlite3-shm"));
+}
+
+#[tokio::test]
+async fn source_provenance_migration_rejects_pending_baseline_mismatch() {
+    let db = Db::open(std::path::Path::new(":memory:")).await.unwrap();
+    let current_digest = "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc";
+    let candidate_digest =
+        "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd";
+    let stale_digest = "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+
+    db.call(move |conn| {
+        conn.execute(
+            "INSERT INTO stacks (id, name, compose_type, compose_files_json, backup_targets_json, backup_retention_keep_last, backup_retention_delete_after_stable_seconds, created_at, updated_at, last_check_at) VALUES ('stack', 'stack', 'path', '[]', '[]', 0, 0, '2026-04-30', '2026-04-30', '2026-04-30')",
+            [],
+        )?;
+        conn.execute(
+            "INSERT INTO services (id, stack_id, name, image_ref, image_tag, current_digest, candidate_digest, auto_rollback, backup_targets_bind_paths_json, backup_targets_volume_names_json, created_at, updated_at) VALUES ('service', 'stack', 'service', 'ghcr.io/acme/app', 'latest', ?1, ?2, 0, '{}', '{}', '2026-04-30', '2026-04-30')",
+            rusqlite::params![current_digest, candidate_digest],
+        )?;
+        conn.execute(
+            "INSERT INTO jobs (id, type, scope, stack_id, service_id, status, allow_arch_mismatch, backup_mode, created_by, reason, created_at, summary_json) VALUES ('check', 'check', 'service', 'stack', 'service', 'success', 0, 'inherit', 'schedule', 'schedule', '2026-04-30T00:00:00Z', '{}')",
+            [],
+        )?;
+        Ok(())
+    })
+    .await
+    .unwrap();
+    let candidate = db
+        .upsert_auto_update_candidate(
+            &AutoUpdateCandidateInput {
+                id: "candidate-baseline-mismatch".to_string(),
+                stack_id: "stack".to_string(),
+                service_id: "service".to_string(),
+                image_ref: "ghcr.io/acme/app".to_string(),
+                raw_tag: "latest".to_string(),
+                candidate_digest: candidate_digest.to_string(),
+                resolved_version: Some("1.4.0".to_string()),
+                status: "ready".to_string(),
+                reason: Some("digest_bound_version".to_string()),
+                attempts: 0,
+                retry_at: None,
+                discovered_at: "2026-04-30T00:00:00Z".to_string(),
+                source_job_id: "check".to_string(),
+                source: "schedule".to_string(),
+                current_tag: "latest".to_string(),
+                current_display_tag: "1.0.0".to_string(),
+                current_digest: Some(stale_digest.to_string()),
+            },
+            "2026-04-30T00:00:00Z",
+        )
+        .await
+        .unwrap();
+    db.reserve_auto_update_pending(
+        &AutoUpdatePendingInput {
+            id: "pending-baseline-mismatch".to_string(),
+            policy_scope_type: "service".to_string(),
+            policy_scope_id: "service".to_string(),
+            rule_id: "rule".to_string(),
+            stack_id: "stack".to_string(),
+            service_id: "service".to_string(),
+            source_check_job_id: "check".to_string(),
+            candidate_tag: "latest".to_string(),
+            candidate_display_tag: "1.4.0".to_string(),
+            current_display_tag: "1.0.0".to_string(),
+            candidate_digest: candidate_digest.to_string(),
+            first_seen_at: "2026-04-30T00:00:00Z".to_string(),
+            due_at: "2026-04-30T00:00:00Z".to_string(),
+            min_age_seconds: 0,
+            min_version_lag: 0,
+            summary_json: serde_json::json!({"currentDigest": stale_digest}),
+            candidate_id: Some(candidate.id),
+        },
+        "2026-04-30T00:01:00Z",
+    )
+    .await
+    .unwrap();
+
+    db.call(|conn| {
+        conn.execute(
+            "DELETE FROM schema_migrations WHERE id = '0022_harden_auto_update_source_provenance'",
+            [],
+        )?;
+        super::apply_migration_0022_harden_auto_update_source_provenance(conn)?;
+        Ok(())
+    })
+    .await
+    .unwrap();
+
+    let pending = db
+        .call(|conn| {
+            Ok(conn.query_row(
+                "SELECT candidate_id, status, json_extract(summary_json, '$.skipReason') FROM auto_update_pending WHERE id = 'pending-baseline-mismatch'",
+                [],
+                |row| {
+                    Ok((
+                        row.get::<_, Option<String>>(0)?,
+                        row.get::<_, String>(1)?,
+                        row.get::<_, Option<String>>(2)?,
+                    ))
+                },
+            )?)
+        })
+        .await
+        .unwrap();
+    assert_eq!(
+        pending,
+        (
+            None,
+            "skipped".to_string(),
+            Some("migration_ambiguous_history".to_string())
+        )
+    );
 }
 
 #[tokio::test]
