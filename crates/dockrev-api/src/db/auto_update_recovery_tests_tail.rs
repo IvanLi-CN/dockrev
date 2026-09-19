@@ -262,7 +262,15 @@ async fn each_incomplete_discovery_field_is_unresolved_and_not_executable() {
 
     for (suffix, image_ref, source_job_id, discovered_at, current_digest, candidate_tag, candidate_display_tag) in cases {
         let db = Db::open(Path::new(":memory:")).await.unwrap();
-        let candidate_digest = format!("sha256:incomplete-{suffix}");
+        let candidate_digest = match suffix {
+            "image" => "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+            "source-job" => "sha256:2222222222222222222222222222222222222222222222222222222222222222",
+            "discovered-at" => "sha256:3333333333333333333333333333333333333333333333333333333333333333",
+            "current-digest" => "sha256:4444444444444444444444444444444444444444444444444444444444444444",
+            "candidate-tags" => "sha256:5555555555555555555555555555555555555555555555555555555555555555",
+            _ => unreachable!("unexpected incomplete discovery fixture: {suffix}"),
+        }
+        .to_string();
         db.call({
             let image_ref = image_ref.to_string();
             let source_job_id = source_job_id.to_string();
@@ -387,19 +395,24 @@ async fn bare_candidate_digest_is_unresolved_and_cannot_authorize_policy() {
     db.hydrate_auto_update_candidates("2026-04-30T00:01:00Z")
         .await
         .unwrap();
-    let candidate = db
+    assert!(db
         .get_auto_update_candidate("service", "latest")
         .await
         .unwrap()
+        .is_none());
+    let diagnostics = db
+        .list_candidate_hydration_diagnostics(&["service".to_string()])
+        .await
         .unwrap();
-    assert_eq!(candidate.status, "unresolved");
-    assert_eq!(candidate.reason.as_deref(), Some("migration_ambiguous_history"));
-    assert_eq!(candidate.source, "unknown");
-    assert_eq!(candidate.source_job_id, "");
+    assert_eq!(diagnostics.len(), 1);
+    assert_eq!(diagnostics[0].status, "ambiguous_history");
     assert_eq!(
-        candidate.hydration_origin.as_deref(),
-        Some("discovery_history_ambiguous")
+        diagnostics[0].reason.as_deref(),
+        Some("migration_ambiguous_history")
     );
+    assert_eq!(diagnostics[0].candidate_digest.as_deref(), Some("latest"));
+    assert_eq!(diagnostics[0].source_job_id, None);
+    assert_eq!(diagnostics[0].discovered_at, None);
     assert!(
         db.list_auto_update_pending_candidates("2026-04-30T00:01:00Z", 10)
             .await
@@ -682,7 +695,7 @@ INSERT INTO services (
   created_at, updated_at
 ) VALUES (
   'legacy-service', 'legacy-stack', 'app', 'ghcr.io/acme/app', 'latest',
-  'sha256:current', 'LEGACY', 0, '{}', '{}',
+  'sha256:current', '0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef', 0, '{}', '{}',
   '2026-04-30T00:00:00Z', '2026-04-30T00:00:00Z'
 );
 INSERT INTO jobs (
@@ -699,7 +712,7 @@ INSERT INTO service_new_version_discoveries (
 ) VALUES (
   'legacy-service', 'ghcr.io/acme/app:latest', 'legacy-schedule-check',
   '2026-04-30T00:00:00Z', 'sha256:current', '1.0.0', 'latest',
-  'latest', 'LEGACY', 'latest'
+  'latest', '0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef', 'latest'
 );
 "#,
         )
@@ -708,7 +721,10 @@ INSERT INTO service_new_version_discoveries (
 
     let db = Db::open(&path).await.unwrap();
     let candidate = db
-        .get_auto_update_candidate("legacy-service", "sha256:legacy")
+        .get_auto_update_candidate(
+            "legacy-service",
+            "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+        )
         .await
         .unwrap()
         .unwrap();
@@ -727,7 +743,7 @@ INSERT INTO service_new_version_discoveries (
     let count = db
         .call(|conn| {
             Ok(conn.query_row(
-                "SELECT COUNT(*) FROM auto_update_candidates WHERE service_id = 'legacy-service' AND candidate_digest = 'sha256:legacy'",
+                "SELECT COUNT(*) FROM auto_update_candidates WHERE service_id = 'legacy-service' AND candidate_digest = 'sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef'",
                 [],
                 |row| row.get::<_, i64>(0),
             )?)

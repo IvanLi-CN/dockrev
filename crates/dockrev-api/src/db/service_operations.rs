@@ -323,10 +323,10 @@ WHERE p.id = ?1
       AND LOWER(c.source) IN ('schedule', 'github_webhook')
       AND (
         (LOWER(source_job.scope) = 'service'
-          AND source_job.stack_id = c.stack_id
-          AND source_job.service_id = c.service_id)
+          AND LOWER(source_job.stack_id) = LOWER(c.stack_id)
+          AND LOWER(source_job.service_id) = LOWER(c.service_id))
         OR (LOWER(source_job.scope) = 'stack'
-          AND source_job.stack_id = c.stack_id
+          AND LOWER(source_job.stack_id) = LOWER(c.stack_id)
           AND source_job.service_id IS NULL)
         OR (LOWER(source_job.scope) = 'all'
           AND source_job.stack_id IS NULL

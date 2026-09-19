@@ -1,5 +1,5 @@
 fn canonical_auto_update_digest(digest: &str) -> String {
-    crate::snapshot_worker::normalize_digest(digest)
+    crate::snapshot_worker::normalize_digest_identity(digest)
         .unwrap_or_else(|| digest.trim().to_ascii_lowercase())
 }
 

@@ -38,6 +38,14 @@ pub(super) fn canonical_digest_sql(column: &str) -> String {
     )
 }
 
+pub(super) fn strict_canonical_digest_sql(column: &str) -> String {
+    let value = format!("lower(trim({column}))");
+    let payload = format!("substr({value}, 8)");
+    format!(
+        "CASE WHEN NULLIF(TRIM({column}), '') IS NULL THEN NULL WHEN length({value}) = 71 AND substr({value}, 1, 7) = 'sha256:' AND NOT ({payload} GLOB '*[^0-9a-f]*') THEN {value} WHEN length({value}) = 64 AND NOT ({value} GLOB '*[^0-9a-f]*') THEN 'sha256:' || {value} ELSE NULL END"
+    )
+}
+
 pub(super) fn summary_stack_ids(summary: &serde_json::Value) -> Vec<String> {
     summary
         .get("changedStackIds")

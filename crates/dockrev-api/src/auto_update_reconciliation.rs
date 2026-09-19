@@ -93,19 +93,22 @@ fn auto_policy_source_identity_matches(
     stack_id: Option<&str>,
     service_id: Option<&str>,
 ) -> bool {
+    let matches = |actual: Option<&str>, expected: &str| {
+        actual.is_some_and(|actual| actual.eq_ignore_ascii_case(expected))
+    };
     match (stack_id, service_id, job_scope) {
         (Some(stack_id), Some(service_id), scope) if scope.eq_ignore_ascii_case("service") => {
-            job_stack_id == Some(stack_id) && job_service_id == Some(service_id)
+            matches(job_stack_id, stack_id) && matches(job_service_id, service_id)
         }
         (Some(stack_id), Some(_), scope) if scope.eq_ignore_ascii_case("stack") => {
-            job_stack_id == Some(stack_id) && job_service_id.is_none()
+            matches(job_stack_id, stack_id) && job_service_id.is_none()
         }
         (Some(_), Some(_), scope) if scope.eq_ignore_ascii_case("all") => {
             job_stack_id.is_none() && job_service_id.is_none()
         }
-        (Some(stack_id), None, _) => job_stack_id == Some(stack_id),
+        (Some(stack_id), None, _) => matches(job_stack_id, stack_id),
         (None, Some(service_id), scope) if scope.eq_ignore_ascii_case("service") => {
-            job_service_id == Some(service_id)
+            matches(job_service_id, service_id)
         }
         (None, None, _) => true,
         _ => false,

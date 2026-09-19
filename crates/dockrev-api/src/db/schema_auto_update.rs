@@ -123,8 +123,8 @@ fn apply_migration_0017_add_auto_update_candidate_projection_context(
             tx.execute(ddl, [])?;
         }
     }
-    let candidate_digest = super::canonical_digest_sql("auto_update_candidates.candidate_digest");
-    let pending_digest = super::canonical_digest_sql("p.candidate_digest");
+    let candidate_digest = super::strict_canonical_digest_sql("auto_update_candidates.candidate_digest");
+    let pending_digest = super::strict_canonical_digest_sql("p.candidate_digest");
     let sql = format!(
         r#"
 UPDATE auto_update_candidates
@@ -263,8 +263,8 @@ fn deduplicate_auto_update_pending_digests_tx(
     tx: &rusqlite::Transaction<'_>,
     now: &str,
 ) -> anyhow::Result<()> {
-    let pending_digest = super::canonical_digest_sql("p.candidate_digest");
-    let comparison_digest = super::canonical_digest_sql("p2.candidate_digest");
+    let pending_digest = super::strict_canonical_digest_sql("p.candidate_digest");
+    let comparison_digest = super::strict_canonical_digest_sql("p2.candidate_digest");
     let sql = format!(
         r#"
 CREATE TEMP TABLE migration_duplicate_auto_update_pending AS
@@ -356,8 +356,8 @@ fn deduplicate_auto_update_candidate_digests_tx(
     tx: &rusqlite::Transaction<'_>,
     now: &str,
 ) -> anyhow::Result<()> {
-    let candidate_digest = super::canonical_digest_sql("candidate.candidate_digest");
-    let other_digest = super::canonical_digest_sql("other.candidate_digest");
+    let candidate_digest = super::strict_canonical_digest_sql("candidate.candidate_digest");
+    let other_digest = super::strict_canonical_digest_sql("other.candidate_digest");
     let sql = format!(
         r#"
 CREATE TEMP TABLE migration_duplicate_auto_update_candidates AS
@@ -828,9 +828,9 @@ pub(super) fn apply_migration_0022_harden_auto_update_source_provenance(
     tx.execute_batch(
         "CREATE TEMP TABLE migration_invalid_auto_update_pending (id TEXT PRIMARY KEY NOT NULL)",
     )?;
-    let candidate_digest = super::canonical_digest_sql("c.candidate_digest");
-    let pending_digest = super::canonical_digest_sql("p.candidate_digest");
-    let service_digest = super::canonical_digest_sql("candidate_service.candidate_digest");
+    let candidate_digest = super::strict_canonical_digest_sql("c.candidate_digest");
+    let pending_digest = super::strict_canonical_digest_sql("p.candidate_digest");
+    let service_digest = super::strict_canonical_digest_sql("candidate_service.candidate_digest");
     let sql = format!(
         r#"
 INSERT INTO migration_invalid_auto_update_pending (id)
@@ -864,10 +864,10 @@ WHERE p.status IN ('pending', 'enqueuing', 'enqueued')
       )
       AND (
         (LOWER(candidate_source_job.scope) = 'service'
-          AND candidate_source_job.stack_id = c.stack_id
-          AND candidate_source_job.service_id = c.service_id)
+          AND LOWER(TRIM(candidate_source_job.stack_id)) = LOWER(TRIM(c.stack_id))
+          AND LOWER(TRIM(candidate_source_job.service_id)) = LOWER(TRIM(c.service_id)))
         OR (LOWER(candidate_source_job.scope) = 'stack'
-          AND candidate_source_job.stack_id = c.stack_id
+          AND LOWER(TRIM(candidate_source_job.stack_id)) = LOWER(TRIM(c.stack_id))
           AND candidate_source_job.service_id IS NULL)
         OR (LOWER(candidate_source_job.scope) = 'all'
           AND candidate_source_job.stack_id IS NULL
@@ -889,10 +889,10 @@ WHERE p.status IN ('pending', 'enqueuing', 'enqueued')
           )
           AND (
             (LOWER(source_job.scope) = 'service'
-              AND source_job.stack_id = p.stack_id
-              AND source_job.service_id = p.service_id)
+              AND LOWER(TRIM(source_job.stack_id)) = LOWER(TRIM(p.stack_id))
+              AND LOWER(TRIM(source_job.service_id)) = LOWER(TRIM(p.service_id)))
             OR (LOWER(source_job.scope) = 'stack'
-              AND source_job.stack_id = p.stack_id
+              AND LOWER(TRIM(source_job.stack_id)) = LOWER(TRIM(p.stack_id))
               AND source_job.service_id IS NULL)
             OR (LOWER(source_job.scope) = 'all'
               AND source_job.stack_id IS NULL
@@ -1008,14 +1008,14 @@ ALTER TABLE auto_update_pending ADD COLUMN candidate_id TEXT;
     let now = now_rfc3339()?;
     deduplicate_auto_update_pending_digests_tx(&tx, &now)?;
     for table in ["services", "auto_update_pending", "auto_update_candidates"] {
-        let digest = super::canonical_digest_sql("candidate_digest");
+        let digest = super::strict_canonical_digest_sql("candidate_digest");
         let sql = format!(
-            "UPDATE {table} SET candidate_digest = {digest} WHERE candidate_digest IS NOT NULL AND TRIM(candidate_digest) <> ''"
+            "UPDATE {table} SET candidate_digest = {digest} WHERE candidate_digest IS NOT NULL AND TRIM(candidate_digest) <> '' AND ({digest}) IS NOT NULL"
         );
         tx.execute(&sql, [])?;
     }
-    let pending_digest = super::canonical_digest_sql("p.candidate_digest");
-    let service_digest = super::canonical_digest_sql("s.candidate_digest");
+    let pending_digest = super::strict_canonical_digest_sql("p.candidate_digest");
+    let service_digest = super::strict_canonical_digest_sql("s.candidate_digest");
     let sql = format!(
         r#"
 INSERT OR IGNORE INTO auto_update_candidates (
@@ -1064,10 +1064,10 @@ WHERE p.status IN ('pending', 'enqueuing', 'enqueued')
   )
   AND (
     (LOWER(j.scope) = 'service'
-      AND j.stack_id = p.stack_id
-      AND j.service_id = p.service_id)
+      AND LOWER(TRIM(j.stack_id)) = LOWER(TRIM(p.stack_id))
+      AND LOWER(TRIM(j.service_id)) = LOWER(TRIM(p.service_id)))
     OR (LOWER(j.scope) = 'stack'
-      AND j.stack_id = p.stack_id
+      AND LOWER(TRIM(j.stack_id)) = LOWER(TRIM(p.stack_id))
       AND j.service_id IS NULL)
     OR (LOWER(j.scope) = 'all'
       AND j.stack_id IS NULL
@@ -1111,8 +1111,8 @@ WHERE id = ?4
             params![&image_ref, resolved_version, &now, &candidate_id],
         )?;
     }
-    let pending_digest = super::canonical_digest_sql("auto_update_pending.candidate_digest");
-    let candidate_digest = super::canonical_digest_sql("c.candidate_digest");
+    let pending_digest = super::strict_canonical_digest_sql("auto_update_pending.candidate_digest");
+    let candidate_digest = super::strict_canonical_digest_sql("c.candidate_digest");
     let sql = format!(
         r#"
 UPDATE auto_update_pending
@@ -1139,10 +1139,10 @@ WHERE candidate_id IS NULL
       )
       AND (
         (LOWER(j.scope) = 'service'
-          AND j.stack_id = auto_update_pending.stack_id
-          AND j.service_id = auto_update_pending.service_id)
+          AND LOWER(TRIM(j.stack_id)) = LOWER(TRIM(auto_update_pending.stack_id))
+          AND LOWER(TRIM(j.service_id)) = LOWER(TRIM(auto_update_pending.service_id)))
         OR (LOWER(j.scope) = 'stack'
-          AND j.stack_id = auto_update_pending.stack_id
+          AND LOWER(TRIM(j.stack_id)) = LOWER(TRIM(auto_update_pending.stack_id))
           AND j.service_id IS NULL)
         OR (LOWER(j.scope) = 'all'
           AND j.stack_id IS NULL
@@ -1224,7 +1224,9 @@ fn apply_migration_0016_harden_auto_update_candidate_backfill(
     }
     let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
     let now = now_rfc3339()?;
-    tx.execute(
+    let candidate_digest = super::strict_canonical_digest_sql("c.candidate_digest");
+    let pending_digest = super::strict_canonical_digest_sql("p.candidate_digest");
+    let sql = format!(
         r#"
 UPDATE jobs
 SET status = 'cancelled',
@@ -1238,7 +1240,9 @@ WHERE id IN (
     AND (
       p.candidate_id IS NULL
       OR c.service_id <> p.service_id
-      OR c.candidate_digest <> p.candidate_digest
+      OR {candidate_digest} IS NULL
+      OR {pending_digest} IS NULL
+      OR {candidate_digest} <> {pending_digest}
       OR c.stack_id <> p.stack_id
       OR COALESCE(TRIM(c.image_ref), '') = ''
       OR COALESCE(TRIM(c.discovered_at), '') = ''
@@ -1258,15 +1262,15 @@ WHERE id IN (
             OR (
               LOWER(c.source) = 'github_webhook'
               AND LOWER(source_job.created_by) IN ('webhook', 'github')
-              AND LOWER(COALESCE(json_extract(CASE WHEN json_valid(source_job.summary_json) THEN source_job.summary_json ELSE '{}' END, '$.source'), '')) = 'github_webhook'
+              AND LOWER(COALESCE(json_extract(CASE WHEN json_valid(source_job.summary_json) THEN source_job.summary_json ELSE '{{}}' END, '$.source'), '')) = 'github_webhook'
             )
           )
           AND (
             (LOWER(source_job.scope) = 'service'
-              AND source_job.stack_id = p.stack_id
-              AND source_job.service_id = p.service_id)
+              AND LOWER(TRIM(source_job.stack_id)) = LOWER(TRIM(p.stack_id))
+              AND LOWER(TRIM(source_job.service_id)) = LOWER(TRIM(p.service_id)))
             OR (LOWER(source_job.scope) = 'stack'
-              AND source_job.stack_id = p.stack_id
+              AND LOWER(TRIM(source_job.stack_id)) = LOWER(TRIM(p.stack_id))
               AND source_job.service_id IS NULL)
             OR (LOWER(source_job.scope) = 'all'
               AND source_job.stack_id IS NULL
@@ -1277,10 +1281,14 @@ WHERE id IN (
 )
   AND status = 'queued'
   AND created_by = 'auto-policy'
-"#,
-        params![&now],
-    )?;
-    tx.execute(
+"#
+    );
+    tx.execute(&sql, params![&now])?;
+    let valid_candidate_digest =
+        super::strict_canonical_digest_sql("valid_candidate.candidate_digest");
+    let candidate_service_digest =
+        super::strict_canonical_digest_sql("candidate_service.candidate_digest");
+    let sql = format!(
         r#"
 INSERT INTO update_job_stop_controls (
   job_id, stop_requested_at, stop_requested_by, updated_at
@@ -1305,7 +1313,7 @@ WHERE (
     JOIN services candidate_service ON candidate_service.id = valid_candidate.service_id
     WHERE valid_candidate.id = p.candidate_id
       AND valid_candidate.service_id = p.service_id
-      AND valid_candidate.candidate_digest = p.candidate_digest
+      AND {valid_candidate_digest} = {pending_digest}
       AND valid_candidate.stack_id = p.stack_id
       AND COALESCE(TRIM(valid_candidate.image_ref), '') <> ''
       AND COALESCE(TRIM(valid_candidate.discovered_at), '') <> ''
@@ -1318,21 +1326,21 @@ WHERE (
           AND LOWER(candidate_source_job.created_by) = 'schedule')
         OR (LOWER(valid_candidate.source) = 'github_webhook'
           AND LOWER(candidate_source_job.created_by) IN ('webhook', 'github')
-          AND LOWER(COALESCE(json_extract(CASE WHEN json_valid(candidate_source_job.summary_json) THEN candidate_source_job.summary_json ELSE '{}' END, '$.source'), '')) = 'github_webhook')
+          AND LOWER(COALESCE(json_extract(CASE WHEN json_valid(candidate_source_job.summary_json) THEN candidate_source_job.summary_json ELSE '{{}}' END, '$.source'), '')) = 'github_webhook')
       )
       AND (
         (LOWER(candidate_source_job.scope) = 'service'
-          AND candidate_source_job.stack_id = valid_candidate.stack_id
-          AND candidate_source_job.service_id = valid_candidate.service_id)
+          AND LOWER(TRIM(candidate_source_job.stack_id)) = LOWER(TRIM(valid_candidate.stack_id))
+          AND LOWER(TRIM(candidate_source_job.service_id)) = LOWER(TRIM(valid_candidate.service_id)))
         OR (LOWER(candidate_source_job.scope) = 'stack'
-          AND candidate_source_job.stack_id = valid_candidate.stack_id
+          AND LOWER(TRIM(candidate_source_job.stack_id)) = LOWER(TRIM(valid_candidate.stack_id))
           AND candidate_source_job.service_id IS NULL)
         OR (LOWER(candidate_source_job.scope) = 'all'
           AND candidate_source_job.stack_id IS NULL
           AND candidate_source_job.service_id IS NULL)
       )
       AND candidate_service.stack_id = valid_candidate.stack_id
-      AND candidate_service.candidate_digest = valid_candidate.candidate_digest
+      AND {candidate_service_digest} = {valid_candidate_digest}
       AND EXISTS (
         SELECT 1
         FROM jobs source_job
@@ -1345,14 +1353,14 @@ WHERE (
               AND LOWER(source_job.created_by) = 'schedule')
             OR (LOWER(valid_candidate.source) = 'github_webhook'
               AND LOWER(source_job.created_by) IN ('webhook', 'github')
-              AND LOWER(COALESCE(json_extract(CASE WHEN json_valid(source_job.summary_json) THEN source_job.summary_json ELSE '{}' END, '$.source'), '')) = 'github_webhook')
+              AND LOWER(COALESCE(json_extract(CASE WHEN json_valid(source_job.summary_json) THEN source_job.summary_json ELSE '{{}}' END, '$.source'), '')) = 'github_webhook')
           )
           AND (
             (LOWER(source_job.scope) = 'service'
-              AND source_job.stack_id = p.stack_id
-              AND source_job.service_id = p.service_id)
+              AND LOWER(TRIM(source_job.stack_id)) = LOWER(TRIM(p.stack_id))
+              AND LOWER(TRIM(source_job.service_id)) = LOWER(TRIM(p.service_id)))
             OR (LOWER(source_job.scope) = 'stack'
-              AND source_job.stack_id = p.stack_id
+              AND LOWER(TRIM(source_job.stack_id)) = LOWER(TRIM(p.stack_id))
               AND source_job.service_id IS NULL)
             OR (LOWER(source_job.scope) = 'all'
               AND source_job.stack_id IS NULL
@@ -1366,17 +1374,20 @@ ON CONFLICT(job_id) DO UPDATE SET
   updated_at = excluded.updated_at
 WHERE update_job_stop_controls.apply_committed_at IS NULL
   AND update_job_stop_controls.stop_requested_at IS NULL
-"#,
-        params![&now],
-    )?;
-    tx.execute(
+"#
+    );
+    tx.execute(&sql, params![&now])?;
+    let candidate_digest = super::strict_canonical_digest_sql("c.candidate_digest");
+    let pending_digest = super::strict_canonical_digest_sql("auto_update_pending.candidate_digest");
+    let service_digest = super::strict_canonical_digest_sql("s.candidate_digest");
+    let sql = format!(
         r#"
 UPDATE auto_update_pending
 SET candidate_id = NULL,
     status = 'skipped',
     summary_json = CASE
       WHEN json_valid(summary_json)
-        AND json_type(CASE WHEN json_valid(summary_json) THEN summary_json ELSE '{}' END) = 'object'
+        AND json_type(CASE WHEN json_valid(summary_json) THEN summary_json ELSE '{{}}' END) = 'object'
         THEN json_set(summary_json, '$.skipReason', 'migration_ambiguous_history', '$.skippedAt', ?1)
       ELSE json_object('skipReason', 'migration_ambiguous_history', 'skippedAt', ?1)
     END,
@@ -1401,21 +1412,21 @@ WHERE status IN ('pending', 'enqueuing', 'enqueued')
             AND LOWER(j.created_by) = 'schedule')
           OR (LOWER(c.source) = 'github_webhook'
             AND LOWER(j.created_by) IN ('webhook', 'github')
-            AND LOWER(COALESCE(json_extract(CASE WHEN json_valid(j.summary_json) THEN j.summary_json ELSE '{}' END, '$.source'), '')) = 'github_webhook')
+        AND LOWER(COALESCE(json_extract(CASE WHEN json_valid(j.summary_json) THEN j.summary_json ELSE '{{}}' END, '$.source'), '')) = 'github_webhook')
         )
         AND (
           (LOWER(j.scope) = 'service'
-            AND j.stack_id = c.stack_id
-            AND j.service_id = c.service_id)
+            AND LOWER(TRIM(j.stack_id)) = LOWER(TRIM(c.stack_id))
+            AND LOWER(TRIM(j.service_id)) = LOWER(TRIM(c.service_id)))
           OR (LOWER(j.scope) = 'stack'
-            AND j.stack_id = c.stack_id
+            AND LOWER(TRIM(j.stack_id)) = LOWER(TRIM(c.stack_id))
             AND j.service_id IS NULL)
           OR (LOWER(j.scope) = 'all'
             AND j.stack_id IS NULL
             AND j.service_id IS NULL)
         )
         AND s.stack_id = c.stack_id
-        AND s.candidate_digest = c.candidate_digest
+        AND {service_digest} = {candidate_digest}
         AND EXISTS (
           SELECT 1
           FROM jobs source_job
@@ -1428,14 +1439,14 @@ WHERE status IN ('pending', 'enqueuing', 'enqueued')
                 AND LOWER(source_job.created_by) = 'schedule')
               OR (LOWER(c.source) = 'github_webhook'
                 AND LOWER(source_job.created_by) IN ('webhook', 'github')
-                AND LOWER(COALESCE(json_extract(CASE WHEN json_valid(source_job.summary_json) THEN source_job.summary_json ELSE '{}' END, '$.source'), '')) = 'github_webhook')
+                AND LOWER(COALESCE(json_extract(CASE WHEN json_valid(source_job.summary_json) THEN source_job.summary_json ELSE '{{}}' END, '$.source'), '')) = 'github_webhook')
             )
             AND (
               (LOWER(source_job.scope) = 'service'
-                AND source_job.stack_id = auto_update_pending.stack_id
-                AND source_job.service_id = auto_update_pending.service_id)
+                AND LOWER(TRIM(source_job.stack_id)) = LOWER(TRIM(auto_update_pending.stack_id))
+                AND LOWER(TRIM(source_job.service_id)) = LOWER(TRIM(auto_update_pending.service_id)))
               OR (LOWER(source_job.scope) = 'stack'
-                AND source_job.stack_id = auto_update_pending.stack_id
+                AND LOWER(TRIM(source_job.stack_id)) = LOWER(TRIM(auto_update_pending.stack_id))
                 AND source_job.service_id IS NULL)
               OR (LOWER(source_job.scope) = 'all'
                 AND source_job.stack_id IS NULL
@@ -1443,15 +1454,16 @@ WHERE status IN ('pending', 'enqueuing', 'enqueued')
             )
         )
         AND c.service_id = auto_update_pending.service_id
-        AND c.candidate_digest = auto_update_pending.candidate_digest
+        AND {candidate_digest} = {pending_digest}
         AND c.stack_id = auto_update_pending.stack_id
       )
   )
-"#,
-        params![&now],
-    )?;
-    let candidate_digest = super::canonical_digest_sql("auto_update_candidates.candidate_digest");
-    let service_digest = super::canonical_digest_sql("s.candidate_digest");
+"#
+    );
+    tx.execute(&sql, params![&now])?;
+    let candidate_digest =
+        super::strict_canonical_digest_sql("auto_update_candidates.candidate_digest");
+    let service_digest = super::strict_canonical_digest_sql("s.candidate_digest");
     let sql = format!(
         r#"
 UPDATE auto_update_candidates

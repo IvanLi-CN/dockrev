@@ -107,6 +107,15 @@ async fn hydrates_missing_candidate_from_successful_webhook_discovery_idempotent
     })
     .await
     .unwrap();
+    db.call(|conn| {
+        conn.execute(
+            "UPDATE jobs SET type = 'CHECK', status = 'SUCCESS', scope = 'SERVICE', created_by = 'WEBHOOK', stack_id = 'STACK', service_id = 'SERVICE' WHERE id = 'check-webhook'",
+            [],
+        )?;
+        Ok(())
+    })
+    .await
+    .unwrap();
 
     assert!(
         db.get_auto_update_candidate(
@@ -162,11 +171,11 @@ async fn hydration_rejects_successful_source_job_from_another_service() {
             [],
         )?;
         conn.execute(
-            "INSERT INTO services (id, stack_id, name, image_ref, image_tag, current_digest, candidate_digest, auto_rollback, backup_targets_bind_paths_json, backup_targets_volume_names_json, created_at, updated_at) VALUES ('service', 'stack', 'service', 'ghcr.io/acme/app', 'latest', 'sha256:current', 'sha256:foreign', 0, '{}', '{}', '2026-04-30', '2026-04-30')",
+            "INSERT INTO services (id, stack_id, name, image_ref, image_tag, current_digest, candidate_digest, auto_rollback, backup_targets_bind_paths_json, backup_targets_volume_names_json, created_at, updated_at) VALUES ('service', 'stack', 'service', 'ghcr.io/acme/app', 'latest', 'sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa', 'sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb', 0, '{}', '{}', '2026-04-30', '2026-04-30')",
             [],
         )?;
         conn.execute(
-            "INSERT INTO service_new_version_discoveries (service_id, image_ref, source_job_id, discovered_at, current_digest, current_display_tag, current_tag, candidate_tag, candidate_digest, candidate_display_tag) VALUES ('service', 'ghcr.io/acme/app:latest', 'check-foreign', '2026-04-30T00:00:00Z', 'sha256:current', '1.0.0', 'latest', '1.4.0', 'sha256:foreign', '1.4.0')",
+            "INSERT INTO service_new_version_discoveries (service_id, image_ref, source_job_id, discovered_at, current_digest, current_display_tag, current_tag, candidate_tag, candidate_digest, candidate_display_tag) VALUES ('service', 'ghcr.io/acme/app:latest', 'check-foreign', '2026-04-30T00:00:00Z', 'sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa', '1.0.0', 'latest', '1.4.0', 'sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb', '1.4.0')",
             [],
         )?;
         Ok(())
@@ -196,7 +205,10 @@ async fn hydration_rejects_successful_source_job_from_another_service() {
         .await
         .unwrap();
     let candidate = db
-        .get_auto_update_candidate("service", "sha256:foreign")
+        .get_auto_update_candidate(
+            "service",
+            "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        )
         .await
         .unwrap()
         .unwrap();
@@ -220,7 +232,7 @@ async fn hydration_keeps_the_earliest_qualified_observation_as_one_consistent_re
             [],
         )?;
         conn.execute(
-            "INSERT INTO service_new_version_discoveries (service_id, image_ref, source_job_id, discovered_at, current_digest, current_display_tag, current_tag, candidate_tag, candidate_digest, candidate_display_tag) VALUES ('service', 'ghcr.io/acme/app:latest', 'check-old', '2026-04-30T00:00:30Z', 'sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef', '1.0.0', 'latest', '1.3.0', 'sha256:old', '1.3.0')",
+            "INSERT INTO service_new_version_discoveries (service_id, image_ref, source_job_id, discovered_at, current_digest, current_display_tag, current_tag, candidate_tag, candidate_digest, candidate_display_tag) VALUES ('service', 'ghcr.io/acme/app:latest', 'check-old', '2026-04-30T00:00:30Z', 'sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef', '1.0.0', 'latest', '1.3.0', 'sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd', '1.3.0')",
             [],
         )?;
         conn.execute(
@@ -287,7 +299,7 @@ async fn hydration_keeps_the_earliest_qualified_observation_as_one_consistent_re
             [],
         )?;
         conn.execute(
-            "INSERT INTO auto_update_pending (id, policy_scope_type, policy_scope_id, rule_id, stack_id, service_id, source_check_job_id, candidate_tag, candidate_display_tag, candidate_digest, current_display_tag, first_seen_at, due_at, min_age_seconds, min_version_lag, status, update_job_id, created_at, updated_at, summary_json) VALUES ('pending-old-hydration', 'stack', 'stack', 'rule', 'stack', 'service', 'check-old', '1.3.0', '1.3.0', 'sha256:old', '1.0.0', '2026-04-30T00:00:30Z', '2026-04-30T00:00:30Z', 0, 0, 'enqueued', 'running-hydration-job', '2026-04-30T00:02:30Z', '2026-04-30T00:02:30Z', '{}')",
+            "INSERT INTO auto_update_pending (id, policy_scope_type, policy_scope_id, rule_id, stack_id, service_id, source_check_job_id, candidate_tag, candidate_display_tag, candidate_digest, current_display_tag, first_seen_at, due_at, min_age_seconds, min_version_lag, status, update_job_id, created_at, updated_at, summary_json) VALUES ('pending-old-hydration', 'stack', 'stack', 'rule', 'stack', 'service', 'check-old', '1.3.0', '1.3.0', 'sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd', '1.0.0', '2026-04-30T00:00:30Z', '2026-04-30T00:00:30Z', 0, 0, 'enqueued', 'running-hydration-job', '2026-04-30T00:02:30Z', '2026-04-30T00:02:30Z', '{}')",
             [],
         )?;
         conn.execute(
@@ -317,7 +329,10 @@ async fn hydration_keeps_the_earliest_qualified_observation_as_one_consistent_re
     assert_eq!(candidate.source_job_id, "check-schedule");
     assert_eq!(candidate.raw_tag, "1.4.0");
     let old_candidate = db
-        .get_auto_update_candidate("service", "sha256:old")
+        .get_auto_update_candidate(
+            "service",
+            "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+        )
         .await
         .unwrap()
         .unwrap();
@@ -480,11 +495,11 @@ async fn ambiguous_discovery_history_is_unresolved_and_cannot_authorize_policy()
             [],
         )?;
         conn.execute(
-            "INSERT INTO services (id, stack_id, name, image_ref, image_tag, current_digest, candidate_digest, auto_rollback, backup_targets_bind_paths_json, backup_targets_volume_names_json, created_at, updated_at) VALUES ('service', 'stack', 'service', 'ghcr.io/acme/app', 'latest', 'sha256:current', 'sha256:ambiguous', 0, '{}', '{}', '2026-04-30', '2026-04-30')",
+            "INSERT INTO services (id, stack_id, name, image_ref, image_tag, current_digest, candidate_digest, auto_rollback, backup_targets_bind_paths_json, backup_targets_volume_names_json, created_at, updated_at) VALUES ('service', 'stack', 'service', 'ghcr.io/acme/app', 'latest', 'sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa', 'sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc', 0, '{}', '{}', '2026-04-30', '2026-04-30')",
             [],
         )?;
         conn.execute(
-            "INSERT INTO service_new_version_discoveries (service_id, image_ref, source_job_id, discovered_at, current_digest, current_display_tag, current_tag, candidate_tag, candidate_digest, candidate_display_tag) VALUES ('service', '', '', '', '', '1.0.0', 'latest', 'latest', 'sha256:ambiguous', 'latest')",
+            "INSERT INTO service_new_version_discoveries (service_id, image_ref, source_job_id, discovered_at, current_digest, current_display_tag, current_tag, candidate_tag, candidate_digest, candidate_display_tag) VALUES ('service', '', '', '', '', '1.0.0', 'latest', 'latest', 'sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc', 'latest')",
             [],
         )?;
         Ok(())
@@ -495,7 +510,7 @@ async fn ambiguous_discovery_history_is_unresolved_and_cannot_authorize_policy()
     db.upsert_auto_update_candidate(
         &candidate_input(
             "candidate-old-ambiguous",
-            "sha256:old-ambiguous",
+            "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
             "ready",
             "2026-04-29T23:59:00Z",
         ),
@@ -505,7 +520,7 @@ async fn ambiguous_discovery_history_is_unresolved_and_cannot_authorize_policy()
     .unwrap();
     db.call(|conn| {
         conn.execute(
-            "INSERT INTO auto_update_pending (id, policy_scope_type, policy_scope_id, rule_id, stack_id, service_id, source_check_job_id, candidate_tag, candidate_display_tag, candidate_digest, current_display_tag, current_digest, first_seen_at, due_at, min_age_seconds, min_version_lag, status, update_job_id, created_at, updated_at, candidate_id, summary_json) VALUES ('pending-old-ambiguous', 'stack', 'stack', 'rule', 'stack', 'service', 'old-check', 'latest', '1.2.0', 'sha256:old-ambiguous', '1.0.0', 'sha256:current', '2026-04-29T23:59:00Z', '2026-04-29T23:59:00Z', 0, 0, 'pending', NULL, '2026-04-29T23:59:00Z', '2026-04-29T23:59:00Z', 'candidate-old-ambiguous', '{}')",
+            "INSERT INTO auto_update_pending (id, policy_scope_type, policy_scope_id, rule_id, stack_id, service_id, source_check_job_id, candidate_tag, candidate_display_tag, candidate_digest, current_display_tag, current_digest, first_seen_at, due_at, min_age_seconds, min_version_lag, status, update_job_id, created_at, updated_at, candidate_id, summary_json) VALUES ('pending-old-ambiguous', 'stack', 'stack', 'rule', 'stack', 'service', 'old-check', 'latest', '1.2.0', 'sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd', '1.0.0', 'sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa', '2026-04-29T23:59:00Z', '2026-04-29T23:59:00Z', 0, 0, 'pending', NULL, '2026-04-29T23:59:00Z', '2026-04-29T23:59:00Z', 'candidate-old-ambiguous', '{}')",
             [],
         )?;
         Ok(())
@@ -517,7 +532,10 @@ async fn ambiguous_discovery_history_is_unresolved_and_cannot_authorize_policy()
         .await
         .unwrap();
     let candidate = db
-        .get_auto_update_candidate("service", "sha256:ambiguous")
+        .get_auto_update_candidate(
+            "service",
+            "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+        )
         .await
         .unwrap()
         .unwrap();
@@ -531,7 +549,10 @@ async fn ambiguous_discovery_history_is_unresolved_and_cannot_authorize_policy()
         Some("discovery_history_ambiguous")
     );
     let old_candidate = db
-        .get_auto_update_candidate("service", "sha256:old-ambiguous")
+        .get_auto_update_candidate(
+            "service",
+            "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+        )
         .await
         .unwrap()
         .unwrap();
@@ -576,15 +597,15 @@ async fn digest_identity_migration_deduplicates_active_pending_rows() {
                 [],
             )?;
             conn.execute(
-                "INSERT INTO services (id, stack_id, name, image_ref, image_tag, current_digest, candidate_digest, auto_rollback, backup_targets_bind_paths_json, backup_targets_volume_names_json, created_at, updated_at) VALUES ('service', 'stack', 'service', 'ghcr.io/acme/app', 'latest', 'sha256:current', 'ABC', 0, '{}', '{}', '2026-04-30', '2026-04-30')",
+                "INSERT INTO services (id, stack_id, name, image_ref, image_tag, current_digest, candidate_digest, auto_rollback, backup_targets_bind_paths_json, backup_targets_volume_names_json, created_at, updated_at) VALUES ('service', 'stack', 'service', 'ghcr.io/acme/app', 'latest', 'sha256:current', '0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef', 0, '{}', '{}', '2026-04-30', '2026-04-30')",
                 [],
             )?;
             conn.execute(
-                "INSERT INTO auto_update_candidates (id, stack_id, service_id, image_ref, raw_tag, candidate_digest, status, reason, attempts, discovered_at, source_job_id, source, current_tag, current_display_tag, current_digest, created_at, updated_at, policy_status, resolved_tags, last_error, retry_at, policy_reason, policy_rule_id, policy_evaluated_at, policy_scope_type, policy_scope_id, superseded_at, superseded_by_candidate_id) VALUES ('candidate-legacy', 'stack', 'service', 'ghcr.io/acme/app', 'latest', 'ABC', 'awaiting_inference', 'version_inference_pending', 0, '2026-04-29T23:59:00Z', 'check-legacy', 'schedule', 'latest', '1.0.0', 'sha256:current', '2026-04-29T23:59:00Z', '2026-04-29T23:59:00Z', NULL, '[\"linux/amd64\"]', 'legacy inference error', '2026-05-01T00:00:00Z', 'legacy policy reason', 'legacy-rule', '2026-05-01T00:01:00Z', 'stack', 'stack', '2026-05-01T00:02:00Z', 'candidate-superseded-by')",
+                "INSERT INTO auto_update_candidates (id, stack_id, service_id, image_ref, raw_tag, candidate_digest, status, reason, attempts, discovered_at, source_job_id, source, current_tag, current_display_tag, current_digest, created_at, updated_at, policy_status, resolved_tags, last_error, retry_at, policy_reason, policy_rule_id, policy_evaluated_at, policy_scope_type, policy_scope_id, superseded_at, superseded_by_candidate_id) VALUES ('candidate-legacy', 'stack', 'service', 'ghcr.io/acme/app', 'latest', '0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef', 'awaiting_inference', 'version_inference_pending', 0, '2026-04-29T23:59:00Z', 'check-legacy', 'schedule', 'latest', '1.0.0', 'sha256:current', '2026-04-29T23:59:00Z', '2026-04-29T23:59:00Z', NULL, '[\"linux/amd64\"]', 'legacy inference error', '2026-05-01T00:00:00Z', 'legacy policy reason', 'legacy-rule', '2026-05-01T00:01:00Z', 'stack', 'stack', '2026-05-01T00:02:00Z', 'candidate-superseded-by')",
                 [],
             )?;
             conn.execute(
-                "INSERT INTO auto_update_candidates (id, stack_id, service_id, image_ref, raw_tag, candidate_digest, status, reason, attempts, discovered_at, source_job_id, source, current_tag, current_display_tag, current_digest, created_at, updated_at, policy_status) VALUES ('candidate-canonical', 'stack', 'service', 'ghcr.io/acme/app', 'latest', 'sha256:abc', 'ready', 'digest_bound_version', 0, '2026-04-30T00:00:01Z', 'check', 'schedule', 'latest', '1.0.0', 'sha256:current', '2026-04-30T00:00:01Z', '2026-04-30T00:00:01Z', 'queued')",
+                "INSERT INTO auto_update_candidates (id, stack_id, service_id, image_ref, raw_tag, candidate_digest, status, reason, attempts, discovered_at, source_job_id, source, current_tag, current_display_tag, current_digest, created_at, updated_at, policy_status) VALUES ('candidate-canonical', 'stack', 'service', 'ghcr.io/acme/app', 'latest', 'sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef', 'ready', 'digest_bound_version', 0, '2026-04-30T00:00:01Z', 'check', 'schedule', 'latest', '1.0.0', 'sha256:current', '2026-04-30T00:00:01Z', '2026-04-30T00:00:01Z', 'queued')",
                 [],
             )?;
             conn.execute(
@@ -592,15 +613,15 @@ async fn digest_identity_migration_deduplicates_active_pending_rows() {
                 [],
             )?;
             conn.execute(
-                "INSERT INTO auto_update_pending (id, policy_scope_type, policy_scope_id, rule_id, stack_id, service_id, source_check_job_id, candidate_tag, candidate_display_tag, candidate_digest, current_display_tag, current_digest, first_seen_at, due_at, min_age_seconds, min_version_lag, status, update_job_id, created_at, updated_at, candidate_id, summary_json) VALUES ('pending-legacy', 'stack', 'stack', 'rule', 'stack', 'service', 'check', 'latest', '1.2.0', 'ABC', '1.0.0', 'sha256:current', '2026-04-30T00:00:00Z', '2026-04-30T00:00:00Z', 0, 0, 'pending', NULL, '2026-04-30T00:00:00Z', '2026-04-30T00:00:00Z', 'candidate-legacy', '{}')",
+                "INSERT INTO auto_update_pending (id, policy_scope_type, policy_scope_id, rule_id, stack_id, service_id, source_check_job_id, candidate_tag, candidate_display_tag, candidate_digest, current_display_tag, current_digest, first_seen_at, due_at, min_age_seconds, min_version_lag, status, update_job_id, created_at, updated_at, candidate_id, summary_json) VALUES ('pending-legacy', 'stack', 'stack', 'rule', 'stack', 'service', 'check', 'latest', '1.2.0', '0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef', '1.0.0', 'sha256:current', '2026-04-30T00:00:00Z', '2026-04-30T00:00:00Z', 0, 0, 'pending', NULL, '2026-04-30T00:00:00Z', '2026-04-30T00:00:00Z', 'candidate-legacy', '{}')",
                 [],
             )?;
             conn.execute(
-                "INSERT INTO auto_update_pending (id, policy_scope_type, policy_scope_id, rule_id, stack_id, service_id, source_check_job_id, candidate_tag, candidate_display_tag, candidate_digest, current_display_tag, current_digest, first_seen_at, due_at, min_age_seconds, min_version_lag, status, update_job_id, created_at, updated_at, candidate_id, summary_json) VALUES ('pending-canonical', 'stack', 'stack', 'rule', 'stack', 'service', 'check', 'latest', '1.2.0', 'sha256:abc', '1.0.0', 'sha256:current', '2026-04-30T00:00:01Z', '2026-04-30T00:00:01Z', 0, 0, 'enqueued', 'duplicate-job', '2026-04-30T00:00:01Z', '2026-04-30T00:00:01Z', 'candidate-canonical', '{}')",
+                "INSERT INTO auto_update_pending (id, policy_scope_type, policy_scope_id, rule_id, stack_id, service_id, source_check_job_id, candidate_tag, candidate_display_tag, candidate_digest, current_display_tag, current_digest, first_seen_at, due_at, min_age_seconds, min_version_lag, status, update_job_id, created_at, updated_at, candidate_id, summary_json) VALUES ('pending-canonical', 'stack', 'stack', 'rule', 'stack', 'service', 'check', 'latest', '1.2.0', 'sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef', '1.0.0', 'sha256:current', '2026-04-30T00:00:01Z', '2026-04-30T00:00:01Z', 0, 0, 'enqueued', 'duplicate-job', '2026-04-30T00:00:01Z', '2026-04-30T00:00:01Z', 'candidate-canonical', '{}')",
                 [],
             )?;
             conn.execute(
-                "INSERT INTO auto_update_pending (id, policy_scope_type, policy_scope_id, rule_id, stack_id, service_id, source_check_job_id, candidate_tag, candidate_display_tag, candidate_digest, current_display_tag, current_digest, first_seen_at, due_at, min_age_seconds, min_version_lag, status, update_job_id, created_at, updated_at, candidate_id, summary_json) VALUES ('pending-service-scope', 'service', 'service', 'rule', 'stack', 'service', 'check', 'latest', '1.2.0', 'sha256:abc', '1.0.0', 'sha256:current', '2026-04-30T00:00:02Z', '2026-04-30T00:00:02Z', 0, 0, 'pending', NULL, '2026-04-30T00:00:02Z', '2026-04-30T00:00:02Z', 'candidate-canonical', '{}')",
+                "INSERT INTO auto_update_pending (id, policy_scope_type, policy_scope_id, rule_id, stack_id, service_id, source_check_job_id, candidate_tag, candidate_display_tag, candidate_digest, current_display_tag, current_digest, first_seen_at, due_at, min_age_seconds, min_version_lag, status, update_job_id, created_at, updated_at, candidate_id, summary_json) VALUES ('pending-service-scope', 'service', 'service', 'rule', 'stack', 'service', 'check', 'latest', '1.2.0', 'sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef', '1.0.0', 'sha256:current', '2026-04-30T00:00:02Z', '2026-04-30T00:00:02Z', 0, 0, 'pending', NULL, '2026-04-30T00:00:02Z', '2026-04-30T00:00:02Z', 'candidate-canonical', '{}')",
                 [],
             )?;
             conn.execute(
@@ -675,25 +696,25 @@ async fn digest_identity_migration_deduplicates_active_pending_rows() {
         .await
         .unwrap();
     assert_eq!(latest.len(), 1);
-    assert_eq!(latest[0].candidate_digest, "sha256:abc");
+    assert_eq!(latest[0].candidate_digest, "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef");
     assert_eq!(
         rows.0,
         vec![
             (
                 "pending-canonical".to_string(),
-                "sha256:abc".to_string(),
+                "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef".to_string(),
                 "enqueued".to_string(),
                 None
             ),
             (
                 "pending-legacy".to_string(),
-                "sha256:abc".to_string(),
+                "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef".to_string(),
                 "skipped".to_string(),
                 Some("migration_duplicate_candidate_digest".to_string())
             ),
             (
                 "pending-service-scope".to_string(),
-                "sha256:abc".to_string(),
+                "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef".to_string(),
                 "pending".to_string(),
                 None
             )
@@ -704,7 +725,7 @@ async fn digest_identity_migration_deduplicates_active_pending_rows() {
         (
             1,
             "candidate-canonical".to_string(),
-            "sha256:abc".to_string(),
+            "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef".to_string(),
             "check-legacy".to_string(),
             "2026-04-29T23:59:00Z".to_string(),
             "ready".to_string(),

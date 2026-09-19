@@ -313,8 +313,8 @@ INSERT INTO schema_migrations (id, applied_at) VALUES
   ('0013_add_update_job_stop_controls', '2026-01-01T00:00:00Z');
 INSERT INTO services (id, stack_id, candidate_digest)
 VALUES
-  ('service-1', 'stack-1', 'NEW'),
-  ('service-3', 'stack-1', 'sha256:strict'),
+  ('service-1', 'stack-1', '0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef'),
+  ('service-3', 'stack-1', 'sha256:2222222222222222222222222222222222222222222222222222222222222222'),
   ('service-4', 'stack-1', 'sha256:noncheck');
 INSERT INTO jobs (
   id, type, scope, stack_id, service_id, status, allow_arch_mismatch, backup_mode, created_by,
@@ -339,12 +339,12 @@ INSERT INTO auto_update_pending (
   status, update_job_id, created_at, updated_at, summary_json
 ) VALUES
   ('pending-auditable', 'stack', 'stack-1', 'rule-1', 'stack-1', 'service-1',
-   'schedule-check', 'latest', 'latest', 'NEW', '1.0.0',
+   'schedule-check', 'latest', 'latest', '0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef', '1.0.0',
    '2026-04-30T00:00:00Z', '2026-04-30T00:15:00Z', 900, 0,
    'pending', NULL, '2026-04-30T00:00:00Z', '2026-04-30T00:00:00Z',
    '{"imageRef":"ghcr.io/acme/app:latest","currentDigest":"sha256:old"}'),
   ('pending-duplicate', 'stack', 'stack-1', 'rule-1', 'stack-1', 'service-1',
-   'schedule-check', 'latest', 'latest', 'sha256:new', '1.0.0',
+   'schedule-check', 'latest', 'latest', 'sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef', '1.0.0',
    '2026-04-30T00:00:01Z', '2026-04-30T00:15:00Z', 900, 0,
    'enqueued', 'queued-duplicate-job', '2026-04-30T00:00:01Z', '2026-04-30T00:00:01Z',
    '{"imageRef":"ghcr.io/acme/app:latest","currentDigest":"sha256:old"}'),
@@ -353,7 +353,7 @@ INSERT INTO auto_update_pending (
    '2026-04-30T00:00:00Z', '2026-04-30T00:15:00Z', 900, 0,
    'pending', 'running-auto-job', '2026-04-30T00:00:00Z', '2026-04-30T00:00:00Z', '{}'),
   ('pending-strict', 'stack', 'stack-1', 'rule-1', 'stack-1', 'service-3',
-   'schedule-check', '1.2.3', '1.2.3', 'sha256:strict', '1.0.0',
+   'schedule-check', '1.2.3', '1.2.3', 'sha256:2222222222222222222222222222222222222222222222222222222222222222', '1.0.0',
    '2026-04-30T00:00:00Z', '2026-04-30T00:15:00Z', 900, 0,
    'pending', NULL, '2026-04-30T00:00:00Z', '2026-04-30T00:00:00Z',
    '{"imageRef":"ghcr.io/acme/app:1.2.3","currentDigest":"sha256:old"}'),
@@ -424,7 +424,8 @@ INSERT INTO auto_update_pending (
     assert_eq!(
         migrated.0,
         (
-            "service-1:sha256:new".to_string(),
+            "service-1:sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+                .to_string(),
             "awaiting_inference".to_string(),
             "migration_pending_history".to_string(),
             None
@@ -433,7 +434,10 @@ INSERT INTO auto_update_pending (
     assert_eq!(
         migrated.1,
         (
-            Some("service-1:sha256:new".to_string()),
+            Some(
+                "service-1:sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+                    .to_string()
+            ),
             "skipped".to_string()
         )
     );
@@ -480,8 +484,11 @@ INSERT INTO auto_update_pending (
     assert_eq!(
         duplicate.0,
         (
-            Some("service-1:sha256:new".to_string()),
-            "sha256:new".to_string(),
+            Some(
+                "service-1:sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+                    .to_string()
+            ),
+            "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef".to_string(),
             "enqueued".to_string(),
             None
         )
@@ -541,7 +548,7 @@ INSERT INTO auto_update_pending (
 async fn source_provenance_migration_invalidates_pending_candidate_job_mismatch() {
     let db_path = temporary_db_path();
     let db = Db::open(&db_path).await.unwrap();
-    db.call(|conn| {
+    db.call(move |conn| {
         conn.execute(
             "INSERT INTO stacks (id, name, compose_type, compose_files_json, backup_targets_json, backup_retention_keep_last, backup_retention_delete_after_stable_seconds, created_at, updated_at, last_check_at) VALUES ('stack', 'stack', 'path', '[]', '[]', 0, 0, '2026-04-30', '2026-04-30', '2026-04-30')",
             [],
@@ -734,34 +741,39 @@ INSERT INTO new_version_notifications (
 
 #[tokio::test]
 async fn hydration_migration_survives_equivalent_legacy_candidate_rows() {
+    let current_digest = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+    let candidate_digest = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
     let db_path = temporary_db_path();
     let db = Db::open(&db_path).await.unwrap();
-    db.call(|conn| {
+    db.call(move |conn| {
         conn.execute(
             "INSERT INTO stacks (id, name, compose_type, compose_files_json, backup_targets_json, backup_retention_keep_last, backup_retention_delete_after_stable_seconds, created_at, updated_at, last_check_at) VALUES ('legacy-stack', 'legacy-stack', 'path', '[]', '[]', 0, 0, '2026-04-30', '2026-04-30', '2026-04-30')",
             [],
         )?;
         conn.execute(
-            "INSERT INTO services (id, stack_id, name, image_ref, image_tag, current_digest, candidate_digest, auto_rollback, backup_targets_bind_paths_json, backup_targets_volume_names_json, created_at, updated_at) VALUES ('legacy-service', 'legacy-stack', 'service', 'ghcr.io/acme/app', 'latest', 'sha256:current', 'ABC', 0, '{}', '{}', '2026-04-30', '2026-04-30')",
-            [],
+            "INSERT INTO services (id, stack_id, name, image_ref, image_tag, current_digest, candidate_digest, auto_rollback, backup_targets_bind_paths_json, backup_targets_volume_names_json, created_at, updated_at) VALUES ('legacy-service', 'legacy-stack', 'service', 'ghcr.io/acme/app', 'latest', ?1, ?2, 0, '{}', '{}', '2026-04-30', '2026-04-30')",
+            rusqlite::params![current_digest, candidate_digest],
         )?;
         conn.execute(
             "INSERT INTO jobs (id, type, scope, stack_id, service_id, status, allow_arch_mismatch, backup_mode, created_by, reason, created_at, finished_at, summary_json) VALUES ('legacy-check', 'check', 'service', 'legacy-stack', 'legacy-service', 'success', 0, 'inherit', 'schedule', 'schedule', '2026-04-30T00:00:00Z', '2026-04-30T00:00:01Z', '{}')",
             [],
         )?;
         conn.execute(
-            "INSERT INTO service_new_version_discoveries (service_id, image_ref, source_job_id, discovered_at, current_digest, current_display_tag, current_tag, candidate_tag, candidate_digest, candidate_display_tag) VALUES ('legacy-service', 'ghcr.io/acme/app:latest', 'legacy-check', '2026-04-30T00:00:00Z', 'sha256:current', '1.0.0', 'latest', 'latest', 'ABC', '1.2.3')",
-            [],
+            "INSERT INTO service_new_version_discoveries (service_id, image_ref, source_job_id, discovered_at, current_digest, current_display_tag, current_tag, candidate_tag, candidate_digest, candidate_display_tag) VALUES ('legacy-service', 'ghcr.io/acme/app:latest', 'legacy-check', '2026-04-30T00:00:00Z', ?1, '1.0.0', 'latest', 'latest', ?2, '1.2.3')",
+            rusqlite::params![current_digest, candidate_digest],
         )?;
-        for (id, digest) in [("legacy-uppercase", "ABC"), ("legacy-prefixed", "sha256:abc")] {
+        for (id, digest) in [
+            ("legacy-uppercase", candidate_digest),
+            ("legacy-prefixed", "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"),
+        ] {
             conn.execute(
-                "INSERT INTO auto_update_candidates (id, stack_id, service_id, image_ref, raw_tag, candidate_digest, status, reason, attempts, discovered_at, source_job_id, source, current_tag, current_display_tag, current_digest, created_at, updated_at) VALUES (?1, 'legacy-stack', 'legacy-service', 'ghcr.io/acme/app', 'latest', ?2, 'awaiting_inference', 'version_inference_pending', 0, '2026-04-30T00:00:00Z', 'legacy-check', 'schedule', 'latest', '1.0.0', 'sha256:current', '2026-04-30T00:00:00Z', '2026-04-30T00:00:00Z')",
-                rusqlite::params![id, digest],
+                "INSERT INTO auto_update_candidates (id, stack_id, service_id, image_ref, raw_tag, candidate_digest, status, reason, attempts, discovered_at, source_job_id, source, current_tag, current_display_tag, current_digest, created_at, updated_at) VALUES (?1, 'legacy-stack', 'legacy-service', 'ghcr.io/acme/app', 'latest', ?2, 'awaiting_inference', 'version_inference_pending', 0, '2026-04-30T00:00:00Z', 'legacy-check', 'schedule', 'latest', '1.0.0', ?3, '2026-04-30T00:00:00Z', '2026-04-30T00:00:00Z')",
+                rusqlite::params![id, digest, current_digest],
             )?;
         }
         conn.execute(
-            "INSERT INTO auto_update_candidates (id, stack_id, service_id, image_ref, raw_tag, candidate_digest, status, reason, attempts, discovered_at, source_job_id, source, current_tag, current_display_tag, current_digest, created_at, updated_at, superseded_by_candidate_id) VALUES ('legacy-observer', 'legacy-stack', 'legacy-service', 'ghcr.io/acme/app', 'latest', 'sha256:other', 'superseded', 'newer_candidate', 0, '2026-04-29T00:00:00Z', 'legacy-check', 'schedule', 'latest', '1.0.0', 'sha256:current', '2026-04-29T00:00:00Z', '2026-04-29T00:00:00Z', 'legacy-uppercase')",
-            [],
+            "INSERT INTO auto_update_candidates (id, stack_id, service_id, image_ref, raw_tag, candidate_digest, status, reason, attempts, discovered_at, source_job_id, source, current_tag, current_display_tag, current_digest, created_at, updated_at, superseded_by_candidate_id) VALUES ('legacy-observer', 'legacy-stack', 'legacy-service', 'ghcr.io/acme/app', 'latest', 'sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb', 'superseded', 'newer_candidate', 0, '2026-04-29T00:00:00Z', 'legacy-check', 'schedule', 'latest', '1.0.0', ?1, '2026-04-29T00:00:00Z', '2026-04-29T00:00:00Z', 'legacy-uppercase')",
+            rusqlite::params![current_digest],
         )?;
         conn.execute(
             "DELETE FROM schema_migrations WHERE id IN ('0020_hydrate_auto_update_candidates_from_discoveries', '0024_normalize_auto_update_digest_identity')",
@@ -775,17 +787,20 @@ async fn hydration_migration_survives_equivalent_legacy_candidate_rows() {
 
     let db = Db::open(&db_path).await.unwrap();
     let candidates = db
-        .call(|conn| {
+        .call(move |conn| {
             let mut stmt = conn.prepare(
-                "SELECT candidate_digest FROM auto_update_candidates WHERE service_id = 'legacy-service' AND candidate_digest = 'sha256:abc' ORDER BY id",
+                "SELECT candidate_digest FROM auto_update_candidates WHERE service_id = 'legacy-service' AND candidate_digest = ?1 ORDER BY id",
             )?;
             Ok(stmt
-                .query_map([], |row| row.get::<_, String>(0))?
+                .query_map([format!("sha256:{candidate_digest}")], |row| row.get::<_, String>(0))?
                 .collect::<Result<Vec<_>, _>>()?)
         })
         .await
         .unwrap();
-    assert_eq!(candidates, vec!["sha256:abc"]);
+    assert_eq!(
+        candidates,
+        vec!["sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"]
+    );
     let superseded_by = db
         .call(|conn| {
             Ok(conn.query_row(

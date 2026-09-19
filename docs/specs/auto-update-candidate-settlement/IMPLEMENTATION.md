@@ -9,6 +9,8 @@
 - 候选来源以结构化 provenance 保存为 schedule、github_webhook 或 unknown；unknown 历史只保留审计，不获得自动部署授权。
 - migration 0020 与运行时 hydration 从 discovery history 选择最早可信的成功 check observation；缺失 image、baseline、source job 或合格来源时生成 unresolved 的 `migration_ambiguous_history` 审计事实，并保持 source unknown。
 - hydration 只把 `sha256:` 加 64 位十六进制 payload，或 legacy 64 位纯十六进制 shorthand 的 digest 当作候选身份；任意 bare tag 或 malformed digest 不会因为 canonical fallback 获得 source provenance 或自动执行资格。当前 service candidate 的 canonical identity 即使对应历史不完整，也会先 supersede 旧 candidate/pending。
+- migration `0026_reject_invalid_auto_update_digest_identity` 对旧数据库中的 malformed candidate/pending/service digest 统一 fail-closed：queued auto-policy job 取消，running job 只写入 stop control，pending 标记 skipped，candidate 标记 unresolved，service candidate identity 清空；它不创建候选或执行任何 Compose side effect。
+- strict digest identity 校验只接受 `sha256:` 加 64 位十六进制 payload，或 legacy 64 位纯十六进制 shorthand；普通 operational candidate 查询继续兼容既有 opaque legacy 行，strict 边界仅用于 hydration、migration、diagnostic 和 provenance safety checks。
 - migration 0022 对已执行旧 migration 的 active pending 重新应用相同的 Check、成功状态、授权 creator/source pairing 与 scope identity 门禁；不合格的 queued job 会取消，running job 只写入 stop control，pending 保留 `migration_ambiguous_history` 审计结果。
 - hydration 事务只创建 candidate fact、supersede 旧候选和跳过旧 pending；启动/周期 reconciliation 随后复用现有 evaluator 与 claim safety，不直接执行 Compose。
 - policy reconciliation 显式包含 `awaiting_inference` candidate；SemVer evaluator 仍返回 waiting 状态并保持无 pending/update job 的 fail-closed 语义。

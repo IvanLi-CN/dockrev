@@ -239,18 +239,18 @@ WHERE id = ?1
       )
       AND (
         (LOWER(source_job.scope) = 'service'
-          AND source_job.stack_id = p.stack_id
-          AND source_job.service_id = p.service_id)
+          AND LOWER(source_job.stack_id) = LOWER(p.stack_id)
+          AND LOWER(source_job.service_id) = LOWER(p.service_id))
         OR (LOWER(source_job.scope) = 'stack'
-          AND source_job.stack_id = p.stack_id
+          AND LOWER(source_job.stack_id) = LOWER(p.stack_id)
           AND source_job.service_id IS NULL)
         OR (LOWER(source_job.scope) = 'all'
           AND source_job.stack_id IS NULL
           AND source_job.service_id IS NULL)
       )
       AND LOWER(jobs.scope) = 'service'
-      AND jobs.stack_id = p.stack_id
-      AND jobs.service_id = p.service_id
+      AND LOWER(jobs.stack_id) = LOWER(p.stack_id)
+      AND LOWER(jobs.service_id) = LOWER(p.service_id)
       AND json_array_length(CASE WHEN json_valid(jobs.summary_json) THEN jobs.summary_json ELSE '{{}}' END, '$.targets') = 1
       AND EXISTS (
         SELECT 1

@@ -69,9 +69,12 @@ fn has_digest_identity(value: &str) -> bool {
     encoded.len() == 64 && encoded.bytes().all(|byte| byte.is_ascii_hexdigit())
 }
 
-fn canonical_candidate_digest(value: &str) -> String {
-    crate::snapshot_worker::normalize_digest(value)
-        .unwrap_or_else(|| value.trim().to_ascii_lowercase())
+fn canonical_candidate_digest(value: &str) -> Option<String> {
+    crate::snapshot_worker::normalize_digest_identity(value)
+}
+
+fn scope_id_matches(value: Option<&str>, expected: &str) -> bool {
+    value.is_some_and(|value| value.eq_ignore_ascii_case(expected))
 }
 
 fn reuse_equivalent_candidate_id(
@@ -79,15 +82,16 @@ fn reuse_equivalent_candidate_id(
     service_id: &str,
     candidate_digest: &str,
 ) -> anyhow::Result<Option<String>> {
-    let mut stmt = tx.prepare(
-        "SELECT id, candidate_digest FROM auto_update_candidates WHERE service_id = ?1 ORDER BY CASE WHEN lower(trim(candidate_digest)) = ?2 THEN 0 ELSE 1 END, CASE WHEN status = 'superseded' THEN 1 ELSE 0 END, created_at ASC, id ASC",
-    )?;
+    let digest = super::strict_canonical_digest_sql("candidate_digest");
+    let mut stmt = tx.prepare(&format!(
+        "SELECT id, candidate_digest FROM auto_update_candidates WHERE service_id = ?1 ORDER BY CASE WHEN {digest} = ?2 THEN 0 ELSE 1 END, CASE WHEN status = 'superseded' THEN 1 ELSE 0 END, created_at ASC, id ASC"
+    ))?;
     let rows = stmt.query_map(params![service_id, candidate_digest], |row| {
         Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
     })?;
     for row in rows {
         let (id, digest) = row?;
-        if digest == candidate_digest {
+        if canonical_candidate_digest(&digest) == Some(candidate_digest.to_string()) {
             return Ok(Some(id));
         }
     }
@@ -104,11 +108,11 @@ fn job_summary(row: &DiscoveryHistoryRow) -> serde_json::Value {
 fn source_job_matches_discovery(row: &DiscoveryHistoryRow) -> bool {
     match row.job_scope.as_deref() {
         Some(scope) if scope.eq_ignore_ascii_case("service") => {
-            row.job_stack_id.as_deref() == Some(row.stack_id.as_str())
-                && row.job_service_id.as_deref() == Some(row.service_id.as_str())
+            scope_id_matches(row.job_stack_id.as_deref(), &row.stack_id)
+                && scope_id_matches(row.job_service_id.as_deref(), &row.service_id)
         }
         Some(scope) if scope.eq_ignore_ascii_case("stack") => {
-            row.job_stack_id.as_deref() == Some(row.stack_id.as_str())
+            scope_id_matches(row.job_stack_id.as_deref(), &row.stack_id)
                 && row.job_service_id.is_none()
         }
         Some(scope) if scope.eq_ignore_ascii_case("all") => {
@@ -285,7 +289,9 @@ WHERE p.service_id = ?1
     };
     let pending_ids = pending_ids
         .into_iter()
-        .filter(|(_, digest, _, _)| canonical_candidate_digest(digest) != row.candidate_digest)
+        .filter(|(_, digest, _, _)| {
+            canonical_candidate_digest(digest) != Some(row.candidate_digest.clone())
+        })
         .collect::<Vec<_>>();
     let candidate_ids = {
         let mut stmt = tx.prepare(
@@ -308,7 +314,7 @@ WHERE service_id = ?1
         .into_iter()
         .filter(|(candidate_id, digest)| {
             candidate_id != &row.candidate_id
-                && canonical_candidate_digest(digest) != row.candidate_digest
+                && canonical_candidate_digest(digest) != Some(row.candidate_digest.clone())
         })
         .map(|(candidate_id, _)| candidate_id)
     {
@@ -379,7 +385,9 @@ pub(super) fn hydrate_auto_update_candidates_tx(
     let history = select_discovery_history(tx)?;
     let mut grouped = BTreeMap::<(String, String), Vec<DiscoveryHistoryRow>>::new();
     for row in history {
-        let candidate_digest = canonical_candidate_digest(&row.candidate_digest);
+        let Some(candidate_digest) = canonical_candidate_digest(&row.candidate_digest) else {
+            continue;
+        };
         grouped
             .entry((row.service_id.clone(), candidate_digest))
             .or_default()
@@ -580,7 +588,8 @@ ON CONFLICT(service_id, candidate_digest) DO UPDATE SET
         if rows.iter().any(|row| {
             row.service_candidate_digest
                 .as_deref()
-                .is_some_and(|digest| canonical_candidate_digest(digest) == candidate_digest)
+                .and_then(canonical_candidate_digest)
+                .is_some_and(|digest| digest == candidate_digest)
         }) {
             current_candidates.insert(
                 service_id.clone(),
@@ -624,21 +633,33 @@ pub(super) fn list_candidate_hydration_diagnostics_conn(
         .map(|_| "?")
         .collect::<Vec<_>>()
         .join(",");
-    let candidate_digest = super::canonical_digest_sql("c.candidate_digest");
-    let service_digest = super::canonical_digest_sql("s.candidate_digest");
-    let discovery_digest = super::canonical_digest_sql("d.candidate_digest");
+    let candidate_digest = super::strict_canonical_digest_sql("c.candidate_digest");
+    let service_digest = super::strict_canonical_digest_sql("s.candidate_digest");
+    let discovery_digest = super::strict_canonical_digest_sql("d.candidate_digest");
+    let invalid_discovery = format!(
+        "EXISTS (SELECT 1 FROM service_new_version_discoveries d WHERE d.service_id = s.id AND TRIM(d.candidate_digest) <> '' AND ({discovery_digest}) IS NULL)"
+    );
     let sql = format!(
         r#"
 SELECT
   s.id,
   c.id,
-  s.candidate_digest,
+  CASE WHEN c.id IS NULL THEN (
+    SELECT d.candidate_digest
+    FROM service_new_version_discoveries d
+    WHERE d.service_id = s.id
+      AND TRIM(d.candidate_digest) <> ''
+      AND ({discovery_digest}) IS NULL
+    ORDER BY d.discovered_at ASC, d.id ASC
+    LIMIT 1
+  ) ELSE s.candidate_digest END,
   c.status,
   c.reason,
   c.source,
   c.source_job_id,
   c.hydration_origin,
-  c.discovered_at
+  c.discovered_at,
+  {invalid_discovery} AS invalid_discovery
 FROM services s
 LEFT JOIN auto_update_candidates c
   ON c.service_id = s.id
@@ -652,6 +673,7 @@ WHERE s.id IN ({placeholders})
         AND d.service_id = s.id
         AND {discovery_digest} = {service_digest}
     )
+    OR {invalid_discovery}
   )
 "#
     );
@@ -664,7 +686,10 @@ WHERE s.id IN ({placeholders})
         let candidate_id: Option<String> = row.get(1)?;
         let candidate_digest: Option<String> = row.get(2)?;
         let hydration_origin: Option<String> = row.get(7)?;
-        let status = if candidate_id.is_none() {
+        let invalid_discovery: bool = row.get(9)?;
+        let status = if candidate_id.is_none() && invalid_discovery {
+            "ambiguous_history"
+        } else if candidate_id.is_none() {
             "candidate_missing"
         } else if hydration_origin.as_deref() == Some(HYDRATION_ORIGIN_AMBIGUOUS_HISTORY) {
             "ambiguous_history"
