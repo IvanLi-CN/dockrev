@@ -113,7 +113,7 @@ SELECT id, update_job_id, summary_json
 FROM auto_update_pending
 WHERE service_id = ?1 AND rule_id = ?2 AND candidate_digest = ?3
   AND status IN ('pending', 'enqueuing', 'enqueued')
-  AND (policy_scope_type != ?4 OR policy_scope_id != ?5)
+  AND (LOWER(TRIM(policy_scope_type)) != LOWER(TRIM(?4)) OR LOWER(TRIM(policy_scope_id)) != LOWER(TRIM(?5)))
 "#,
                 )?;
                 let rows = stmt.query_map(
@@ -153,33 +153,7 @@ WHERE id = ?1
                     params![pending_id, serde_json::to_string(&summary)?, now],
                 )?;
                 if let Some(update_job_id) = update_job_id {
-                    tx.execute(
-                        r#"
-UPDATE jobs
-SET status = 'cancelled', finished_at = ?2
-WHERE id = ?1 AND status = 'queued' AND created_by = 'auto-policy'
-"#,
-                        params![update_job_id, now],
-                    )?;
-                    tx.execute(
-                        r#"
-INSERT INTO update_job_stop_controls (
-  job_id, stop_requested_at, stop_requested_by, updated_at
-)
-SELECT ?1, ?2, 'auto-policy-policy-change', ?2
-WHERE EXISTS (
-  SELECT 1 FROM jobs
-  WHERE id = ?1 AND status = 'running' AND created_by = 'auto-policy'
-)
-ON CONFLICT(job_id) DO UPDATE SET
-  stop_requested_at = COALESCE(update_job_stop_controls.stop_requested_at, excluded.stop_requested_at),
-  stop_requested_by = COALESCE(update_job_stop_controls.stop_requested_by, excluded.stop_requested_by),
-  updated_at = excluded.updated_at
-WHERE update_job_stop_controls.apply_committed_at IS NULL
-  AND update_job_stop_controls.stop_requested_at IS NULL
-"#,
-                        params![update_job_id, now],
-                    )?;
+                    cancel_stale_auto_policy_job(&tx, &update_job_id, &now)?;
                 }
             }
             tx.execute(
@@ -208,8 +182,7 @@ SET source_check_job_id = ?6,
 WHERE service_id = ?4
   AND rule_id = ?2
   AND candidate_digest = ?5
-  AND policy_scope_type = ?1
-  AND policy_scope_id = ?3
+  AND LOWER(TRIM(policy_scope_type)) = LOWER(TRIM(?1)) AND LOWER(TRIM(policy_scope_id)) = LOWER(TRIM(?3))
   AND status = 'pending'
 "#,
                 params![
@@ -230,54 +203,7 @@ WHERE service_id = ?4
                     input.candidate_id,
                 ],
             )?;
-            tx.execute(
-                r#"
-INSERT OR IGNORE INTO auto_update_pending (
-  id,
-  policy_scope_type,
-  policy_scope_id,
-  rule_id,
-  stack_id,
-  service_id,
-  source_check_job_id,
-  candidate_tag,
-  candidate_display_tag,
-  candidate_digest,
-  current_display_tag,
-  current_digest,
-  first_seen_at,
-  due_at,
-  min_age_seconds,
-  min_version_lag,
-  status,
-  created_at,
-  updated_at,
-  candidate_id,
-  summary_json
-) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, NULLIF(TRIM(json_extract(CASE WHEN json_valid(?19) THEN ?19 ELSE '{}' END, '$.currentDigest')), ''), ?12, ?13, ?14, ?15, 'pending', ?16, ?17, CASE WHEN ?18 IS NULL OR EXISTS (SELECT 1 FROM auto_update_candidates c WHERE c.id = ?18 AND c.service_id = ?6 AND c.candidate_digest = ?10) THEN ?18 ELSE NULL END, ?19)
-"#,
-                params![
-                    input.id,
-                    input.policy_scope_type,
-                    input.policy_scope_id,
-                    input.rule_id,
-                    input.stack_id,
-                    input.service_id,
-                    input.source_check_job_id,
-                    input.candidate_tag,
-                    input.candidate_display_tag,
-                    input.candidate_digest,
-                    input.current_display_tag,
-                    input.first_seen_at,
-                    input.due_at,
-                    input.min_age_seconds as i64,
-                    input.min_version_lag as i64,
-                    now,
-                    now,
-                    input.candidate_id,
-                    serde_json::to_string(&input.summary_json)?
-                ],
-            )?;
+            insert_auto_update_pending_if_missing(&tx, &input, &now)?;
             let row = tx.query_row(
                 r#"
 SELECT
@@ -302,7 +228,7 @@ SELECT
   summary_json
 FROM auto_update_pending
 WHERE service_id = ?1 AND rule_id = ?2 AND candidate_digest = ?3
-  AND policy_scope_type = ?4 AND policy_scope_id = ?5
+  AND LOWER(TRIM(policy_scope_type)) = LOWER(TRIM(?4)) AND LOWER(TRIM(policy_scope_id)) = LOWER(TRIM(?5))
   AND status IN ('pending', 'enqueuing', 'enqueued')
 ORDER BY created_at ASC, id ASC
 LIMIT 1

@@ -1,3 +1,94 @@
+use rusqlite::Transaction;
+
+fn cancel_stale_auto_policy_job(
+    tx: &Transaction<'_>,
+    update_job_id: &str,
+    now: &str,
+) -> rusqlite::Result<()> {
+    tx.execute(
+        r#"
+UPDATE jobs
+SET status = 'cancelled', finished_at = ?2
+WHERE id = ?1 AND status = 'queued' AND created_by = 'auto-policy'
+"#,
+        params![update_job_id, now],
+    )?;
+    tx.execute(
+        r#"
+INSERT INTO update_job_stop_controls (
+  job_id, stop_requested_at, stop_requested_by, updated_at
+)
+SELECT ?1, ?2, 'auto-policy-policy-change', ?2
+WHERE EXISTS (
+  SELECT 1 FROM jobs
+  WHERE id = ?1 AND status = 'running' AND created_by = 'auto-policy'
+)
+ON CONFLICT(job_id) DO UPDATE SET
+  stop_requested_at = COALESCE(update_job_stop_controls.stop_requested_at, excluded.stop_requested_at),
+  stop_requested_by = COALESCE(update_job_stop_controls.stop_requested_by, excluded.stop_requested_by),
+  updated_at = excluded.updated_at
+WHERE update_job_stop_controls.apply_committed_at IS NULL
+  AND update_job_stop_controls.stop_requested_at IS NULL
+"#,
+        params![update_job_id, now],
+    )?;
+    Ok(())
+}
+
+fn insert_auto_update_pending_if_missing(
+    tx: &Transaction<'_>,
+    input: &AutoUpdatePendingInput,
+    now: &str,
+) -> anyhow::Result<()> {
+    tx.execute(
+        r#"
+INSERT OR IGNORE INTO auto_update_pending (
+  id, policy_scope_type, policy_scope_id, rule_id, stack_id, service_id,
+  source_check_job_id, candidate_tag, candidate_display_tag, candidate_digest,
+  current_display_tag, current_digest, first_seen_at, due_at, min_age_seconds,
+  min_version_lag, status, created_at, updated_at, candidate_id, summary_json
+) SELECT ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11,
+         NULLIF(TRIM(json_extract(CASE WHEN json_valid(?19) THEN ?19 ELSE '{}' END, '$.currentDigest')), ''),
+         ?12, ?13, ?14, ?15, 'pending', ?16, ?17,
+         CASE WHEN ?18 IS NULL OR EXISTS (
+           SELECT 1 FROM auto_update_candidates c
+           WHERE c.id = ?18 AND c.service_id = ?6 AND c.candidate_digest = ?10
+         ) THEN ?18 ELSE NULL END,
+         ?19
+WHERE NOT EXISTS (
+  SELECT 1 FROM auto_update_pending existing
+  WHERE existing.service_id = ?6 AND existing.rule_id = ?4
+    AND existing.candidate_digest = ?10
+    AND LOWER(TRIM(existing.policy_scope_type)) = LOWER(TRIM(?2))
+    AND LOWER(TRIM(existing.policy_scope_id)) = LOWER(TRIM(?3))
+    AND existing.status IN ('pending', 'enqueuing', 'enqueued')
+)
+"#,
+        params![
+            input.id,
+            input.policy_scope_type,
+            input.policy_scope_id,
+            input.rule_id,
+            input.stack_id,
+            input.service_id,
+            input.source_check_job_id,
+            input.candidate_tag,
+            input.candidate_display_tag,
+            input.candidate_digest,
+            input.current_display_tag,
+            input.first_seen_at,
+            input.due_at,
+            input.min_age_seconds as i64,
+            input.min_version_lag as i64,
+            now,
+            now,
+            input.candidate_id,
+            serde_json::to_string(&input.summary_json)?,
+        ],
+    )?;
+    Ok(())
+}
+
 impl Db {
     pub async fn hydrate_auto_update_candidates(&self, now: &str) -> anyhow::Result<usize> {
         let now = now.to_string();

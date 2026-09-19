@@ -140,3 +140,55 @@ async fn policy_scope_replacement_stops_attached_auto_policy_jobs() {
         Some("auto-policy-policy-change")
     );
 }
+
+#[tokio::test]
+async fn policy_scope_reservation_reuses_case_insensitive_trimmed_scope() {
+    let db = Db::open(Path::new(":memory:")).await.unwrap();
+    let pending_input = |id: &str, scope_type: &str, scope_id: &str| AutoUpdatePendingInput {
+        id: id.to_string(),
+        policy_scope_type: scope_type.to_string(),
+        policy_scope_id: scope_id.to_string(),
+        rule_id: "rule".to_string(),
+        stack_id: "stack".to_string(),
+        service_id: "service".to_string(),
+        source_check_job_id: "check".to_string(),
+        candidate_tag: "latest".to_string(),
+        candidate_display_tag: "1.4.0".to_string(),
+        candidate_digest:
+            "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+                .to_string(),
+        current_display_tag: "1.0.0".to_string(),
+        first_seen_at: "2026-04-30T00:00:00Z".to_string(),
+        due_at: "2026-04-30T00:00:00Z".to_string(),
+        min_age_seconds: 0,
+        min_version_lag: 0,
+        summary_json: serde_json::json!({}),
+        candidate_id: None,
+    };
+
+    let original = db
+        .reserve_auto_update_pending(
+            &pending_input("pending-original", "stack", "stack-id"),
+            "2026-04-30T00:00:00Z",
+        )
+        .await
+        .unwrap();
+    let reused = db
+        .reserve_auto_update_pending(
+            &pending_input("pending-duplicate", " STACK ", " Stack-Id "),
+            "2026-04-30T00:00:01Z",
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(reused.id, original.id);
+    assert_eq!(reused.policy_scope_type, "stack");
+    assert_eq!(reused.policy_scope_id, "stack-id");
+    assert_eq!(
+        db.list_auto_update_pending_candidates("2026-04-30T00:00:02Z", 10)
+            .await
+            .unwrap()
+            .len(),
+        1
+    );
+}
