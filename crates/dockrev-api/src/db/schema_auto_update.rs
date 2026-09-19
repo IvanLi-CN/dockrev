@@ -369,6 +369,7 @@ SELECT
     WHERE other.service_id = candidate.service_id
       AND {other_digest} = {candidate_digest}
     ORDER BY
+      CASE WHEN lower(trim(other.candidate_digest)) LIKE 'sha256:%' THEN 1 ELSE 0 END DESC,
       CASE WHEN other.status = 'superseded' THEN 0 ELSE 1 END DESC,
       CASE WHEN EXISTS (
         SELECT 1

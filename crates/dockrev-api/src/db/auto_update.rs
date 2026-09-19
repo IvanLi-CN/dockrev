@@ -533,6 +533,25 @@ WHERE id = ?1 AND status = 'queued' AND created_by = 'auto-policy'
 "#,
                         params![update_job_id, now],
                     )?;
+                    tx.execute(
+                        r#"
+INSERT INTO update_job_stop_controls (
+  job_id, stop_requested_at, stop_requested_by, updated_at
+)
+SELECT ?1, ?2, 'auto-policy-enqueue-race', ?2
+WHERE EXISTS (
+  SELECT 1 FROM jobs
+  WHERE id = ?1 AND status = 'running' AND created_by = 'auto-policy'
+)
+ON CONFLICT(job_id) DO UPDATE SET
+  stop_requested_at = COALESCE(update_job_stop_controls.stop_requested_at, excluded.stop_requested_at),
+  stop_requested_by = COALESCE(update_job_stop_controls.stop_requested_by, excluded.stop_requested_by),
+  updated_at = excluded.updated_at
+WHERE update_job_stop_controls.apply_committed_at IS NULL
+  AND update_job_stop_controls.stop_requested_at IS NULL
+"#,
+                        params![update_job_id, now],
+                    )?;
                 }
                 tx.commit()?;
                 Ok(changed > 0)

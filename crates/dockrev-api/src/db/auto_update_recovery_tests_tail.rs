@@ -942,6 +942,93 @@ async fn skipping_pending_auto_update_stops_attached_jobs_idempotently() {
 }
 
 #[tokio::test]
+async fn enqueue_race_requests_stop_for_a_running_auto_policy_job() {
+    let db = Db::open(Path::new(":memory:")).await.unwrap();
+    let pending = db
+        .reserve_auto_update_pending(
+            &AutoUpdatePendingInput {
+                id: "pending-enqueue-race".to_string(),
+                policy_scope_type: "stack".to_string(),
+                policy_scope_id: "stack".to_string(),
+                rule_id: "rule-enqueue-race".to_string(),
+                stack_id: "stack".to_string(),
+                service_id: "service".to_string(),
+                source_check_job_id: "check".to_string(),
+                candidate_tag: "latest".to_string(),
+                candidate_display_tag: "1.4.0".to_string(),
+                candidate_digest: "sha256:enqueue-race".to_string(),
+                current_display_tag: "1.0.0".to_string(),
+                first_seen_at: "2026-04-30T00:00:00Z".to_string(),
+                due_at: "2026-04-30T00:00:00Z".to_string(),
+                min_age_seconds: 0,
+                min_version_lag: 0,
+                summary_json: serde_json::json!({}),
+                candidate_id: None,
+            },
+            "2026-04-30T00:00:00Z",
+        )
+        .await
+        .unwrap();
+    assert!(
+        db.try_claim_auto_update_pending(&pending.id, "2026-04-30T00:00:01Z")
+            .await
+            .unwrap()
+    );
+    db.insert_job(crate::api::types::JobListItem {
+        id: "enqueue-race-job".to_string(),
+        r#type: crate::api::types::JobType::Update,
+        scope: crate::api::types::JobScope::Service,
+        stack_id: Some("stack".to_string()),
+        service_id: Some("service".to_string()),
+        status: "running".to_string(),
+        created_by: "auto-policy".to_string(),
+        reason: "auto_policy".to_string(),
+        created_at: "2026-04-30T00:00:02Z".to_string(),
+        started_at: Some("2026-04-30T00:00:02Z".to_string()),
+        finished_at: None,
+        allow_arch_mismatch: false,
+        backup_mode: "inherit".to_string(),
+        summary_json: serde_json::json!({}),
+    })
+    .await
+    .unwrap();
+
+    db.mark_auto_update_pending_skipped(
+        &pending.id,
+        "candidate_superseded",
+        "2026-04-30T00:00:03Z",
+    )
+    .await
+    .unwrap();
+    assert!(!db
+        .mark_auto_update_pending_enqueued(
+            &pending.id,
+            "enqueue-race-job",
+            "2026-04-30T00:00:04Z",
+        )
+        .await
+        .unwrap());
+
+    assert_eq!(
+        db.get_update_stop_control("enqueue-race-job")
+            .await
+            .unwrap()
+            .unwrap()
+            .stop_requested_by
+            .as_deref(),
+        Some("auto-policy-enqueue-race")
+    );
+    assert_eq!(
+        db.get_job("enqueue-race-job")
+            .await
+            .unwrap()
+            .unwrap()
+            .status,
+        "running"
+    );
+}
+
+#[tokio::test]
 async fn candidate_upsert_keeps_earliest_qualified_provenance_tuple() {
     let db = Db::open(Path::new(":memory:")).await.unwrap();
     let mut candidate = candidate_input(

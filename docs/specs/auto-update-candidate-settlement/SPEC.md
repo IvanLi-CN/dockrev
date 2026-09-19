@@ -335,11 +335,11 @@ claim 失败只能释放本次 claim 或写入明确的 skipped/retryable 状态
 - 新 digest 到来时，旧 candidate 和其 pending action 先标记 superseded/skipped，再让新 candidate 进入策略评估。
 - 单实例范围内使用数据库条件更新和现有 operation lock 防止重复 claim；本主题不承诺多实例全局唯一。
 
-修复上线时由 <code>service_new_version_discoveries</code> 与成功 check job provenance 回填当前 service digest 缺失的 candidate。只接受 type 为 check、status 为 success 且来源可证明为 schedule 或 GHCR webhook 的最早可信观察；它保存原始 <code>sourceJobId</code>、<code>source</code>、<code>discoveredAt</code> 和当前 baseline。candidate/current digest 必须保留显式 digest identity（带 <code>sha256:</code> 算法前缀，或 legacy 纯十六进制 shorthand）；任意 bare tag 不能通过 canonical fallback 获得候选身份。来源不明、image/baseline/source job/time/digest identity 不完整或已被替代的历史记录只能形成 <code>unresolved</code> 的 <code>migration_ambiguous_history</code> 审计事实，不能获得自动部署授权。
+修复上线时由 <code>service_new_version_discoveries</code> 与成功 check job provenance 回填当前 service digest 缺失的 candidate。只接受 type 为 check、status 为 success 且来源可证明为 schedule 或 GHCR webhook 的最早可信观察；它保存原始 <code>sourceJobId</code>、<code>source</code>、<code>discoveredAt</code> 和当前 baseline。candidate/current digest 必须保留显式 digest identity（<code>sha256:</code> 加 64 位十六进制 payload，或 legacy 64 位纯十六进制 shorthand）；任意 bare tag 或 malformed digest 不能通过 canonical fallback 获得候选身份。来源不明、image/baseline/source job/time/digest identity 不完整或已被替代的历史记录只能形成 <code>unresolved</code> 的 <code>migration_ambiguous_history</code> 审计事实，不能获得自动部署授权。
 
 迁移与启动/周期 reconciliation 复用同一 hydration helper。hydration 按完整 discovery history 恢复 service + digest candidate fact，按 service candidate 的 canonical identity 执行旧候选 supersession 和 pending 失效，即使当前历史本身 ambiguous 也不能让旧 action 继续 claim；不执行 Compose side effect。回填后仍须由当前 service digest、effective policy、SemVer evidence 与 operation protection 重新校验后才能 enqueue。对 inference settlement 使用原子递增并精确匹配的 `settlement_generation` token 条件更新，迟到的旧结果不能覆盖新的 retry/ready 状态。
 
-对历史 active pending 的有限修复也必须复用同一 provenance predicate：不满足成功 Check、合格 source、授权 creator、scope identity 或 current digest 条件的 queued action 必须取消；已经 running 的 action 只能写入 stop control，不能伪造成功或重新获得 claim 权限，并保留 <code>migration_ambiguous_history</code> 审计原因。
+对历史 active pending 的有限修复也必须复用同一 provenance predicate：不满足成功 Check、合格 source、授权 creator、scope identity 或 current digest 条件的 queued action 必须取消；已经 running 的 action 只能写入 stop control，不能伪造成功或重新获得 claim 权限，并保留 <code>migration_ambiguous_history</code> 审计原因。enqueue 回写若发现 pending 已先被 supersede/skipped，同样必须取消 queued job 或为尚未提交 apply 的 running job 写入 stop control。
 
 恢复 queued auto-policy job 时，若缺少 persisted expected current digest 或 target digest，必须 fail-closed；恢复路径必须再次校验成功 Check、schedule/GHCR webhook source、creator/scope identity、candidate 当前性、effective policy 与 service current digest，不能因为旧 job 已经存在而绕过正常 enqueue 门禁。hydration 必须处理所有 qualifying 历史 digest，再将非当前 service candidate 的记录标记为 <code>superseded</code>，以阻止旧 pending/action 再次 claim。
 
@@ -426,6 +426,7 @@ UI 至少表达以下不同状态：
 - Given candidate 为 <code>awaiting_inference</code>，When启动或周期 reconciliation 运行，Then候选会进入 policy evaluator；SemVer policy 仍为 <code>waiting_inference</code>，不创建 pending 或 update job。
 - Given source job 不是成功的 Check、source 不属于 schedule/GHCR webhook、creator/scope pairing 不合法或 service digest 已变化，When claim 或 enqueue 运行，Then不创建自动 update job；已经 queued 的历史 action 按其状态取消或写入 stop control。
 - Given candidate 与 service digest 在 enqueue 预检后发生变化，When同一受保护事务插入自动策略 job，Then事务拒绝该 job，不能依赖事务外的旧 digest 预检授权执行。
+- Given pending 在 job 创建后、关联回写前被 supersede，When enqueue 回写发现 pending 已不再是 enqueuing，Then queued job 被取消，running job 获得 stop control 且不能绕过 apply protection。
 
 ## 非功能性验收 / 质量门槛
 

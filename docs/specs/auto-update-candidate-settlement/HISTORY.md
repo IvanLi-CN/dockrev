@@ -27,6 +27,8 @@
 - migration `0024` 在删除等价 candidate 前会重写指向 duplicate 的 `superseded_by_candidate_id`，保留可遍历的 supersession audit lineage；enqueue guard 在 claim 后的最终事务中再次校验 current policy 与 source provenance。
 - discovery hydration 的可信 provenance 选择固定为按 `discovered_at`、再按 discovery id 的最早完整成功 check observation；current-digest CAS 与 hydration diagnostic 共享同一 canonical digest 规则，覆盖缺省 `sha256:` 前缀和大小写差异。
 - hydration 不再把 bare tag 通过 canonical fallback 当作 digest identity；当前候选 identity 与 provenance completeness 分离，ambiguous current history 仍会 supersede 旧 candidate/pending，但自身保持不可执行。
+- hydration 对 digest identity 要求 `sha256:` 加 64 位十六进制 payload，或 legacy 64 位纯十六进制 shorthand；enqueue 回写遇到 pending supersession race 时，queued job 会取消，running job 会在 apply 未提交时获得 stop control。
+- migration `0024` 对等价 candidate row 优先保留显式 canonical `sha256:` 表示，确保旧 supersession lineage 不指向非 canonical keeper。
 - stale queued-claim recovery now canonicalizes job target digests before reattaching an existing auto-policy job; migration `0024` and the active pending index preserve separate effective policy scopes for the same service and digest; Regex/Glob and version-lag evaluation no longer treats unrelated exact-digest alias tags as matcher input.
 
 ## Decision Trace

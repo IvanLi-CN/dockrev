@@ -58,12 +58,15 @@ fn has_digest_identity(value: &str) -> bool {
     if trimmed.is_empty() {
         return false;
     }
-    if let Some((algorithm, encoded)) = trimmed.split_once(':') {
-        // Keep synthetic sha256 values used by legacy records, but require an
-        // explicit digest algorithm so floating tags cannot use the fallback.
-        return algorithm.eq_ignore_ascii_case("sha256") && non_empty(encoded);
-    }
-    trimmed.bytes().all(|byte| byte.is_ascii_hexdigit())
+    let encoded = if let Some((algorithm, encoded)) = trimmed.split_once(':') {
+        if !algorithm.eq_ignore_ascii_case("sha256") {
+            return false;
+        }
+        encoded
+    } else {
+        trimmed
+    };
+    encoded.len() == 64 && encoded.bytes().all(|byte| byte.is_ascii_hexdigit())
 }
 
 fn canonical_candidate_digest(value: &str) -> String {
@@ -77,9 +80,9 @@ fn reuse_equivalent_candidate_id(
     candidate_digest: &str,
 ) -> anyhow::Result<Option<String>> {
     let mut stmt = tx.prepare(
-        "SELECT id, candidate_digest FROM auto_update_candidates WHERE service_id = ?1 ORDER BY created_at ASC, id ASC",
+        "SELECT id, candidate_digest FROM auto_update_candidates WHERE service_id = ?1 ORDER BY CASE WHEN lower(trim(candidate_digest)) = ?2 THEN 0 ELSE 1 END, CASE WHEN status = 'superseded' THEN 1 ELSE 0 END, created_at ASC, id ASC",
     )?;
-    let rows = stmt.query_map(params![service_id], |row| {
+    let rows = stmt.query_map(params![service_id, candidate_digest], |row| {
         Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
     })?;
     for row in rows {
@@ -574,11 +577,11 @@ ON CONFLICT(service_id, candidate_digest) DO UPDATE SET
             params![service_id, candidate_digest],
             |row| row.get::<_, String>(0),
         )?;
-        if source_row
-            .service_candidate_digest
-            .as_deref()
-            .is_some_and(|digest| canonical_candidate_digest(digest) == candidate_digest)
-        {
+        if rows.iter().any(|row| {
+            row.service_candidate_digest
+                .as_deref()
+                .is_some_and(|digest| canonical_candidate_digest(digest) == candidate_digest)
+        }) {
             current_candidates.insert(
                 service_id.clone(),
                 (candidate_digest.clone(), candidate_id.clone()),
@@ -691,4 +694,22 @@ WHERE s.id IN ({placeholders})
         })
     })?;
     rows.collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::has_digest_identity;
+
+    #[test]
+    fn digest_identity_requires_a_real_sha256_payload() {
+        assert!(has_digest_identity(
+            "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+        ));
+        assert!(has_digest_identity(
+            "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+        ));
+        assert!(!has_digest_identity("sha256:garbage"));
+        assert!(!has_digest_identity("sha256:0123456789abcdef"));
+        assert!(!has_digest_identity("latest"));
+    }
 }

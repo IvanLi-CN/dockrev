@@ -78,11 +78,11 @@ async fn hydrates_missing_candidate_from_successful_webhook_discovery_idempotent
             [],
         )?;
         conn.execute(
-            "INSERT INTO services (id, stack_id, name, image_ref, image_tag, current_digest, candidate_digest, auto_rollback, backup_targets_bind_paths_json, backup_targets_volume_names_json, created_at, updated_at) VALUES ('service', 'stack', 'service', 'ghcr.io/acme/app', 'latest', 'sha256:current', 'sha256:new', 0, '{}', '{}', '2026-04-30', '2026-04-30')",
+            "INSERT INTO services (id, stack_id, name, image_ref, image_tag, current_digest, candidate_digest, auto_rollback, backup_targets_bind_paths_json, backup_targets_volume_names_json, created_at, updated_at) VALUES ('service', 'stack', 'service', 'ghcr.io/acme/app', 'latest', 'sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef', 'sha256:fedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210', 0, '{}', '{}', '2026-04-30', '2026-04-30')",
             [],
         )?;
         conn.execute(
-            "INSERT INTO service_new_version_discoveries (service_id, image_ref, source_job_id, discovered_at, current_digest, current_display_tag, current_tag, candidate_tag, candidate_digest, candidate_display_tag) VALUES ('service', 'ghcr.io/acme/app:latest', 'check-webhook', '2026-04-30T00:00:00Z', 'sha256:current', '1.0.0', 'latest', '1.4.0', 'sha256:new', '1.4.0')",
+            "INSERT INTO service_new_version_discoveries (service_id, image_ref, source_job_id, discovered_at, current_digest, current_display_tag, current_tag, candidate_tag, candidate_digest, candidate_display_tag) VALUES ('service', 'ghcr.io/acme/app:latest', 'check-webhook', '2026-04-30T00:00:00Z', 'sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef', '1.0.0', 'latest', '1.4.0', 'sha256:fedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210', '1.4.0')",
             [],
         )?;
         Ok(())
@@ -109,7 +109,10 @@ async fn hydrates_missing_candidate_from_successful_webhook_discovery_idempotent
     .unwrap();
 
     assert!(
-        db.get_auto_update_candidate("service", "sha256:new")
+        db.get_auto_update_candidate(
+            "service",
+            "sha256:fedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210",
+        )
             .await
             .unwrap()
             .is_none()
@@ -121,7 +124,10 @@ async fn hydrates_missing_candidate_from_successful_webhook_discovery_idempotent
         1
     );
     let candidate = db
-        .get_auto_update_candidate("service", "sha256:new")
+        .get_auto_update_candidate(
+            "service",
+            "sha256:fedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210",
+        )
         .await
         .unwrap()
         .unwrap();
@@ -210,23 +216,23 @@ async fn hydration_keeps_the_earliest_qualified_observation_as_one_consistent_re
             [],
         )?;
         conn.execute(
-            "INSERT INTO services (id, stack_id, name, image_ref, image_tag, current_digest, candidate_digest, auto_rollback, backup_targets_bind_paths_json, backup_targets_volume_names_json, created_at, updated_at) VALUES ('service', 'stack', 'service', 'ghcr.io/acme/app', 'latest', 'sha256:current', 'sha256:multi', 0, '{}', '{}', '2026-04-30', '2026-04-30')",
+            "INSERT INTO services (id, stack_id, name, image_ref, image_tag, current_digest, candidate_digest, auto_rollback, backup_targets_bind_paths_json, backup_targets_volume_names_json, created_at, updated_at) VALUES ('service', 'stack', 'service', 'ghcr.io/acme/app', 'latest', 'sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef', 'sha256:fedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210', 0, '{}', '{}', '2026-04-30', '2026-04-30')",
             [],
         )?;
         conn.execute(
-            "INSERT INTO service_new_version_discoveries (service_id, image_ref, source_job_id, discovered_at, current_digest, current_display_tag, current_tag, candidate_tag, candidate_digest, candidate_display_tag) VALUES ('service', 'ghcr.io/acme/app:latest', 'check-old', '2026-04-30T00:00:30Z', 'sha256:current', '1.0.0', 'latest', '1.3.0', 'sha256:old', '1.3.0')",
+            "INSERT INTO service_new_version_discoveries (service_id, image_ref, source_job_id, discovered_at, current_digest, current_display_tag, current_tag, candidate_tag, candidate_digest, candidate_display_tag) VALUES ('service', 'ghcr.io/acme/app:latest', 'check-old', '2026-04-30T00:00:30Z', 'sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef', '1.0.0', 'latest', '1.3.0', 'sha256:old', '1.3.0')",
             [],
         )?;
         conn.execute(
-            "INSERT INTO service_new_version_discoveries (service_id, image_ref, source_job_id, discovered_at, current_digest, current_display_tag, current_tag, candidate_tag, candidate_digest, candidate_display_tag) VALUES ('service', 'ghcr.io/acme/app:latest', 'missing-check', '2026-04-30T00:00:00Z', 'sha256:current', '1.0.0', 'latest', '1.4.0', 'sha256:MULTI', '1.4.0')",
+            "INSERT INTO service_new_version_discoveries (service_id, image_ref, source_job_id, discovered_at, current_digest, current_display_tag, current_tag, candidate_tag, candidate_digest, candidate_display_tag) VALUES ('service', 'ghcr.io/acme/app:latest', 'missing-check', '2026-04-30T00:00:00Z', 'sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef', '1.0.0', 'latest', '1.4.0', 'sha256:FEDCBA9876543210FEDCBA9876543210FEDCBA9876543210FEDCBA9876543210', '1.4.0')",
             [],
         )?;
         conn.execute(
-            "INSERT INTO service_new_version_discoveries (service_id, image_ref, source_job_id, discovered_at, current_digest, current_display_tag, current_tag, candidate_tag, candidate_digest, candidate_display_tag) VALUES ('service', 'ghcr.io/acme/app:latest', 'check-schedule', '2026-04-30T00:01:00Z', 'sha256:current', '1.0.0', 'latest', '1.4.0', 'sha256:multi', '1.4.1')",
+            "INSERT INTO service_new_version_discoveries (service_id, image_ref, source_job_id, discovered_at, current_digest, current_display_tag, current_tag, candidate_tag, candidate_digest, candidate_display_tag) VALUES ('service', 'ghcr.io/acme/app:latest', 'check-schedule', '2026-04-30T00:01:00Z', 'sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef', '1.0.0', 'latest', '1.4.0', 'sha256:fedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210', '1.4.1')",
             [],
         )?;
         conn.execute(
-            "INSERT INTO service_new_version_discoveries (service_id, image_ref, source_job_id, discovered_at, current_digest, current_display_tag, current_tag, candidate_tag, candidate_digest, candidate_display_tag) VALUES ('service', 'ghcr.io/acme/app:latest', 'check-webhook-latest', '2026-04-30T00:02:00Z', 'sha256:current', '1.0.0', 'latest', '1.5.0', 'sha256:multi', '1.5.0')",
+            "INSERT INTO service_new_version_discoveries (service_id, image_ref, source_job_id, discovered_at, current_digest, current_display_tag, current_tag, candidate_tag, candidate_digest, candidate_display_tag) VALUES ('service', 'ghcr.io/acme/app:latest', 'check-webhook-latest', '2026-04-30T00:02:00Z', 'sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef', '1.0.0', 'latest', '1.5.0', 'sha256:fedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210', '1.5.0')",
             [],
         )?;
         Ok(())
@@ -236,7 +242,7 @@ async fn hydration_keeps_the_earliest_qualified_observation_as_one_consistent_re
 
     let mut runtime_candidate = candidate_input(
         "runtime-current-candidate",
-        "sha256:multi",
+        "sha256:fedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210",
         "ready",
         "2026-04-30T00:01:00Z",
     );
@@ -297,7 +303,10 @@ async fn hydration_keeps_the_earliest_qualified_observation_as_one_consistent_re
         .await
         .unwrap();
     let candidate = db
-        .get_auto_update_candidate("service", "sha256:multi")
+        .get_auto_update_candidate(
+            "service",
+            "sha256:fedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210",
+        )
         .await
         .unwrap()
         .unwrap();
@@ -354,11 +363,11 @@ async fn runtime_candidate_with_discovery_history_is_not_reported_as_missing() {
             [],
         )?;
         conn.execute(
-            "INSERT INTO services (id, stack_id, name, image_ref, image_tag, current_digest, candidate_digest, auto_rollback, backup_targets_bind_paths_json, backup_targets_volume_names_json, created_at, updated_at) VALUES ('service', 'stack', 'service', 'ghcr.io/acme/app', 'latest', 'sha256:current', 'sha256:runtime', 0, '{}', '{}', '2026-04-30', '2026-04-30')",
+            "INSERT INTO services (id, stack_id, name, image_ref, image_tag, current_digest, candidate_digest, auto_rollback, backup_targets_bind_paths_json, backup_targets_volume_names_json, created_at, updated_at) VALUES ('service', 'stack', 'service', 'ghcr.io/acme/app', 'latest', 'sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef', 'sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb', 0, '{}', '{}', '2026-04-30', '2026-04-30')",
             [],
         )?;
         conn.execute(
-            "INSERT INTO service_new_version_discoveries (service_id, image_ref, source_job_id, discovered_at, current_digest, current_display_tag, current_tag, candidate_tag, candidate_digest, candidate_display_tag) VALUES ('service', 'ghcr.io/acme/app:latest', 'check-runtime', '2026-04-30T00:00:00Z', 'sha256:current', '1.0.0', 'latest', '1.4.0', 'sha256:runtime', '1.4.0')",
+            "INSERT INTO service_new_version_discoveries (service_id, image_ref, source_job_id, discovered_at, current_digest, current_display_tag, current_tag, candidate_tag, candidate_digest, candidate_display_tag) VALUES ('service', 'ghcr.io/acme/app:latest', 'check-runtime', '2026-04-30T00:00:00Z', 'sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef', '1.0.0', 'latest', '1.4.0', 'sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb', '1.4.0')",
             [],
         )?;
         Ok(())
@@ -385,7 +394,7 @@ async fn runtime_candidate_with_discovery_history_is_not_reported_as_missing() {
     .unwrap();
     let mut input = candidate_input(
         "candidate-runtime",
-        "sha256:runtime",
+        "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
         "ready",
         "2026-04-30T00:00:00Z",
     );
@@ -406,7 +415,10 @@ async fn runtime_candidate_with_discovery_history_is_not_reported_as_missing() {
         1
     );
     let hydrated = db
-        .get_auto_update_candidate("service", "sha256:runtime")
+        .get_auto_update_candidate(
+            "service",
+            "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        )
         .await
         .unwrap()
         .unwrap();
@@ -418,7 +430,7 @@ async fn runtime_candidate_with_discovery_history_is_not_reported_as_missing() {
 
     db.call(|conn| {
         conn.execute(
-            "UPDATE auto_update_candidates SET image_ref = '   ', discovered_at = '', current_digest = '' WHERE service_id = 'service' AND candidate_digest = 'sha256:runtime'",
+            "UPDATE auto_update_candidates SET image_ref = '   ', discovered_at = '', current_digest = '' WHERE service_id = 'service' AND candidate_digest = 'sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb'",
             [],
         )?;
         Ok(())
@@ -429,12 +441,18 @@ async fn runtime_candidate_with_discovery_history_is_not_reported_as_missing() {
         .await
         .unwrap();
     let repaired = db
-        .get_auto_update_candidate("service", "sha256:runtime")
+        .get_auto_update_candidate(
+            "service",
+            "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        )
         .await
         .unwrap()
         .unwrap();
     assert_eq!(repaired.discovered_at, "2026-04-30T00:00:00Z");
-    assert_eq!(repaired.current_digest.as_deref(), Some("sha256:current"));
+    assert_eq!(
+        repaired.current_digest.as_deref(),
+        Some("sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef")
+    );
     assert_eq!(repaired.image_ref, "ghcr.io/acme/app");
     let repaired_updated_at = repaired.updated_at.clone();
 
@@ -442,7 +460,10 @@ async fn runtime_candidate_with_discovery_history_is_not_reported_as_missing() {
         .await
         .unwrap();
     let repeated = db
-        .get_auto_update_candidate("service", "sha256:runtime")
+        .get_auto_update_candidate(
+            "service",
+            "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        )
         .await
         .unwrap()
         .unwrap();
@@ -459,11 +480,11 @@ async fn awaiting_inference_candidate_is_selected_for_policy_reconciliation() {
             [],
         )?;
         conn.execute(
-            "INSERT INTO services (id, stack_id, name, image_ref, image_tag, current_digest, candidate_digest, auto_rollback, backup_targets_bind_paths_json, backup_targets_volume_names_json, created_at, updated_at) VALUES ('service', 'stack', 'service', 'ghcr.io/acme/app', 'latest', 'sha256:current', 'sha256:floating', 0, '{}', '{}', '2026-04-30', '2026-04-30')",
+            "INSERT INTO services (id, stack_id, name, image_ref, image_tag, current_digest, candidate_digest, auto_rollback, backup_targets_bind_paths_json, backup_targets_volume_names_json, created_at, updated_at) VALUES ('service', 'stack', 'service', 'ghcr.io/acme/app', 'latest', 'sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef', 'sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa', 0, '{}', '{}', '2026-04-30', '2026-04-30')",
             [],
         )?;
         conn.execute(
-            "INSERT INTO service_new_version_discoveries (service_id, image_ref, source_job_id, discovered_at, current_digest, current_display_tag, current_tag, candidate_tag, candidate_digest, candidate_display_tag) VALUES ('service', 'ghcr.io/acme/app:latest', 'check-floating', '2026-04-30T00:00:00Z', 'sha256:current', '1.0.0', 'latest', 'latest', 'sha256:floating', 'latest')",
+            "INSERT INTO service_new_version_discoveries (service_id, image_ref, source_job_id, discovered_at, current_digest, current_display_tag, current_tag, candidate_tag, candidate_digest, candidate_display_tag) VALUES ('service', 'ghcr.io/acme/app:latest', 'check-floating', '2026-04-30T00:00:00Z', 'sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef', '1.0.0', 'latest', 'latest', 'sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa', 'latest')",
             [],
         )?;
         Ok(())
@@ -493,7 +514,10 @@ async fn awaiting_inference_candidate_is_selected_for_policy_reconciliation() {
         .await
         .unwrap();
     let candidate = db
-        .get_auto_update_candidate("service", "sha256:floating")
+        .get_auto_update_candidate(
+            "service",
+            "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        )
         .await
         .unwrap()
         .unwrap();
