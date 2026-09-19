@@ -242,6 +242,16 @@ fn candidate_settlement_rejects_malformed_digest_evidence() {
 }
 
 #[test]
+fn malformed_candidate_digest_cannot_be_persisted_for_evaluation() {
+    assert!(!candidate_digest_is_valid(""));
+    assert!(!candidate_digest_is_valid("sha256:new"));
+    assert!(!candidate_digest_is_valid("not-a-digest"));
+    assert!(candidate_digest_is_valid(
+        "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    ));
+}
+
+#[test]
 fn candidate_settlement_rejects_strict_tags_without_digest_evidence() {
     let candidate = notify::NewVersionDiscoveredService {
         stack_id: "stack".to_string(),

@@ -375,6 +375,10 @@ fn pending_candidate(pending: &AutoUpdatePendingRow) -> notify::NewVersionDiscov
     }
 }
 
+fn candidate_digest_is_valid(candidate_digest: &str) -> bool {
+    crate::snapshot_worker::normalize_digest_identity(candidate_digest).is_some()
+}
+
 fn candidate_settlement_state(
     candidate: &notify::NewVersionDiscoveredService,
 ) -> (&'static str, Option<String>, Option<String>) {
@@ -385,7 +389,7 @@ fn candidate_settlement_state(
             Some("missing_candidate_evidence".to_string()),
         );
     }
-    if crate::snapshot_worker::normalize_digest_identity(&candidate.candidate_digest).is_none() {
+    if !candidate_digest_is_valid(&candidate.candidate_digest) {
         return (
             "unresolved",
             None,
@@ -1191,6 +1195,14 @@ async fn evaluate_candidate(
     candidate: &notify::NewVersionDiscoveredService,
     source: Option<&str>,
 ) -> anyhow::Result<()> {
+    if !candidate_digest_is_valid(&candidate.candidate_digest) {
+        tracing::warn!(
+            service_id = %candidate.service_id,
+            candidate_digest = %candidate.candidate_digest,
+            "ignoring auto update candidate with invalid digest identity"
+        );
+        return Ok(());
+    }
     if let Some(source) = source
         && is_qualified_auto_policy_source(Some(source))
         && !has_valid_auto_policy_source(
