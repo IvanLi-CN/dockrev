@@ -52,6 +52,7 @@ mod reconciliation_tests {
             &candidate,
             &rule,
             &history,
+            None,
         ));
         assert!(!version_lag_met(
             3,
@@ -59,6 +60,7 @@ mod reconciliation_tests {
             &candidate,
             &rule,
             &history,
+            None,
         ));
     }
 
@@ -119,6 +121,7 @@ mod reconciliation_tests {
             &candidate,
             &rule,
             &history,
+            None,
         ));
     }
 
