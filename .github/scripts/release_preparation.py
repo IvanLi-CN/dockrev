@@ -109,11 +109,16 @@ def workflow_runs_for_pr(
     result: list[dict[str, Any]] = []
     page = 1
     while True:
+        query = ["per_page=100", f"page={page}"]
+        if source_sha is not None:
+            query.append(f"head_sha={urllib.parse.quote(source_sha, safe='')}")
+        if required_event is not None:
+            query.append(f"event={urllib.parse.quote(required_event, safe='')}")
         runs = api_request(
             api_root,
             token,
             "GET",
-            f"/repos/{owner}/{name}/actions/workflows/{urllib.parse.quote(workflow_file, safe='')}/runs?per_page=100&page={page}",
+            f"/repos/{owner}/{name}/actions/workflows/{urllib.parse.quote(workflow_file, safe='')}/runs?{'&'.join(query)}",
         ).get("workflow_runs", [])
         result.extend(
             run for run in runs
@@ -188,7 +193,15 @@ def source_ci_ready(
         release_policy.validate_source_boundary(pull_request_changed_files(api_root, token, repository, pr_number))
     except release_policy.PolicyError as error:
         raise PreparationError(str(error)) from error
-    ci_runs = [run for run in workflow_runs_for_pr(api_root, token, repository, "ci-pr.yml", pr_number) if run.get("head_sha") == source_sha]
+    ci_runs = workflow_runs_for_pr(
+        api_root,
+        token,
+        repository,
+        "ci-pr.yml",
+        pr_number,
+        source_sha,
+        required_event="pull_request",
+    )
     if not any(run.get("status") == "completed" and run.get("conclusion") == "success" for run in ci_runs):
         raise PreparationError("source SHA does not have a successful complete CI (PR) run")
     label_runs = workflow_runs_for_pr(
@@ -262,6 +275,56 @@ def pull_requests(api_root: str, token: str, repository: str, state: str) -> lis
         if len(batch) < 100:
             return result
         page += 1
+
+
+def pull_request_release_identity_messages(
+    api_root: str, token: str, repository: str
+) -> list[dict[str, Any]]:
+    """Read release identity trailers for all main-targeting PR heads in batches."""
+    owner, name = repository_parts(repository)
+    query = """
+    query($owner: String!, $name: String!, $after: String) {
+      repository(owner: $owner, name: $name) {
+        pullRequests(first: 100, after: $after, states: [OPEN, CLOSED, MERGED], baseRefName: "main") {
+          nodes {
+            number
+            state
+            mergedAt
+            commits(last: 1) {
+              nodes { commit { message } }
+            }
+          }
+          pageInfo { hasNextPage endCursor }
+        }
+      }
+    }
+    """
+    result: list[dict[str, Any]] = []
+    after: str | None = None
+    while True:
+        connection = graphql(
+            api_root,
+            token,
+            query,
+            {"owner": owner, "name": name, "after": after},
+        ).get("repository", {}).get("pullRequests", {})
+        for pull in connection.get("nodes", []):
+            commits = pull.get("commits", {}).get("nodes", [])
+            message = commits[0].get("commit", {}).get("message") if commits else None
+            result.append(
+                {
+                    "number": pull.get("number"),
+                    "state": pull.get("state"),
+                    "merged_at": pull.get("mergedAt"),
+                    "message": message if isinstance(message, str) else "",
+                }
+            )
+        page_info = connection.get("pageInfo", {})
+        if not page_info.get("hasNextPage"):
+            return result
+        after = page_info.get("endCursor")
+        if not isinstance(after, str) or not after:
+            raise PreparationError("GitHub PR identity pagination cursor is invalid")
 
 
 def covered_product_boundary(api_root: str, token: str, repository: str, merge_sha: str) -> dict[str, Any]:
@@ -571,19 +634,19 @@ def reserve_tag(
             raise
         raise PreparationError(f"release tag {tag} already exists and cannot be reserved: {existing}")
 
-    for state in ("open", "closed"):
-        for pull in pull_requests(api_root, token, repository, state):
-            if pull.get("number") == pr_number or (state == "closed" and not pull.get("merged_at")):
-                continue
-            head_sha = pull.get("head", {}).get("sha", "")
-            if not re.fullmatch(r"[0-9a-f]{40}", head_sha):
-                continue
-            head_commit = api_request(api_root, token, "GET", f"/repos/{owner}/{name}/commits/{head_sha}")
-            trailers = release_policy.parse_trailers(head_commit.get("commit", {}).get("message", ""))
-            if trailers.get("Release-Mode") in {"normal-preparation", "version-only-release-pr"} and trailers.get("Product-Version") == version:
-                raise PreparationError(
-                    f"release version {version} is already reserved by PR #{pull.get('number')}"
-                )
+    for pull in pull_request_release_identity_messages(api_root, token, repository):
+        if pull.get("number") == pr_number or (
+            pull.get("state") == "CLOSED" and not pull.get("merged_at")
+        ):
+            continue
+        trailers = release_policy.parse_trailers(str(pull.get("message", "")))
+        if (
+            trailers.get("Release-Mode") in {"normal-preparation", "version-only-release-pr"}
+            and trailers.get("Product-Version") == version
+        ):
+            raise PreparationError(
+                f"release version {version} is already reserved by PR #{pull.get('number')}"
+            )
     return reserve_version_ref(
         api_root,
         token,
