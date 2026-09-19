@@ -90,7 +90,6 @@ CREATE INDEX IF NOT EXISTS idx_auto_update_candidates_service_discovered
 }
 
 include!("schema_auto_update_migrations.rs");
-
 fn apply_migration_0017_add_auto_update_candidate_projection_context(
     conn: &mut rusqlite::Connection,
 ) -> anyhow::Result<()> {

@@ -1317,6 +1317,78 @@ async fn unresolved_candidate_can_be_reopened_for_force_inference() {
     assert_eq!(candidate.policy_status.as_deref(), Some("waiting_inference"));
 }
 
+
+#[tokio::test]
+async fn lists_only_enqueued_auto_policy_jobs_for_recovery() {
+    let db = Db::open(Path::new(":memory:")).await.unwrap();
+    let pending = db
+        .reserve_auto_update_pending(
+            &AutoUpdatePendingInput {
+                id: "pending-recovery".to_string(),
+                policy_scope_type: "stack".to_string(),
+                policy_scope_id: "stack".to_string(),
+                rule_id: "rule".to_string(),
+                stack_id: "stack".to_string(),
+                service_id: "service".to_string(),
+                source_check_job_id: "check".to_string(),
+                candidate_tag: "latest".to_string(),
+                candidate_display_tag: "1.4.0".to_string(),
+                candidate_digest: "sha256:recovery".to_string(),
+                current_display_tag: "1.0.0".to_string(),
+                first_seen_at: "2026-04-30T00:00:00Z".to_string(),
+                due_at: "2026-04-30T00:00:00Z".to_string(),
+                min_age_seconds: 0,
+                min_version_lag: 0,
+                summary_json: serde_json::json!({}),
+                candidate_id: None,
+            },
+            "2026-04-30T00:00:00Z",
+        )
+        .await
+        .unwrap();
+    assert!(
+        db.try_claim_auto_update_pending(&pending.id, "2026-04-30T00:00:01Z")
+            .await
+            .unwrap()
+    );
+    db.insert_job(crate::api::types::JobListItem {
+        id: "recovery-job".to_string(),
+        r#type: crate::api::types::JobType::Update,
+        scope: crate::api::types::JobScope::Service,
+        stack_id: Some("stack".to_string()),
+        service_id: Some("service".to_string()),
+        status: "queued".to_string(),
+        created_by: "auto-policy".to_string(),
+        reason: "auto_policy".to_string(),
+        created_at: "2026-04-30T00:00:02Z".to_string(),
+        started_at: None,
+        finished_at: None,
+        allow_arch_mismatch: false,
+        backup_mode: "inherit".to_string(),
+        summary_json: serde_json::json!({
+            "mode": "apply",
+            "targets": []
+        }),
+    })
+    .await
+    .unwrap();
+    assert!(
+        db.mark_auto_update_pending_enqueued(
+            &pending.id,
+            "recovery-job",
+            "2026-04-30T00:00:03Z",
+        )
+        .await
+        .unwrap()
+    );
+
+    let jobs = db.list_enqueued_auto_update_jobs(10).await.unwrap();
+    assert_eq!(
+        jobs.iter().map(|job| job.id.as_str()).collect::<Vec<_>>(),
+        ["recovery-job"]
+    );
+}
+
 #[tokio::test]
 async fn corrupt_auto_policy_job_is_terminally_skipped() {
     let db = Db::open(Path::new(":memory:")).await.unwrap();
@@ -1423,76 +1495,5 @@ async fn corrupt_auto_policy_job_is_terminally_skipped() {
             .policy_status
             .as_deref(),
         Some("failed")
-    );
-}
-
-#[tokio::test]
-async fn lists_only_enqueued_auto_policy_jobs_for_recovery() {
-    let db = Db::open(Path::new(":memory:")).await.unwrap();
-    let pending = db
-        .reserve_auto_update_pending(
-            &AutoUpdatePendingInput {
-                id: "pending-recovery".to_string(),
-                policy_scope_type: "stack".to_string(),
-                policy_scope_id: "stack".to_string(),
-                rule_id: "rule".to_string(),
-                stack_id: "stack".to_string(),
-                service_id: "service".to_string(),
-                source_check_job_id: "check".to_string(),
-                candidate_tag: "latest".to_string(),
-                candidate_display_tag: "1.4.0".to_string(),
-                candidate_digest: "sha256:recovery".to_string(),
-                current_display_tag: "1.0.0".to_string(),
-                first_seen_at: "2026-04-30T00:00:00Z".to_string(),
-                due_at: "2026-04-30T00:00:00Z".to_string(),
-                min_age_seconds: 0,
-                min_version_lag: 0,
-                summary_json: serde_json::json!({}),
-                candidate_id: None,
-            },
-            "2026-04-30T00:00:00Z",
-        )
-        .await
-        .unwrap();
-    assert!(
-        db.try_claim_auto_update_pending(&pending.id, "2026-04-30T00:00:01Z")
-            .await
-            .unwrap()
-    );
-    db.insert_job(crate::api::types::JobListItem {
-        id: "recovery-job".to_string(),
-        r#type: crate::api::types::JobType::Update,
-        scope: crate::api::types::JobScope::Service,
-        stack_id: Some("stack".to_string()),
-        service_id: Some("service".to_string()),
-        status: "queued".to_string(),
-        created_by: "auto-policy".to_string(),
-        reason: "auto_policy".to_string(),
-        created_at: "2026-04-30T00:00:02Z".to_string(),
-        started_at: None,
-        finished_at: None,
-        allow_arch_mismatch: false,
-        backup_mode: "inherit".to_string(),
-        summary_json: serde_json::json!({
-            "mode": "apply",
-            "targets": []
-        }),
-    })
-    .await
-    .unwrap();
-    assert!(
-        db.mark_auto_update_pending_enqueued(
-            &pending.id,
-            "recovery-job",
-            "2026-04-30T00:00:03Z",
-        )
-        .await
-        .unwrap()
-    );
-
-    let jobs = db.list_enqueued_auto_update_jobs(10).await.unwrap();
-    assert_eq!(
-        jobs.iter().map(|job| job.id.as_str()).collect::<Vec<_>>(),
-        ["recovery-job"]
     );
 }
