@@ -99,12 +99,44 @@ async fn source_revalidation_requires_existing_successful_check_job() {
     .unwrap();
 
     assert!(
-        has_valid_auto_policy_source(&db, "schedule-check", "schedule")
+        has_valid_auto_policy_source(&db, "schedule-check", "schedule", None, None)
             .await
             .unwrap()
     );
     assert!(
-        !has_valid_auto_policy_source(&db, "missing-check", "schedule")
+        !has_valid_auto_policy_source(&db, "missing-check", "schedule", None, None)
+            .await
+            .unwrap()
+    );
+
+    assert!(auto_policy_source_identity_matches(
+        "SeRvIcE",
+        Some("stack"),
+        Some("service"),
+        Some("stack"),
+        Some("service"),
+    ));
+
+    db.insert_job(api::types::JobListItem {
+        id: "schedule-update".to_string(),
+        r#type: api::types::JobType::Update,
+        scope: JobScope::All,
+        stack_id: None,
+        service_id: None,
+        status: "success".to_string(),
+        created_by: "schedule".to_string(),
+        reason: "schedule".to_string(),
+        created_at: "2026-04-30T00:00:00Z".to_string(),
+        started_at: None,
+        finished_at: Some("2026-04-30T00:01:00Z".to_string()),
+        allow_arch_mismatch: false,
+        backup_mode: "inherit".to_string(),
+        summary_json: json!({}),
+    })
+    .await
+    .unwrap();
+    assert!(
+        !has_valid_auto_policy_source(&db, "schedule-update", "schedule", None, None)
             .await
             .unwrap()
     );
@@ -121,7 +153,8 @@ fn semver_is_fail_closed_until_digest_bound_version_exists() {
         current_display_tag: "1.0.0".to_string(),
         candidate_tag: "latest".to_string(),
         candidate_display_tag: "latest".to_string(),
-        candidate_digest: "sha256:new".to_string(),
+        candidate_digest: "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+            .to_string(),
     };
     let semver = rule(AutoUpdateMatcherType::Semver, ">=1, <2");
     assert!(!rule_matches_candidate(&semver, &candidate, None, None));
@@ -129,19 +162,21 @@ fn semver_is_fail_closed_until_digest_bound_version_exists() {
         &semver,
         &candidate,
         Some("1.4.0"),
-        None
+        None,
     ));
 
     let regex = rule(AutoUpdateMatcherType::Regex, "latest");
     assert!(rule_matches_candidate(&regex, &candidate, None, None));
 
-    let resolved_tags = vec!["latest".to_string(), "stable".to_string()];
     let stable = rule(AutoUpdateMatcherType::Glob, "stable");
+    assert!(!rule_matches_candidate(&stable, &candidate, None, None,));
+
+    let resolved_tags = vec!["1.4.0".to_string(), "stable".to_string()];
     assert!(rule_matches_candidate(
         &stable,
         &candidate,
-        None,
-        Some(resolved_tags.as_slice())
+        Some("1.4.0"),
+        Some(resolved_tags.as_slice()),
     ));
 }
 
@@ -156,7 +191,8 @@ fn candidate_settlement_requires_a_strict_or_digest_bound_version() {
         current_display_tag: "1.0.0".to_string(),
         candidate_tag: "latest".to_string(),
         candidate_display_tag: "latest".to_string(),
-        candidate_digest: "sha256:new".to_string(),
+        candidate_digest: "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+            .to_string(),
     };
     assert_eq!(
         candidate_settlement_state(&candidate).0,
@@ -172,6 +208,47 @@ fn candidate_settlement_requires_a_strict_or_digest_bound_version() {
     candidate.candidate_tag = "1.5.0".to_string();
     candidate.candidate_display_tag = "1.5.0".to_string();
     assert_eq!(candidate_settlement_state(&candidate).0, "ready");
+}
+
+#[test]
+fn candidate_settlement_rejects_malformed_digest_evidence() {
+    let mut candidate = notify::NewVersionDiscoveredService {
+        stack_id: "stack".to_string(),
+        service_id: "service".to_string(),
+        image_ref: "ghcr.io/acme/app".to_string(),
+        current_tag: "latest".to_string(),
+        current_digest: Some("sha256:old".to_string()),
+        current_display_tag: "1.0.0".to_string(),
+        candidate_tag: "1.5.0".to_string(),
+        candidate_display_tag: "1.5.0".to_string(),
+        candidate_digest: "sha256:new".to_string(),
+    };
+
+    assert_eq!(
+        candidate_settlement_state(&candidate),
+        (
+            "unresolved",
+            None,
+            Some("invalid_candidate_digest".to_string()),
+        )
+    );
+
+    candidate.candidate_digest = "not-a-digest".to_string();
+    assert_eq!(candidate_settlement_state(&candidate).0, "unresolved");
+    assert_eq!(
+        candidate_settlement_state(&candidate).2.as_deref(),
+        Some("invalid_candidate_digest")
+    );
+}
+
+#[test]
+fn malformed_candidate_digest_cannot_be_persisted_for_evaluation() {
+    assert!(!candidate_digest_is_valid(""));
+    assert!(!candidate_digest_is_valid("sha256:new"));
+    assert!(!candidate_digest_is_valid("not-a-digest"));
+    assert!(candidate_digest_is_valid(
+        "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    ));
 }
 
 #[test]

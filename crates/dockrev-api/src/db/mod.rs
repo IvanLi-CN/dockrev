@@ -10,6 +10,7 @@ use rusqlite::{OptionalExtension as _, TransactionBehavior, params};
 use tokio_rusqlite::Connection;
 
 mod auto_update;
+mod auto_update_hydration;
 mod backups;
 mod discovery;
 mod github_packages;
@@ -30,6 +31,20 @@ mod stacks_accepted_state;
 mod stacks_backup_targets;
 mod tag_history;
 mod update_stops;
+
+pub(super) fn canonical_digest_sql(column: &str) -> String {
+    format!(
+        "CASE WHEN NULLIF(TRIM({column}), '') IS NULL THEN NULL WHEN instr(lower(trim({column})), ':') = 0 THEN 'sha256:' || lower(trim({column})) ELSE lower(trim({column})) END"
+    )
+}
+
+pub(super) fn strict_canonical_digest_sql(column: &str) -> String {
+    let value = format!("lower(trim({column}))");
+    let payload = format!("substr({value}, 8)");
+    format!(
+        "CASE WHEN NULLIF(TRIM({column}), '') IS NULL THEN NULL WHEN length({value}) = 71 AND substr({value}, 1, 7) = 'sha256:' AND NOT ({payload} GLOB '*[^0-9a-f]*') THEN {value} WHEN length({value}) = 64 AND NOT ({value} GLOB '*[^0-9a-f]*') THEN 'sha256:' || {value} ELSE NULL END"
+    )
+}
 
 pub(super) fn summary_stack_ids(summary: &serde_json::Value) -> Vec<String> {
     summary
@@ -65,8 +80,8 @@ pub(super) fn append_management_entity_if_missing(
 pub(crate) use jobs::JobListFilters;
 pub(crate) use lifecycle_events::{ServiceLifecycleEventInput, ServiceLifecycleEventRow};
 pub(crate) use service_operations::{
-    AcceptedStateCasOutcome, ServiceAcceptedState, ServiceAcceptedStateSettlement,
-    ServiceOperationTarget,
+    AcceptedStateCasOutcome, AutoPolicyEnqueueGuard, ServiceAcceptedState,
+    ServiceAcceptedStateSettlement, ServiceOperationAcquireOutcome, ServiceOperationTarget,
 };
 pub(crate) use update_stops::UpdateStopRequestOutcome;
 
@@ -321,6 +336,7 @@ pub struct AutoUpdateCandidateSettlementInput {
     pub reason: Option<String>,
     pub last_error: Option<String>,
     pub attempts: u32,
+    pub evidence_generation: i64,
     pub retry_at: Option<String>,
     pub settled_at: Option<String>,
     pub now: String,
@@ -360,6 +376,8 @@ pub struct AutoUpdateCandidateRow {
     pub last_error: Option<String>,
     pub superseded_at: Option<String>,
     pub superseded_by_candidate_id: Option<String>,
+    pub hydration_origin: Option<String>,
+    pub evidence_generation: i64,
 }
 
 #[derive(Clone, Debug)]
@@ -416,6 +434,7 @@ pub struct DeployCheckReportSnapshotRow {
 pub struct NewVersionDiscoveryRow {
     pub service_id: String,
     pub image_ref: String,
+    pub source_job_id: String,
     pub discovered_at: String,
     pub current_digest: String,
     pub current_display_tag: String,

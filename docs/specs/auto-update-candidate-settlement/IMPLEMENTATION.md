@@ -7,7 +7,38 @@
 - 已实现候选事实表、幂等 settlement、digest-bound SemVer 门禁、策略重评估、重试/周期 reconciliation 和兼容 API/UI 投影；迁移对不可证明历史采用 fail-closed 处理。
 - 自动策略 update job 先持久化为 queued，再通过候选有效性 CAS 转为 running；候选替代会取消尚未启动的 queued job，并在 apply 尚未提交时请求停止已运行 job。
 - 候选来源以结构化 provenance 保存为 schedule、github_webhook 或 unknown；unknown 历史只保留审计，不获得自动部署授权。
-- Validation: local checks complete; the shared-testbox Compose smoke is partially blocked by the existing metrics migration error <code>retained rollups cannot be recovered after raw retention</code> during the Compose V1 rejection setup. The V2 plugin and standalone lifecycle portions passed before that blocker.
+- migration 0020 与运行时 hydration 从 discovery history 选择最早可信的成功 check observation；缺失 image、baseline、source job 或合格来源时生成 unresolved 的 `migration_ambiguous_history` 审计事实，并保持 source unknown。
+- hydration 只把 `sha256:` 加 64 位十六进制 payload，或 legacy 64 位纯十六进制 shorthand 的 digest 当作候选身份；任意 bare tag 或 malformed digest 不会因为 canonical fallback 获得 source provenance 或自动执行资格。当前 service candidate 的 canonical identity 即使对应历史不完整，也会先 supersede 旧 candidate/pending。
+- migration `0026_reject_invalid_auto_update_digest_identity` 对旧数据库中的 malformed candidate/pending/service digest 统一 fail-closed：queued auto-policy job 取消，running job 只写入 stop control，pending 标记 skipped，candidate 标记 unresolved，service candidate identity 清空；它不创建候选或执行任何 Compose side effect。
+- strict digest identity 校验只接受 `sha256:` 加 64 位十六进制 payload，或 legacy 64 位纯十六进制 shorthand；普通 operational candidate 查询继续兼容既有 opaque legacy 行，strict 边界仅用于 hydration、migration、diagnostic 和 provenance safety checks。
+- migration 0022 对已执行旧 migration 的 active pending 重新应用相同的 Check、成功状态、授权 creator/source pairing 与 scope identity 门禁；不合格的 queued job 会取消，running job 只写入 stop control，pending 保留 `migration_ambiguous_history` 审计结果。
+- hydration 事务只创建 candidate fact、supersede 旧候选和跳过旧 pending；启动/周期 reconciliation 随后复用现有 evaluator 与 claim safety，不直接执行 Compose。
+- policy reconciliation 显式包含 `awaiting_inference` candidate；SemVer evaluator 仍返回 waiting 状态并保持无 pending/update job 的 fail-closed 语义。
+- hydration diagnostic 仅在当前 digest 没有 candidate row 且存在 discovery history 时报告 `candidate_missing`；已有运行时 candidate 不会被错误报告为缺失。
+- 自动策略 job 插入事务内重新确认 service current digest、effective policy 更新时间与 rule、candidate source provenance，并以 candidate/pending/policy scope 的完整 context 做原子 enqueue guard；缺少 candidate provenance 时 fail-closed，不回退到 digest-only 插入路径。pending claim 与 enqueue 共同要求成功 Check、授权 source/creator pairing 和稳定的 scope identity，避免 stale candidate、策略变化或非 Check source 获得执行授权。
+- enqueue 回写若发现 pending 已被 supersede/skipped，会取消仍处于 queued 的 auto-policy job；若 job 已进入 running，则在 apply 未提交时写入 stop control，覆盖 pending 与 job 关联尚未落库的竞态窗口。
+- `JobScope` source scope 解析对大小写不敏感，与 migration predicate 保持一致；不合格的历史 queued/running action 分别取消或写入 stop control，保留 `migration_ambiguous_history` 审计原因。
+- inference 开始时以原子递增 `settlement_generation` 发出唯一 evidence CAS token；settlement 只能提交与当前 token 精确匹配的 generation，迟到的旧 inference 结果不能覆盖更新的 retry 或 ready 结果。
+- recovery queued auto-policy job 在恢复执行前重新验证成功 Check、schedule/GHCR webhook provenance、creator/scope identity、candidate target digest、expected current digest、当前 service digest、candidate 和 policy；缺少任一基线则 fail-closed，不能绕过 source/current-digest 门禁。
+- ambiguous hydration 不伪造 `source_job_id` 或 `discovered_at`；这些缺失值在候选事实和 API diagnostic 中保持为空，`migration_ambiguous_history` 只作为不可执行的审计原因。
+- queued recovery 必须同时匹配 pending 的 candidate identity、service scope、唯一 target、当前 service tag、candidate digest 和 expected current digest；缺失 candidate 绑定、target tag 或 scope/target service 不一致都会取消 queued action。
+- queued recovery 的 fail-closed 取消和损坏历史都保留 `migration_ambiguous_history` audit reason；普通运行时 claim 仍使用 `policy_changed_before_start`，不混淆两类来源。
+- hydration supersession 对已有或新建的 running stop-control 都写入 `auto-policy-supersession`，并尊重已提交 apply 的保护条件。
+- hydration supersession 使用数据库实际返回的 current candidate id，兼容运行时创建的非默认 candidate id，避免写入悬空的 `superseded_by_candidate_id`。
+- hydration 会恢复所有 qualifying discovery history 的 digest，并以当前 service candidate 统一 supersede 非当前历史 candidate，确保旧 pending/action 不能因迁移只看到当前 digest 而重新执行。
+- candidate identity 在 hydration 分组、upsert、settlement、inference、policy projection 和诊断查询边界统一使用共享 digest 规整，避免 legacy 大小写或缺省 `sha256:` 前缀制造重复候选。
+- migration `0024_normalize_auto_update_digest_identity` applies the same digest identity rule to services, candidates and pending rows. It first consolidates equivalent active pending rows before canonicalization, preserves the enqueued row with the strongest existing action, skips duplicate pending facts, cancels duplicate queued auto-policy jobs, and writes stop controls for duplicate running jobs. Reopening the database does not create another action.
+- migration `0024_normalize_auto_update_digest_identity` also consolidates candidate rows before writing canonical digests: it prefers the explicit canonical `sha256:` representation when equivalent legacy rows collide, then chooses a deterministic keeper, rebinds pending rows and existing `superseded_by_candidate_id` history references to that keeper, cancels or stop-controls duplicate candidate actions that have no retained active pending row, and removes duplicate candidate facts so the existing unique key represents canonical identity.
+- Before removing an equivalent candidate row, migration `0024` merges the earliest qualified `sourceJobId`/`source`/`discoveredAt`, the strongest settlement facts, and any still-active policy action projection into the deterministic keeper. Reserve, current claim, and latest-candidate reads all use the same canonical digest identity expression.
+- migration `0025_normalize_new_version_notification_digest_identity` canonicalizes notification digests, preserves the sent active row when equivalent active notification records collide, marks the other active rows superseded with an audit reason, and keeps repeated startup migration idempotent. Notification reservation and current-service checks use the same canonical digest normalizer.
+- legacy candidate backfill in migration `0014` accepts only a successful `check` whose schedule or GitHub webhook creator/source pairing and service/stack/all scope match the pending service; incomplete or non-check history is skipped and its queued/running action is cancelled or stop-controlled before the pending row is marked ambiguous.
+- queued auto-policy recovery uses the same canonical digest expression for service, candidate, pending, target and expected-current-digest comparisons, so a prefixless or case-variant target cannot be rejected or accepted differently from enqueue identity.
+- stale enqueuing recovery canonicalizes the persisted target digest before matching an existing auto-policy job; a case-variant or prefixless target is therefore recovered exactly once instead of reopening the same pending action.
+- active pending uniqueness and migration deduplication include the effective policy scope type and id. Migration `0024` drops the legacy scope-blind partial index before canonicalization, preserves distinct service/stack actions, then recreates the scoped index.
+- Regex/Glob policy evaluation and version-lag calculation consume only the candidate display tag followed by the raw tag. Other exact-digest snapshot aliases remain evidence for settlement/API display and cannot independently authorize a policy match.
+- discovery history is ordered by `discovered_at ASC, id ASC` before canonical digest grouping; hydration selects the earliest complete, source-qualified observation and never replaces its first `discovered_at` with a later duplicate observation. Current-candidate supersession is evaluated against every observation in the digest group so an incomplete earliest row cannot hide a later current identity.
+- current-digest CAS and hydration diagnostics also use the shared canonical digest SQL, so legacy prefixless and case-variant digests cannot bypass service identity checks or hide a missing candidate.
+- Validation: the focused Rust regression suite, `cargo check -p dockrev-api`, formatting and diff checks pass. The shared-testbox Compose smoke built the current binary and passed the plugin and standalone lifecycle modes; the Compose V1 rejection mode timed out waiting for health and did not produce a summary, matching the existing metrics migration blocker (<code>retained rollups cannot be recovered after raw retention</code>) recorded below.
 
 ## 实现顺序
 
@@ -47,18 +78,26 @@
 ### M5：API、UI、通知与历史
 
 - API 增加 candidate settlement 与 policy action 的可选字段，保持既有 payload 兼容。
+- Candidate settlement 增加可选 `source`、`sourceJobId`、`hydrationOrigin`；Service/Stack/Overview 增加只读 `candidateHydration` diagnostic。
 - UI 区分 inference waiting、unresolved、rule not matched、delayed、queued/running/completed。
+- UI 区分 candidate missing、hydrated 与 ambiguous history，并展示 source、source job 与 hydration origin。
 - SemVer preview 与后端严格解析语义一致。
 - 通知和历史读取 canonical settlement，并按 service + digest 去重。
 - 保持原始 job summary 不可变，把 settlement 作为独立事实展示。
 
 ### M6：迁移与有限补偿
 
-- 从 active pending、可证明的发现记录和现有 snapshot 建立 candidate 初始状态。
+- 从 active pending 与可证明的 discovery history 建立 candidate 初始状态；0020 保存 `hydration_origin=discovery_history` 及 source job provenance。
 - 对来源可证明为 schedule/GHCR webhook 且有 discoveredAt、仍是最新 digest 的候选执行一次有限 reconciliation。
 - 迁移恢复严格 SemVer 或 digest-bound display evidence；floating/不可解析版本保持等待或 unresolved，只有当前服务 candidate digest 才能保留 active authorization。
-- 来源不明、时间缺失、已 superseded 或历史终态记录不自动补发 update job。
+- 来源不明、image/baseline/source job/time 缺失、已 superseded 或历史终态记录不自动补发 update job；当前 digest 的不完整历史保留 `migration_ambiguous_history` audit reason。
+- 对同一 candidate 的 inference settlement 使用单调递增 `settlement_generation` token 做条件更新；reconciliation 先原子 claim 当前 generation，再以精确 token 写入证据，旧 worker 的迟到结果保持幂等且不可覆盖新状态。
+- recovery 只允许通过与正常 enqueue 相同的 provenance、scope、candidate target/current digest 和 policy 校验；历史 queued action 缺少 persisted current-digest baseline 时直接跳过并保留 `migration_ambiguous_history` 审计原因。
+- hydration 按 service + digest 处理完整 discovery history，再根据 service 当前 candidate digest supersede 旧候选；重复 migration、启动 hydration 和周期 reconciliation 不增加 candidate、pending 或 update job。
+- migration `0024_normalize_auto_update_digest_identity` 在旧数据库上先处理 active pending 的等价 digest 冲突，再处理候选重复行并 canonicalize service/candidate/pending identity；candidate keeper 选择是确定性的，pending 会重绑到 keeper，无保留 active pending 的重复 action 会取消或写 stop control，重复 candidate fact 会移除，重复打开数据库保持幂等。
+- migration `0014` 的 legacy pending 回填与 runtime claim 共用成功 Check、schedule/GitHub webhook creator/source pairing 和 service/stack/all scope identity 门禁；queued recovery 的 service、candidate、target digest 也共用 canonical identity SQL。active pending 的唯一性同时覆盖 effective policy scope，避免 service 与 stack policy 的同 digest action 互相吞并。
 - 迁移脚本必须可重复执行，且不能把历史通知直接转换成新的自动部署授权。
+- migration `0025` 只重写通知身份和历史状态，不创建 candidate、pending 或 update job，也不改变通知发送 side effect；重复启动只保留一个等价 digest 的 active notification。
 
 ## 计划修改边界
 
@@ -160,6 +199,7 @@ reload candidate and evaluate current policy
 - superseded candidate and old pending tests；
 - delay/lag/policy-change tests；
 - API serialization and backward-compatibility tests。
+- runtime candidate hydration diagnostics and awaiting-inference reconciliation regression tests。
 
 ### Web validation
 
@@ -187,4 +227,4 @@ reload candidate and evaluate current policy
 - [x] API/UI states are distinguishable from inference readiness.
 - [x] Notification/history/API consume the same settlement.
 - [x] Existing updater safety boundaries remain intact.
-- [ ] Implementation-level validation and rollout evidence are complete. Local Rust tests and Clippy are complete; the shared-testbox Compose smoke remains blocked by the metrics migration error recorded above.
+- [ ] Implementation-level validation and rollout evidence are complete. Local focused Rust checks and Clippy are complete; the shared-testbox Compose smoke still needs the existing metrics migration blocker resolved or explicitly waived before this item can be checked.

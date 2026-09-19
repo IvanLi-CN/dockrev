@@ -494,6 +494,7 @@ fn homepage_nav_service_from_row(
                 ..VersionInferenceState::default()
             }),
             candidate_settlement: None,
+            candidate_hydration: None,
             auto_update: None,
             new_version_discovery_count: None,
             settings: ServiceSettings {

@@ -1,10 +1,135 @@
+use rusqlite::Transaction;
+
+fn cancel_stale_auto_policy_job(
+    tx: &Transaction<'_>,
+    update_job_id: &str,
+    now: &str,
+) -> rusqlite::Result<()> {
+    tx.execute(
+        r#"
+UPDATE jobs
+SET status = 'cancelled', finished_at = ?2
+WHERE id = ?1 AND status = 'queued' AND created_by = 'auto-policy'
+"#,
+        params![update_job_id, now],
+    )?;
+    tx.execute(
+        r#"
+INSERT INTO update_job_stop_controls (
+  job_id, stop_requested_at, stop_requested_by, updated_at
+)
+SELECT ?1, ?2, 'auto-policy-policy-change', ?2
+WHERE EXISTS (
+  SELECT 1 FROM jobs
+  WHERE id = ?1 AND status = 'running' AND created_by = 'auto-policy'
+)
+ON CONFLICT(job_id) DO UPDATE SET
+  stop_requested_at = COALESCE(update_job_stop_controls.stop_requested_at, excluded.stop_requested_at),
+  stop_requested_by = COALESCE(update_job_stop_controls.stop_requested_by, excluded.stop_requested_by),
+  updated_at = excluded.updated_at
+WHERE update_job_stop_controls.apply_committed_at IS NULL
+  AND update_job_stop_controls.stop_requested_at IS NULL
+"#,
+        params![update_job_id, now],
+    )?;
+    Ok(())
+}
+
+fn insert_auto_update_pending_if_missing(
+    tx: &Transaction<'_>,
+    input: &AutoUpdatePendingInput,
+    now: &str,
+) -> anyhow::Result<()> {
+    tx.execute(
+        r#"
+INSERT OR IGNORE INTO auto_update_pending (
+  id, policy_scope_type, policy_scope_id, rule_id, stack_id, service_id,
+  source_check_job_id, candidate_tag, candidate_display_tag, candidate_digest,
+  current_display_tag, current_digest, first_seen_at, due_at, min_age_seconds,
+  min_version_lag, status, created_at, updated_at, candidate_id, summary_json
+) SELECT ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11,
+         NULLIF(TRIM(json_extract(CASE WHEN json_valid(?19) THEN ?19 ELSE '{}' END, '$.currentDigest')), ''),
+         ?12, ?13, ?14, ?15, 'pending', ?16, ?17,
+         CASE WHEN ?18 IS NULL OR EXISTS (
+           SELECT 1 FROM auto_update_candidates c
+           WHERE c.id = ?18 AND c.service_id = ?6 AND c.candidate_digest = ?10
+         ) THEN ?18 ELSE NULL END,
+         ?19
+WHERE NOT EXISTS (
+  SELECT 1 FROM auto_update_pending existing
+  WHERE existing.service_id = ?6 AND existing.rule_id = ?4
+    AND existing.candidate_digest = ?10
+    AND LOWER(TRIM(existing.policy_scope_type)) = LOWER(TRIM(?2))
+    AND LOWER(TRIM(existing.policy_scope_id)) = LOWER(TRIM(?3))
+    AND existing.status IN ('pending', 'enqueuing', 'enqueued')
+)
+"#,
+        params![
+            input.id,
+            input.policy_scope_type,
+            input.policy_scope_id,
+            input.rule_id,
+            input.stack_id,
+            input.service_id,
+            input.source_check_job_id,
+            input.candidate_tag,
+            input.candidate_display_tag,
+            input.candidate_digest,
+            input.current_display_tag,
+            input.first_seen_at,
+            input.due_at,
+            input.min_age_seconds as i64,
+            input.min_version_lag as i64,
+            now,
+            now,
+            input.candidate_id,
+            serde_json::to_string(&input.summary_json)?,
+        ],
+    )?;
+    Ok(())
+}
+
 impl Db {
+    pub async fn hydrate_auto_update_candidates(&self, now: &str) -> anyhow::Result<usize> {
+        let now = now.to_string();
+        self.call(move |conn| {
+            let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
+            let hydrated = super::auto_update_hydration::hydrate_auto_update_candidates_tx(
+                &tx, &now,
+            )?;
+            tx.commit()?;
+            Ok(hydrated.len())
+        })
+        .await
+        .context("hydrate auto update candidates")
+    }
+
+    pub async fn list_candidate_hydration_diagnostics(
+        &self,
+        service_ids: &[String],
+    ) -> anyhow::Result<Vec<super::auto_update_hydration::CandidateHydrationDiagnosticRow>> {
+        let service_ids = service_ids.to_vec();
+        self.call(move |conn| {
+            Ok(super::auto_update_hydration::list_candidate_hydration_diagnostics_conn(
+                conn,
+                &service_ids,
+            )?)
+        })
+        .await
+        .context("list auto update candidate hydration diagnostics")
+    }
+
     pub async fn upsert_auto_update_candidate(
         &self,
         input: &AutoUpdateCandidateInput,
         now: &str,
     ) -> anyhow::Result<AutoUpdateCandidateRow> {
-        let input = input.clone();
+        let mut input = input.clone();
+        let original_digest = input.candidate_digest.clone();
+        input.candidate_digest = canonical_auto_update_digest(&original_digest);
+        if input.id == format!("{}:{original_digest}", input.service_id) {
+            input.id = format!("{}:{}", input.service_id, input.candidate_digest);
+        }
         let now = now.to_string();
         let settled_at =
             matches!(input.status.as_str(), "ready" | "unresolved").then(|| now.clone());
@@ -44,16 +169,55 @@ ON CONFLICT(service_id, candidate_digest) DO UPDATE SET
   END,
   retry_at = COALESCE(excluded.retry_at, auto_update_candidates.retry_at),
   source_job_id = CASE
-    WHEN excluded.source IN ('schedule', 'github_webhook')
+    WHEN LOWER(TRIM(auto_update_candidates.source)) IN ('schedule', 'github_webhook')
+      AND NULLIF(TRIM(auto_update_candidates.source_job_id), '') IS NOT NULL
+      AND NULLIF(TRIM(auto_update_candidates.discovered_at), '') IS NOT NULL
+      AND (
+        LOWER(TRIM(excluded.source)) NOT IN ('schedule', 'github_webhook')
+        OR NULLIF(TRIM(excluded.source_job_id), '') IS NULL
+        OR NULLIF(TRIM(excluded.discovered_at), '') IS NULL
+        OR auto_update_candidates.discovered_at <= excluded.discovered_at
+      )
+      THEN auto_update_candidates.source_job_id
+    WHEN LOWER(TRIM(excluded.source)) IN ('schedule', 'github_webhook')
+      AND NULLIF(TRIM(excluded.source_job_id), '') IS NOT NULL
+      AND NULLIF(TRIM(excluded.discovered_at), '') IS NOT NULL
       THEN excluded.source_job_id
     ELSE auto_update_candidates.source_job_id
   END,
   source = CASE
-    WHEN excluded.source IN ('schedule', 'github_webhook')
-      THEN excluded.source
-    WHEN auto_update_candidates.source IS NULL OR auto_update_candidates.source = 'unknown'
+    WHEN LOWER(TRIM(auto_update_candidates.source)) IN ('schedule', 'github_webhook')
+      AND NULLIF(TRIM(auto_update_candidates.source_job_id), '') IS NOT NULL
+      AND NULLIF(TRIM(auto_update_candidates.discovered_at), '') IS NOT NULL
+      AND (
+        LOWER(TRIM(excluded.source)) NOT IN ('schedule', 'github_webhook')
+        OR NULLIF(TRIM(excluded.source_job_id), '') IS NULL
+        OR NULLIF(TRIM(excluded.discovered_at), '') IS NULL
+        OR auto_update_candidates.discovered_at <= excluded.discovered_at
+      )
+      THEN auto_update_candidates.source
+    WHEN LOWER(TRIM(excluded.source)) IN ('schedule', 'github_webhook')
+      AND NULLIF(TRIM(excluded.source_job_id), '') IS NOT NULL
+      AND NULLIF(TRIM(excluded.discovered_at), '') IS NOT NULL
       THEN excluded.source
     ELSE auto_update_candidates.source
+  END,
+  discovered_at = CASE
+    WHEN LOWER(TRIM(auto_update_candidates.source)) IN ('schedule', 'github_webhook')
+      AND NULLIF(TRIM(auto_update_candidates.source_job_id), '') IS NOT NULL
+      AND NULLIF(TRIM(auto_update_candidates.discovered_at), '') IS NOT NULL
+      AND (
+        LOWER(TRIM(excluded.source)) NOT IN ('schedule', 'github_webhook')
+        OR NULLIF(TRIM(excluded.source_job_id), '') IS NULL
+        OR NULLIF(TRIM(excluded.discovered_at), '') IS NULL
+        OR auto_update_candidates.discovered_at <= excluded.discovered_at
+      )
+      THEN auto_update_candidates.discovered_at
+    WHEN LOWER(TRIM(excluded.source)) IN ('schedule', 'github_webhook')
+      AND NULLIF(TRIM(excluded.source_job_id), '') IS NOT NULL
+      AND NULLIF(TRIM(excluded.discovered_at), '') IS NOT NULL
+      THEN excluded.discovered_at
+    ELSE auto_update_candidates.discovered_at
   END,
   current_tag = excluded.current_tag,
   current_display_tag = excluded.current_display_tag,
@@ -100,7 +264,7 @@ ON CONFLICT(service_id, candidate_digest) DO UPDATE SET
         candidate_digest: &str,
     ) -> anyhow::Result<Option<AutoUpdateCandidateRow>> {
         let service_id = service_id.to_string();
-        let candidate_digest = candidate_digest.to_string();
+        let candidate_digest = canonical_auto_update_digest(candidate_digest);
         self.call(move |conn| {
             Ok(conn.query_row(
                 &format!("SELECT {AUTO_UPDATE_CANDIDATE_COLUMNS} FROM auto_update_candidates WHERE service_id = ?1 AND candidate_digest = ?2"),
@@ -117,7 +281,8 @@ ON CONFLICT(service_id, candidate_digest) DO UPDATE SET
         &self,
         input: &AutoUpdateCandidateSettlementInput,
     ) -> anyhow::Result<Option<AutoUpdateCandidateRow>> {
-        let input = input.clone();
+        let mut input = input.clone();
+        input.candidate_digest = canonical_auto_update_digest(&input.candidate_digest);
         let resolved_tags = input
             .resolved_tags
             .as_ref()
@@ -135,7 +300,8 @@ SET status = ?3,
     attempts = ?8,
     retry_at = ?9,
     settled_at = ?10,
-    updated_at = ?11
+    updated_at = ?11,
+    settlement_generation = ?12
 WHERE service_id = ?1 AND candidate_digest = ?2
   AND status <> 'superseded'
   AND (
@@ -162,6 +328,12 @@ WHERE service_id = ?1 AND candidate_digest = ?2
       AND (settled_at IS NULL OR ?10 > settled_at)
     )
   )
+  AND (
+    ?3 <> 'awaiting_inference'
+    OR ?8 > attempts
+    OR (?8 = attempts AND ?11 >= updated_at)
+  )
+  AND ?12 = settlement_generation
 "#,
                 params![
                     input.service_id,
@@ -175,6 +347,7 @@ WHERE service_id = ?1 AND candidate_digest = ?2
                     input.retry_at,
                     input.settled_at,
                     input.now,
+                    input.evidence_generation,
                 ],
             )?;
             if changed == 0 {
@@ -191,6 +364,42 @@ WHERE service_id = ?1 AND candidate_digest = ?2
         .context("settle auto update candidate")
     }
 
+    pub async fn begin_auto_update_candidate_inference(
+        &self,
+        service_id: &str,
+        candidate_digest: &str,
+        now: &str,
+    ) -> anyhow::Result<Option<AutoUpdateCandidateRow>> {
+        let service_id = service_id.to_string();
+        let candidate_digest = canonical_auto_update_digest(candidate_digest);
+        let now = now.to_string();
+        self.call(move |conn| {
+            let changed = conn.execute(
+                r#"
+UPDATE auto_update_candidates
+SET settlement_generation = settlement_generation + 1,
+    updated_at = ?3
+WHERE service_id = ?1
+  AND candidate_digest = ?2
+  AND status = 'awaiting_inference'
+"#,
+                params![service_id, candidate_digest, now],
+            )?;
+            if changed == 0 {
+                return Ok(None);
+            }
+            Ok(conn
+                .query_row(
+                    &format!("SELECT {AUTO_UPDATE_CANDIDATE_COLUMNS} FROM auto_update_candidates WHERE service_id = ?1 AND candidate_digest = ?2"),
+                    params![service_id, candidate_digest],
+                    map_auto_update_candidate_row,
+                )
+                .optional()?)
+        })
+        .await
+        .context("begin auto update candidate inference")
+    }
+
     pub async fn supersede_auto_update_candidates(
         &self,
         service_id: &str,
@@ -200,13 +409,19 @@ WHERE service_id = ?1 AND candidate_digest = ?2
         now: &str,
     ) -> anyhow::Result<usize> {
         let service_id = service_id.to_string();
-        let candidate_digest = candidate_digest.to_string();
+        let candidate_digest = canonical_auto_update_digest(candidate_digest);
         let candidate_id = candidate_id.to_string();
         let now = now.to_string();
         self.call(move |conn| {
             let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
+            let candidate_digest_expr = super::canonical_digest_sql("candidate_digest");
+            let service_candidate_digest = super::canonical_digest_sql("s.candidate_digest");
+            let replacement_digest = super::canonical_digest_sql("replacement.candidate_digest");
+            let pending_digest = super::canonical_digest_sql("p.candidate_digest");
+            let joined_candidate_digest = super::canonical_digest_sql("c.candidate_digest");
             let mut superseded = tx.execute(
-                r#"
+                &format!(
+                    r#"
 UPDATE auto_update_candidates
 SET status = 'superseded',
     reason = 'newer_candidate',
@@ -217,17 +432,19 @@ SET status = 'superseded',
     updated_at = ?3,
     superseded_at = ?3,
     superseded_by_candidate_id = ?4
-WHERE service_id = ?1 AND candidate_digest <> ?2
+WHERE service_id = ?1 AND {candidate_digest_expr} <> ?2
   AND status IN ('awaiting_inference', 'ready', 'unresolved')
   AND EXISTS (
     SELECT 1 FROM services s
-    WHERE s.id = ?1 AND s.candidate_digest = ?2
+    WHERE s.id = ?1 AND {service_candidate_digest} = ?2
   )
 "#,
+                ),
                 params![service_id, candidate_digest, now, candidate_id],
             )?;
             superseded += tx.execute(
-                r#"
+                &format!(
+                    r#"
 UPDATE auto_update_candidates
 SET status = 'superseded',
     reason = 'candidate_not_current',
@@ -242,35 +459,37 @@ SET status = 'superseded',
       FROM services s
       JOIN auto_update_candidates replacement
         ON replacement.service_id = s.id
-       AND replacement.candidate_digest = s.candidate_digest
+       AND {replacement_digest} = {service_candidate_digest}
       WHERE s.id = ?1
     )
 WHERE id = ?4
   AND service_id = ?1
-  AND candidate_digest = ?2
+  AND {candidate_digest_expr} = ?2
   AND status IN ('awaiting_inference', 'ready', 'unresolved')
   AND EXISTS (
     SELECT 1
     FROM services s
     WHERE s.id = ?1
-      AND (s.candidate_digest IS NULL OR s.candidate_digest <> ?2)
+      AND (s.candidate_digest IS NULL OR {service_candidate_digest} <> ?2)
   )
 "#,
+                ),
                 params![service_id, candidate_digest, now, candidate_id],
             )?;
 
             let pending_rows = {
-                let mut stmt = tx.prepare(r#"
+                let mut stmt = tx.prepare(&format!(r#"
 SELECT p.id, p.update_job_id, p.summary_json, j.status
 FROM auto_update_pending p
 JOIN auto_update_candidates c
-  ON c.service_id = p.service_id AND c.candidate_digest = p.candidate_digest
+  ON c.service_id = p.service_id AND {joined_candidate_digest} = {pending_digest}
 LEFT JOIN jobs j ON j.id = p.update_job_id
 WHERE p.service_id = ?1
   AND p.status IN ('pending', 'enqueuing', 'enqueued')
   AND c.status = 'superseded'
-  AND (p.candidate_digest <> ?2 OR c.id = ?3)
-"#)?;
+  AND ({pending_digest} <> ?2 OR c.id = ?3)
+"#
+                ))?;
                 stmt.query_map(
                     params![service_id, candidate_digest, candidate_id],
                     |row| {
@@ -310,13 +529,19 @@ WHERE id = ?1 AND status = 'queued' AND created_by = 'auto-policy'
                     if update_job_status.as_deref() == Some("running") {
                         tx.execute(
                             r#"
-UPDATE update_job_stop_controls
-SET stop_requested_at = ?2,
-    stop_requested_by = 'auto-policy-supersession',
-    updated_at = ?2
-WHERE job_id = ?1
-  AND stop_requested_at IS NULL
-  AND apply_committed_at IS NULL
+INSERT INTO update_job_stop_controls (
+  job_id, stop_requested_at, stop_requested_by, updated_at
+)
+SELECT ?1, ?2, 'auto-policy-supersession', ?2
+WHERE EXISTS (
+  SELECT 1 FROM jobs WHERE id = ?1 AND status = 'running'
+)
+ON CONFLICT(job_id) DO UPDATE SET
+  stop_requested_at = COALESCE(update_job_stop_controls.stop_requested_at, excluded.stop_requested_at),
+  stop_requested_by = COALESCE(update_job_stop_controls.stop_requested_by, excluded.stop_requested_by),
+  updated_at = excluded.updated_at
+WHERE update_job_stop_controls.apply_committed_at IS NULL
+  AND update_job_stop_controls.stop_requested_at IS NULL
 "#,
                             params![update_job_id, now],
                         )?;
@@ -337,8 +562,11 @@ WHERE job_id = ?1
         let service_ids = service_ids.to_vec();
         self.call(move |conn| {
             let mut out = Vec::new();
+            let candidate_digest = super::canonical_digest_sql("c.candidate_digest");
+            let service_digest = super::canonical_digest_sql("s.candidate_digest");
+            let current_digest = super::canonical_digest_sql("s.current_digest");
             let mut stmt = conn.prepare(
-                "SELECT c.id, c.stack_id, c.service_id, c.image_ref, c.raw_tag, c.candidate_digest, c.resolved_version, c.resolved_tags, c.status, c.reason, c.attempts, c.retry_at, c.discovered_at, c.source_job_id, c.source, c.current_tag, c.current_display_tag, c.current_digest, c.settled_at, c.created_at, c.updated_at, c.policy_status, c.policy_reason, c.policy_rule_id, c.policy_evaluated_at, c.policy_scope_type, c.policy_scope_id, c.update_job_id, c.last_error, c.superseded_at, c.superseded_by_candidate_id FROM auto_update_candidates c JOIN services s ON s.id = c.service_id WHERE c.service_id = ?1 AND (s.candidate_digest = c.candidate_digest OR (s.candidate_digest IS NULL AND c.policy_status = 'completed' AND s.current_digest = c.candidate_digest)) ORDER BY c.discovered_at DESC, c.id DESC LIMIT 1",
+                &format!("SELECT {AUTO_UPDATE_CANDIDATE_COLUMNS_QUALIFIED} FROM auto_update_candidates c JOIN services s ON s.id = c.service_id WHERE c.service_id = ?1 AND ({service_digest} = {candidate_digest} OR (s.candidate_digest IS NULL AND c.policy_status = 'completed' AND {current_digest} = {candidate_digest})) ORDER BY c.discovered_at DESC, c.id DESC LIMIT 1"),
             )?;
             for service_id in service_ids {
                 if let Ok(row) = stmt.query_row(params![service_id], map_auto_update_candidate_row) {
@@ -357,7 +585,7 @@ WHERE job_id = ?1
         candidate_digest: &str,
     ) -> anyhow::Result<Vec<AutoUpdateCandidateRow>> {
         let image_ref = image_ref.to_string();
-        let candidate_digest = candidate_digest.to_string();
+        let candidate_digest = canonical_auto_update_digest(candidate_digest);
         self.call(move |conn| {
             let mut stmt = conn.prepare(&format!(
                 "SELECT {AUTO_UPDATE_CANDIDATE_COLUMNS} FROM auto_update_candidates WHERE image_ref = ?1 AND candidate_digest = ?2 AND status = 'awaiting_inference' ORDER BY discovered_at ASC"
@@ -377,7 +605,7 @@ WHERE job_id = ?1
         now: &str,
     ) -> anyhow::Result<bool> {
         let service_id = service_id.to_string();
-        let candidate_digest = candidate_digest.to_string();
+        let candidate_digest = canonical_auto_update_digest(candidate_digest);
         let reason = reason.to_string();
         let now = now.to_string();
         self.call(move |conn| {
@@ -394,7 +622,8 @@ SET status = 'awaiting_inference',
     policy_reason = ?3,
     policy_rule_id = NULL,
     policy_evaluated_at = ?4,
-    updated_at = ?4
+    updated_at = ?4,
+    settlement_generation = settlement_generation + 1
 WHERE service_id = ?1
   AND candidate_digest = ?2
   AND status = 'unresolved'
@@ -416,7 +645,7 @@ WHERE service_id = ?1
         evaluated_at: &str,
     ) -> anyhow::Result<()> {
         let service_id = service_id.to_string();
-        let candidate_digest = candidate_digest.to_string();
+        let candidate_digest = canonical_auto_update_digest(candidate_digest);
         let policy_status = policy_status.to_string();
         let policy_reason = policy_reason.map(str::to_string);
         let rule_id = rule_id.map(str::to_string);
@@ -461,7 +690,7 @@ WHERE service_id = ?1 AND candidate_digest = ?2
         candidate_digest: &str,
     ) -> anyhow::Result<()> {
         let service_id = service_id.to_string();
-        let candidate_digest = candidate_digest.to_string();
+        let candidate_digest = canonical_auto_update_digest(candidate_digest);
         self.call(move |conn| {
             let context = conn
                 .query_row(

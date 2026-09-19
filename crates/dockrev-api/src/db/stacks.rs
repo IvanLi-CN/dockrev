@@ -88,7 +88,6 @@ ORDER BY s.created_at DESC
 "#,
             );
             let mut stmt = conn.prepare(&sql)?;
-
             let rows = stmt.query_map([], |row| {
                 Ok(StackListItem {
                     id: row.get(0)?,
@@ -282,6 +281,7 @@ WHERE id = ?1
                         ignore,
                         version_inference: None,
                         candidate_settlement: None,
+                        candidate_hydration: None,
                         auto_update: None,
                         new_version_discovery_count: None,
                         settings: ServiceSettings {
@@ -514,6 +514,7 @@ ORDER BY st.name ASC, sv.name ASC
                             ..VersionInferenceState::default()
                         }),
                         candidate_settlement: None,
+                        candidate_hydration: None,
                         auto_update: None,
                         new_version_discovery_count: None,
                         settings: ServiceSettings {
@@ -1249,24 +1250,24 @@ WHERE id = ?1
     ) -> anyhow::Result<Option<ServiceNewVersionTimelineContext>> {
         let service_id = service_id.to_string();
         self.call(move |conn| {
+            let candidate_digest =
+                super::canonical_digest_sql("auto_update_candidates.candidate_digest");
+            let service_digest = super::canonical_digest_sql("services.candidate_digest");
             Ok(conn
                 .query_row(
-                    r#"
-SELECT
-  services.image_ref,
-  services.image_tag,
-  services.current_digest,
-  services.current_runtime_started_at,
-  services.current_resolved_tag,
-  services.candidate_tag,
-  COALESCE(auto_update_candidates.resolved_version, services.candidate_resolved_tag),
-  services.candidate_digest
+                    &format!(
+                        r#"
+SELECT services.image_ref, services.image_tag, services.current_digest,
+  services.current_runtime_started_at, services.current_resolved_tag, services.candidate_tag,
+  COALESCE(auto_update_candidates.resolved_version, services.candidate_resolved_tag), services.candidate_digest
 FROM services
-LEFT JOIN auto_update_candidates
-  ON auto_update_candidates.service_id = services.id
- AND auto_update_candidates.candidate_digest = services.candidate_digest
+LEFT JOIN auto_update_candidates ON auto_update_candidates.service_id = services.id
+ AND {candidate_digest} = {service_digest}
 WHERE services.id = ?1
 "#,
+                        candidate_digest = candidate_digest,
+                        service_digest = service_digest,
+                    ),
                     params![service_id],
                     |row| {
                         Ok(ServiceNewVersionTimelineContext {

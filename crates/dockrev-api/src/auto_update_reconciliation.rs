@@ -94,15 +94,60 @@ fn is_qualified_auto_policy_source(source: Option<&str>) -> bool {
     matches!(source, Some("schedule" | "github_webhook"))
 }
 
+fn auto_policy_source_identity_matches(
+    job_scope: &str,
+    job_stack_id: Option<&str>,
+    job_service_id: Option<&str>,
+    stack_id: Option<&str>,
+    service_id: Option<&str>,
+) -> bool {
+    let matches = |actual: Option<&str>, expected: &str| {
+        actual.is_some_and(|actual| {
+            actual.trim().eq_ignore_ascii_case(expected.trim())
+        })
+    };
+    match (stack_id, service_id, job_scope) {
+        (Some(stack_id), Some(service_id), scope) if scope.eq_ignore_ascii_case("service") => {
+            matches(job_stack_id, stack_id) && matches(job_service_id, service_id)
+        }
+        (Some(stack_id), Some(_), scope) if scope.eq_ignore_ascii_case("stack") => {
+            matches(job_stack_id, stack_id) && job_service_id.is_none()
+        }
+        (Some(_), Some(_), scope) if scope.eq_ignore_ascii_case("all") => {
+            job_stack_id.is_none() && job_service_id.is_none()
+        }
+        (Some(stack_id), None, _) => matches(job_stack_id, stack_id),
+        (None, Some(service_id), scope) if scope.eq_ignore_ascii_case("service") => {
+            matches(job_service_id, service_id)
+        }
+        (None, None, _) => true,
+        _ => false,
+    }
+}
+
 async fn has_valid_auto_policy_source(
     db: &crate::db::Db,
     source_job_id: &str,
     source: &str,
+    service_id: Option<&str>,
+    stack_id: Option<&str>,
 ) -> anyhow::Result<bool> {
     let Some(job) = db.get_job(source_job_id).await? else {
         return Ok(false);
     };
+    if !job.r#type.as_str().eq_ignore_ascii_case("check") {
+        return Ok(false);
+    }
     if !job.status.eq_ignore_ascii_case("success") {
+        return Ok(false);
+    }
+    if !auto_policy_source_identity_matches(
+        job.scope.as_str(),
+        job.stack_id.as_deref(),
+        job.service_id.as_deref(),
+        stack_id,
+        service_id,
+    ) {
         return Ok(false);
     }
     Ok(auto_policy_source(&job.reason, &job.summary_json, Some(&job.created_by)) == Some(source))

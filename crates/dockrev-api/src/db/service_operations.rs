@@ -6,6 +6,18 @@ pub(crate) struct ServiceOperationTarget {
     pub(crate) stack_id: String,
 }
 
+#[derive(Clone, Debug)]
+pub(crate) struct AutoPolicyEnqueueGuard {
+    pub(crate) pending_id: String,
+    pub(crate) service_id: String,
+    pub(crate) candidate_id: String,
+    pub(crate) candidate_digest: String,
+    pub(crate) policy_scope_type: String,
+    pub(crate) policy_scope_id: String,
+    pub(crate) rule_id: String,
+    pub(crate) expected_current_digest: String,
+}
+
 #[derive(Clone, Debug, serde::Deserialize, serde::Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct ServiceAcceptedState {
@@ -43,6 +55,8 @@ pub(crate) struct ServiceOperationAcceptedStateLease {
 pub(crate) enum ServiceOperationAcquireOutcome {
     Acquired(Vec<ServiceOperationAcceptedStateLease>),
     Conflict(Box<JobListItem>),
+    StaleCurrentDigest,
+    StaleAutoPolicy,
 }
 
 #[derive(Clone, Debug)]
@@ -235,18 +249,215 @@ WHERE id = ?1
         targets: Vec<ServiceOperationTarget>,
         initial_log: Option<JobLogLine>,
     ) -> anyhow::Result<ServiceOperationAcquireOutcome> {
+        self.insert_service_operation_job_with_accepted_state_if_unblocked_inner(
+            job,
+            targets,
+            initial_log,
+            None,
+            None,
+        )
+        .await
+    }
+
+    async fn insert_service_operation_job_with_accepted_state_if_unblocked_inner(
+        &self,
+        job: JobListItem,
+        targets: Vec<ServiceOperationTarget>,
+        initial_log: Option<JobLogLine>,
+        expected_current_digest: Option<&str>,
+        auto_policy_guard: Option<&AutoPolicyEnqueueGuard>,
+    ) -> anyhow::Result<ServiceOperationAcquireOutcome> {
         let event_job_id = job.id.clone();
         let event_scope = job.scope.as_str().to_string();
         let event_stack_id = job.stack_id.clone();
         let event_service_id = job.service_id.clone();
         let event_type = job.r#type.as_str().to_string();
         let job_id = job.id.clone();
+        let expected_current_digest = expected_current_digest.map(str::to_string);
+        let auto_policy_guard = auto_policy_guard.cloned();
         let outcome = self
             .call(move |conn| {
                 let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
+                if let Some(guard) = auto_policy_guard.as_ref() {
+                    let pending_digest =
+                        super::strict_canonical_digest_sql("p.candidate_digest");
+                    let candidate_digest = super::strict_canonical_digest_sql("c.candidate_digest");
+                    let service_digest = super::strict_canonical_digest_sql("s.candidate_digest");
+                    let expected_digest = super::strict_canonical_digest_sql("?7");
+                    let current_digest = super::strict_canonical_digest_sql("s.current_digest");
+                    let expected_current_digest = super::strict_canonical_digest_sql("?8");
+                    let sql = format!(
+                        r#"
+SELECT 1
+FROM auto_update_pending p
+JOIN auto_update_candidates c ON c.id = p.candidate_id
+JOIN services s ON s.id = p.service_id
+WHERE p.id = ?1
+  AND p.status = 'enqueuing'
+  AND p.service_id = ?2
+  AND p.candidate_id = ?3
+  AND LOWER(TRIM(p.policy_scope_type)) = LOWER(TRIM(?4))
+  AND LOWER(TRIM(p.policy_scope_id)) = LOWER(TRIM(?5))
+  AND p.rule_id = ?6
+  AND {pending_digest} = {expected_digest}
+  AND {candidate_digest} = {expected_digest}
+  AND {service_digest} = {expected_digest}
+  AND {current_digest} = {expected_current_digest}
+  AND c.service_id = p.service_id
+  AND c.status <> 'superseded'
+  AND c.policy_status = 'delayed'
+  AND c.policy_rule_id = p.rule_id
+  AND EXISTS (
+    SELECT 1
+    FROM jobs source_job
+    WHERE source_job.id = p.source_check_job_id
+      AND LOWER(source_job.type) = 'check'
+      AND LOWER(source_job.status) = 'success'
+      AND (
+        (LOWER(c.source) = 'schedule'
+          AND LOWER(source_job.reason) = 'schedule'
+          AND LOWER(source_job.created_by) = 'schedule')
+        OR (LOWER(c.source) = 'github_webhook'
+          AND LOWER(source_job.created_by) IN ('webhook', 'github')
+          AND LOWER(COALESCE(json_extract(CASE WHEN json_valid(source_job.summary_json) THEN source_job.summary_json ELSE '{{}}' END, '$.source'), '')) = 'github_webhook')
+      )
+      AND LOWER(c.source) IN ('schedule', 'github_webhook')
+      AND (
+        (LOWER(source_job.scope) = 'service'
+          AND LOWER(source_job.stack_id) = LOWER(c.stack_id)
+          AND LOWER(source_job.service_id) = LOWER(c.service_id))
+        OR (LOWER(source_job.scope) = 'stack'
+          AND LOWER(source_job.stack_id) = LOWER(c.stack_id)
+          AND source_job.service_id IS NULL)
+        OR (LOWER(source_job.scope) = 'all'
+          AND source_job.stack_id IS NULL
+          AND source_job.service_id IS NULL)
+      )
+  )
+  AND json_extract(p.summary_json, '$.policyUpdatedAt') IS NOT NULL
+  AND (
+    (
+      ?4 = 'service'
+      AND ?5 = s.id
+      AND EXISTS (
+        SELECT 1
+        FROM auto_update_policies service_policy
+        WHERE LOWER(TRIM(service_policy.scope_type)) = 'service'
+          AND LOWER(TRIM(service_policy.scope_id)) = LOWER(TRIM(s.id))
+          AND service_policy.mode = 'override'
+          AND service_policy.enabled <> 0
+          AND service_policy.updated_at = json_extract(p.summary_json, '$.policyUpdatedAt')
+          AND EXISTS (
+            SELECT 1
+            FROM json_each(CASE WHEN json_valid(service_policy.rules_json) THEN service_policy.rules_json ELSE '[]' END) AS rule
+            WHERE json_extract(rule.value, '$.id') = ?6
+              AND json_extract(rule.value, '$.enabled') <> 0
+          )
+      )
+    )
+    OR (
+      ?4 = 'stack'
+      AND ?5 = s.stack_id
+      AND NOT EXISTS (
+        SELECT 1
+        FROM auto_update_policies service_policy
+        WHERE LOWER(TRIM(service_policy.scope_type)) = 'service'
+          AND LOWER(TRIM(service_policy.scope_id)) = LOWER(TRIM(s.id))
+          AND service_policy.mode <> 'inherit'
+      )
+      AND EXISTS (
+        SELECT 1
+        FROM auto_update_policies stack_policy
+        WHERE LOWER(TRIM(stack_policy.scope_type)) = 'stack'
+          AND LOWER(TRIM(stack_policy.scope_id)) = LOWER(TRIM(s.stack_id))
+          AND stack_policy.mode = 'override'
+          AND stack_policy.enabled <> 0
+          AND stack_policy.updated_at = json_extract(p.summary_json, '$.policyUpdatedAt')
+          AND EXISTS (
+            SELECT 1
+            FROM json_each(CASE WHEN json_valid(stack_policy.rules_json) THEN stack_policy.rules_json ELSE '[]' END) AS rule
+            WHERE json_extract(rule.value, '$.id') = ?6
+              AND json_extract(rule.value, '$.enabled') <> 0
+          )
+      )
+    )
+  )
+"#,
+                    );
+                    let valid = tx
+                        .query_row(
+                            &sql,
+                            params![
+                                &guard.pending_id,
+                                &guard.service_id,
+                                &guard.candidate_id,
+                                &guard.policy_scope_type,
+                                &guard.policy_scope_id,
+                                &guard.rule_id,
+                                &guard.candidate_digest,
+                                &guard.expected_current_digest,
+                            ],
+                            |_row| Ok(()),
+                        )
+                        .optional()?
+                        .is_some();
+                    if !valid {
+                        let changed = tx.execute(
+                            r#"
+UPDATE auto_update_pending
+SET status = 'skipped',
+    summary_json = CASE
+      WHEN json_valid(summary_json)
+        AND json_type(CASE WHEN json_valid(summary_json) THEN summary_json ELSE '{}' END) = 'object'
+        THEN json_set(summary_json, '$.skipReason', 'candidate_changed', '$.skippedAt', ?2)
+      ELSE json_object('skipReason', 'candidate_changed', 'skippedAt', ?2)
+    END,
+    updated_at = ?2
+WHERE id = ?1 AND status = 'enqueuing'
+"#,
+                            params![&guard.pending_id, &job.created_at],
+                        )?;
+                        if changed > 0 {
+                            tx.execute(
+                                r#"
+UPDATE auto_update_candidates
+SET policy_status = 'skipped',
+    policy_reason = 'candidate_changed',
+    policy_evaluated_at = ?2,
+    updated_at = ?2
+WHERE id = ?1 AND status <> 'superseded'
+"#,
+                                params![&guard.candidate_id, &job.created_at],
+                            )?;
+                        }
+                        tx.commit()?;
+                        return Ok(ServiceOperationAcquireOutcome::StaleAutoPolicy);
+                    }
+                }
                 if let Some(conflict) = find_blocking_job_tx(&tx, &targets)? {
                     tx.commit()?;
                     return Ok(ServiceOperationAcquireOutcome::Conflict(Box::new(conflict)));
+                }
+
+                if let Some(expected_current_digest) = expected_current_digest.as_deref() {
+                    let current_digest = super::strict_canonical_digest_sql("current_digest");
+                    let expected_digest = super::strict_canonical_digest_sql("?2");
+                    let sql = format!(
+                        "SELECT COALESCE(({current_digest} = {expected_digest}), 0) FROM services WHERE id = ?1"
+                    );
+                    for target in &targets {
+                        let matches = tx
+                            .query_row(
+                                &sql,
+                                params![target.service_id, expected_current_digest],
+                                |row| row.get::<_, bool>(0),
+                            )
+                            .optional()?
+                            .unwrap_or(false);
+                        if !matches {
+                            return Ok(ServiceOperationAcquireOutcome::StaleCurrentDigest);
+                        }
+                    }
                 }
 
                 insert_job_tx(&tx, &job)?;
@@ -508,7 +719,56 @@ WHERE id = ?1 AND accepted_state_generation = ?2 AND accepted_state_generation %
         {
             ServiceOperationAcquireOutcome::Acquired(_) => Ok(None),
             ServiceOperationAcquireOutcome::Conflict(job) => Ok(Some(*job)),
+            ServiceOperationAcquireOutcome::StaleCurrentDigest => {
+                anyhow::bail!("stale current digest")
+            }
+            ServiceOperationAcquireOutcome::StaleAutoPolicy => {
+                anyhow::bail!("stale auto policy candidate")
+            }
         }
+    }
+
+    pub async fn insert_service_operation_job_if_unblocked_with_current_digest(
+        &self,
+        job: JobListItem,
+        targets: Vec<ServiceOperationTarget>,
+        initial_log: Option<JobLogLine>,
+        expected_current_digest: &str,
+    ) -> anyhow::Result<ServiceOperationAcquireOutcome> {
+        match self
+            .insert_service_operation_job_with_accepted_state_if_unblocked_inner(
+                job,
+                targets,
+                initial_log,
+                Some(expected_current_digest),
+                None,
+            )
+            .await?
+        {
+            outcome @ ServiceOperationAcquireOutcome::Acquired(_)
+            | outcome @ ServiceOperationAcquireOutcome::StaleCurrentDigest
+            | outcome @ ServiceOperationAcquireOutcome::StaleAutoPolicy => Ok(outcome),
+            ServiceOperationAcquireOutcome::Conflict(job) => {
+                Ok(ServiceOperationAcquireOutcome::Conflict(job))
+            }
+        }
+    }
+
+    pub(crate) async fn insert_service_operation_job_if_unblocked_with_auto_policy_guard(
+        &self,
+        job: JobListItem,
+        targets: Vec<ServiceOperationTarget>,
+        initial_log: Option<JobLogLine>,
+        guard: AutoPolicyEnqueueGuard,
+    ) -> anyhow::Result<ServiceOperationAcquireOutcome> {
+        self.insert_service_operation_job_with_accepted_state_if_unblocked_inner(
+            job,
+            targets,
+            initial_log,
+            Some(&guard.expected_current_digest),
+            Some(&guard),
+        )
+        .await
     }
 
     pub async fn find_latest_pending_update_blocking_service(
@@ -783,5 +1043,89 @@ INSERT INTO services (
             .await
             .unwrap();
         assert_eq!(applied, AcceptedStateCasOutcome::Applied { generation: 4 });
+    }
+
+    #[tokio::test]
+    async fn auto_policy_enqueue_rechecks_current_digest_inside_operation_transaction() {
+        let db = Db::open(Path::new(":memory:")).await.unwrap();
+        let (stack_id, service_id) = seed_service(&db).await;
+        let mut job = crate::api::types::JobRecord::new_running(
+            "job_stale_auto_policy".to_string(),
+            JobType::Update,
+            JobScope::Service,
+            Some(stack_id.clone()),
+            Some(service_id.clone()),
+            "2026-08-30T00:01:00Z",
+        );
+        job.summary_json = serde_json::json!({"mode": "apply"});
+
+        let outcome = db
+            .insert_service_operation_job_if_unblocked_with_current_digest(
+                job.to_db(),
+                vec![ServiceOperationTarget {
+                    service_id: service_id.clone(),
+                    stack_id,
+                }],
+                None,
+                "sha256:not-the-current-digest",
+            )
+            .await
+            .unwrap();
+        assert!(matches!(
+            outcome,
+            ServiceOperationAcquireOutcome::StaleCurrentDigest
+        ));
+        assert!(db.get_job("job_stale_auto_policy").await.unwrap().is_none());
+        assert_eq!(
+            db.get_versioned_service_accepted_state(&service_id)
+                .await
+                .unwrap()
+                .unwrap()
+                .generation,
+            0
+        );
+    }
+
+    #[tokio::test]
+    async fn auto_policy_current_digest_cas_accepts_legacy_prefixless_digest() {
+        let db = Db::open(Path::new(":memory:")).await.unwrap();
+        let (stack_id, service_id) = seed_service(&db).await;
+        let current_service_id = service_id.clone();
+        let legacy_current_digest =
+            "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+        db.call(move |conn| {
+            conn.execute(
+                "UPDATE services SET current_digest = ?1 WHERE id = ?2",
+                params![legacy_current_digest, current_service_id],
+            )?;
+            Ok(())
+        })
+        .await
+        .unwrap();
+
+        let job = crate::api::types::JobRecord::new_running(
+            "job_legacy_current_digest".to_string(),
+            JobType::Update,
+            JobScope::Service,
+            Some(stack_id.clone()),
+            Some(service_id.clone()),
+            "2026-08-30T00:01:00Z",
+        );
+        let outcome = db
+            .insert_service_operation_job_if_unblocked_with_current_digest(
+                job.to_db(),
+                vec![ServiceOperationTarget {
+                    service_id,
+                    stack_id,
+                }],
+                None,
+                "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            )
+            .await
+            .unwrap();
+        assert!(matches!(
+            outcome,
+            ServiceOperationAcquireOutcome::Acquired(_)
+        ));
     }
 }

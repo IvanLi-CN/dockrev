@@ -375,6 +375,10 @@ fn pending_candidate(pending: &AutoUpdatePendingRow) -> notify::NewVersionDiscov
     }
 }
 
+fn candidate_digest_is_valid(candidate_digest: &str) -> bool {
+    crate::snapshot_worker::normalize_digest_identity(candidate_digest).is_some()
+}
+
 fn candidate_settlement_state(
     candidate: &notify::NewVersionDiscoveredService,
 ) -> (&'static str, Option<String>, Option<String>) {
@@ -383,6 +387,13 @@ fn candidate_settlement_state(
             "unresolved",
             None,
             Some("missing_candidate_evidence".to_string()),
+        );
+    }
+    if !candidate_digest_is_valid(&candidate.candidate_digest) {
+        return (
+            "unresolved",
+            None,
+            Some("invalid_candidate_digest".to_string()),
         );
     }
     if let Some(version) = resolved_candidate_version(candidate) {
@@ -428,10 +439,19 @@ fn update_request_from_job(job: &api::types::JobListItem) -> anyhow::Result<Trig
     }
     for target in &targets {
         if target.service_id.trim().is_empty()
+            || target.target_tag.trim().is_empty()
             || api::normalize_digest_for_compare(&target.target_digest).is_none()
         {
             anyhow::bail!("auto policy update job has an invalid target");
         }
+    }
+    if job.scope != api::types::JobScope::Service
+        || job.stack_id.as_deref().is_none_or(str::is_empty)
+        || job.service_id.as_deref().is_none_or(str::is_empty)
+        || targets.len() != 1
+        || targets[0].service_id != job.service_id.as_deref().unwrap_or_default()
+    {
+        anyhow::bail!("auto policy update job has an invalid service scope");
     }
     let backup_mode =
         serde_json::from_value::<BackupMode>(serde_json::Value::String(job.backup_mode.clone()))
@@ -464,17 +484,17 @@ async fn recover_enqueued_auto_update_jobs(
             Err(error) => {
                 state
                     .db
-                    .fail_corrupt_auto_update_job(
-                        &job.id,
-                        now,
-                        &format!("invalid_job_summary: {error}"),
-                    )
+                    .fail_corrupt_auto_update_job(&job.id, now, "migration_ambiguous_history")
                     .await?;
                 tracing::warn!(job_id = %job.id, error = %error, "auto policy update job recovery skipped invalid job summary");
                 continue;
             }
         };
-        if !state.db.claim_queued_job_by_id(&job.id, now).await? {
+        if !state
+            .db
+            .claim_queued_job_by_id_for_recovery(&job.id, now)
+            .await?
+        {
             continue;
         }
         let run_state = state.clone();
@@ -600,6 +620,17 @@ pub async fn reconcile_inference_for_digest(
 
     let mut reconciled = 0;
     for candidate in candidates {
+        let Some(candidate) = state
+            .db
+            .begin_auto_update_candidate_inference(
+                &candidate.service_id,
+                &candidate.candidate_digest,
+                now,
+            )
+            .await?
+        else {
+            continue;
+        };
         let authoritative_snapshot = snapshot.as_ref().filter(|snapshot| {
             snapshot_is_authoritative(snapshot)
                 && crate::snapshot_worker::normalize_digest(&snapshot.digest)
@@ -690,6 +721,8 @@ pub async fn reconcile_inference_for_digest(
                 reason: reason.map(str::to_string),
                 last_error,
                 attempts,
+                // `begin_auto_update_candidate_inference` reserves this exact CAS token.
+                evidence_generation: candidate.evidence_generation,
                 retry_at,
                 settled_at: (resolved.is_some() || terminal).then_some(now.to_string()),
                 now: now.to_string(),
@@ -773,8 +806,14 @@ pub async fn reevaluate_service_policy(
         return Ok(());
     }
     if !is_qualified_auto_policy_source(Some(&candidate.source))
-        || !has_valid_auto_policy_source(&state.db, &candidate.source_job_id, &candidate.source)
-            .await?
+        || !has_valid_auto_policy_source(
+            &state.db,
+            &candidate.source_job_id,
+            &candidate.source,
+            Some(&candidate.service_id),
+            Some(&candidate.stack_id),
+        )
+        .await?
     {
         state
             .db
@@ -821,8 +860,14 @@ async fn pending_delay_gates_met(
             .await?;
         return Ok(false);
     };
-    if effective.scope_type != pending.policy_scope_type
-        || effective.scope_id != pending.policy_scope_id
+    if !effective
+        .scope_type
+        .trim()
+        .eq_ignore_ascii_case(pending.policy_scope_type.trim())
+        || !effective
+            .scope_id
+            .trim()
+            .eq_ignore_ascii_case(pending.policy_scope_id.trim())
     {
         state
             .db
@@ -1039,12 +1084,28 @@ async fn enqueue_pending(
             .await?;
         return Ok(None);
     };
+    if !has_valid_auto_policy_source(
+        &state.db,
+        &pending.source_check_job_id,
+        &settlement.source,
+        Some(&pending.service_id),
+        Some(&pending.stack_id),
+    )
+    .await?
+    {
+        state
+            .db
+            .mark_auto_update_pending_skipped(&pending.id, "unqualified_source", now)
+            .await?;
+        return Ok(None);
+    }
     target.auto_policy_context = Some(AutoUpdateJobContext {
         pending_id: pending.id.clone(),
-        candidate_id: pending.candidate_id.clone().unwrap_or_default(),
+        candidate_id: settlement.id.clone(),
         rule_id: pending.rule_id.clone(),
         policy_scope_type: pending.policy_scope_type.clone(),
         policy_scope_id: pending.policy_scope_id.clone(),
+        expected_current_digest: service.image.digest.clone(),
     });
 
     if !state
@@ -1111,7 +1172,10 @@ async fn enqueue_pending(
         }
         Err(err) => {
             if permanent_enqueue_error(&err) {
-                let skip_reason = format!("enqueue_rejected_{}", err.code());
+                let skip_reason = err
+                    .detail_str("reason")
+                    .map(str::to_string)
+                    .unwrap_or_else(|| format!("enqueue_rejected_{}", err.code()));
                 state
                     .db
                     .mark_auto_update_pending_skipped(&pending.id, &skip_reason, now)
@@ -1137,9 +1201,24 @@ async fn evaluate_candidate(
     candidate: &notify::NewVersionDiscoveredService,
     source: Option<&str>,
 ) -> anyhow::Result<()> {
+    if !candidate_digest_is_valid(&candidate.candidate_digest) {
+        tracing::warn!(
+            service_id = %candidate.service_id,
+            candidate_digest = %candidate.candidate_digest,
+            "ignoring auto update candidate with invalid digest identity"
+        );
+        return Ok(());
+    }
     if let Some(source) = source
         && is_qualified_auto_policy_source(Some(source))
-        && !has_valid_auto_policy_source(&state.db, job_id, source).await?
+        && !has_valid_auto_policy_source(
+            &state.db,
+            job_id,
+            source,
+            Some(&candidate.service_id),
+            Some(&candidate.stack_id),
+        )
+        .await?
     {
         state
             .db
@@ -1376,78 +1455,12 @@ async fn evaluate_candidate(
     Ok(())
 }
 
-pub async fn handle_completed_check(
-    state: &Arc<AppState>,
-    job_id: &str,
-    reason: &str,
-    finished_at: &str,
-    summary: &serde_json::Value,
-) -> anyhow::Result<()> {
-    let created_by = state.db.get_job(job_id).await?.map(|job| job.created_by);
-    let Some(source) = auto_policy_source(reason, summary, created_by.as_deref()) else {
-        return Ok(());
-    };
-    let mut discovered_services = notify::extract_new_versions_discovered(summary);
-    if api::summary_emits_new_version_notification(summary)
-        && let Some(matched_service_ids) = api::summary_matched_service_ids(summary)
-    {
-        discovered_services.retain(|service| matched_service_ids.contains(&service.service_id));
-    }
-    if discovered_services.is_empty() {
-        return Ok(());
-    }
-
-    let discovered_at = state
-        .db
-        .get_job(job_id)
-        .await?
-        .map(|job| job.created_at)
-        .unwrap_or_else(|| finished_at.to_string());
-
-    let host_platform =
-        crate::registry::host_platform_override(state.config.host_platform.as_deref())
-            .unwrap_or_else(|| "linux/amd64".to_string());
-    for candidate in &discovered_services {
-        state
-            .db
-            .reopen_auto_update_candidate_inference(
-                &candidate.service_id,
-                &candidate.candidate_digest,
-                "qualified_check_reopened_inference",
-                finished_at,
-            )
-            .await?;
-        evaluate_candidate(
-            state,
-            job_id,
-            &discovered_at,
-            finished_at,
-            candidate,
-            Some(source),
-        )
-        .await?;
-        if let Some(image_repo) =
-            crate::snapshot_worker::image_repo_from_image_ref(&candidate.image_ref)
-        {
-            reconcile_inference_for_digest(
-                state,
-                &image_repo,
-                &candidate.candidate_digest,
-                &host_platform,
-                finished_at,
-            )
-            .await?;
-        }
-    }
-    process_due_pending(state, finished_at, 50).await?;
-    Ok(())
-}
-
 pub async fn process_due_pending(
     state: &Arc<AppState>,
     now: &str,
     limit: usize,
 ) -> anyhow::Result<usize> {
+    state.db.hydrate_auto_update_candidates(now).await?;
     let stale_before = subtract_seconds(now, 300);
     state
         .db
@@ -1470,6 +1483,7 @@ pub async fn process_due_pending(
     Ok(enqueued)
 }
 
+include!("auto_update_check_completion.rs");
 include!("auto_update_reconciliation.rs");
 
 #[cfg(test)]

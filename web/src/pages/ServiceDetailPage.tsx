@@ -631,6 +631,7 @@ export function ServiceDetailPage(props: {
                 stackPolicy={stackSettings?.autoUpdatePolicy ?? null}
                 projection={effectiveService.autoUpdate ?? null}
                 candidateSettlement={effectiveService.candidateSettlement ?? null}
+                candidateHydration={effectiveService.candidateHydration ?? null}
               />
             </div>
           </div>

@@ -10,13 +10,61 @@
 
 - Desktop state gallery: [auto-update-policy-state-gallery-desktop.png](assets/auto-update-policy-state-gallery-desktop.png)
 - Mobile state gallery: [auto-update-policy-state-gallery-mobile.png](assets/auto-update-policy-state-gallery-mobile.png)
+- Ambiguous-history desktop: [auto-update-policy-ambiguous-history-desktop.png](assets/auto-update-policy-ambiguous-history-desktop.png)
+- Ambiguous-history mobile: [auto-update-policy-ambiguous-history-mobile.png](assets/auto-update-policy-ambiguous-history-mobile.png)
 - Stack detail awaiting-inference desktop: [stack-detail-policy-awaiting-desktop.png](assets/stack-detail-policy-awaiting-desktop.png)
 - Stack detail awaiting-inference mobile: [stack-detail-policy-awaiting-mobile.png](assets/stack-detail-policy-awaiting-mobile.png)
-- 覆盖候选等待、版本可用、版本未解析、规则未命中、延迟、排队、执行中、完成和跳过等策略动作状态。
+- Stack service-results desktop: [auto-update-service-results-desktop.png](assets/auto-update-service-results-desktop.png)
+- Stack service-results mobile: [auto-update-service-results-mobile.png](assets/auto-update-service-results-mobile.png)
+- 覆盖候选等待、版本可用、版本未解析、规则未命中、延迟、排队、执行中、完成和跳过等策略动作状态；ambiguous-history 状态明确显示 provenance 不完整、候选 unresolved 且禁止自动部署。
 
 ## Related ADRs
 
 - [Automatic Update Candidate Settlement](../../adr/0011-auto-update-candidate-settlement.md)
+
+## Context and Scope
+
+- 本主题覆盖 Dockrev 自动更新候选的 discovery history hydration、candidate settlement、policy reconciliation、恢复安全门禁、Service/Stack API 投影和 Web 状态展示。
+- In scope: `service_new_version_discoveries` 与成功 Check provenance 的候选回填、SQLite migrations、启动/周期 reconciliation、候选幂等与 supersession、自动策略 enqueue/recovery safety，以及对应 Rust API/UI regression evidence。
+- Out of scope: 镜像构建或发布、GHCR push、GitHub Release、生产数据库补偿、强制检查、部署和远端写入。
+
+## Requirements
+
+### REQ-CANDIDATE-HYDRATION-001
+
+- Candidate hydration MUST use only a successful `check` job with verifiable `schedule` or `github_webhook` provenance, and MUST preserve the earliest trustworthy `sourceJobId`, `source`, `discoveredAt`, image reference, and current digest baseline. Incomplete history MUST remain unresolved with `migration_ambiguous_history` and MUST NOT authorize automatic deployment.
+
+### REQ-CANDIDATE-HYDRATION-002
+
+- Migration, startup reconciliation, and periodic reconciliation MUST share the same hydration/evaluator boundary. Hydration MUST only create candidate facts, invalidate superseded actions, and persist audit reasons; it MUST NOT execute Compose side effects. The later enqueue path MUST revalidate current service digest, effective policy, exact-digest SemVer evidence, operation protection, and source provenance.
+
+### REQ-CANDIDATE-HYDRATION-003
+
+- Candidate identity MUST be idempotent on `(service_id, candidate_digest)`. Repeated migration, webhook delivery, reconciliation, and settlement MUST NOT create duplicate candidates, pending actions, or update jobs; a newer service digest MUST supersede every older candidate and make its pending/action state non-executable. Settlement writes MUST use monotonic `settlement_generation` protection so stale inference results cannot overwrite newer state.
+
+### REQ-CANDIDATE-HYDRATION-004
+
+- Recovery of queued automatic policy jobs MUST fail closed when persisted target/current-digest baselines, successful Check provenance, creator/scope identity, candidate validity, or current policy validation are missing or stale. Service and Stack API payloads and UI states MUST expose candidate status, policy action, source, source job, hydration origin, and ambiguous/missing hydration diagnostics as optional observability fields.
+
+## Verification
+
+### VER-CANDIDATE-HYDRATION-001
+
+- Method: Rust database/API integration fixtures and migration-copy verification.
+- covers: `REQ-CANDIDATE-HYDRATION-001`, `REQ-CANDIDATE-HYDRATION-002`
+- Pass condition: one qualifying discovery with no candidate hydrates exactly once with complete provenance and baseline; missing image/baseline/source/check provenance stays unresolved with `migration_ambiguous_history`; hydration never directly enqueues or executes Compose.
+
+### VER-CANDIDATE-HYDRATION-002
+
+- Method: Rust reconciliation, settlement, recovery, supersession, and stale-digest regression suites.
+- covers: `REQ-CANDIDATE-HYDRATION-003`, `REQ-CANDIDATE-HYDRATION-004`
+- Pass condition: repeated settlement and reconciliation are idempotent; stale generation results, old candidates, stale current digests, missing expected baselines, and invalid provenance cannot claim or create an automatic update job; current candidates remain policy-evaluable.
+
+### VER-CANDIDATE-HYDRATION-003
+
+- Method: API serialization tests, Web tests/build, Storybook state coverage, and approved desktop/mobile visual evidence.
+- covers: `REQ-CANDIDATE-HYDRATION-004`
+- Pass condition: clients can distinguish awaiting inference, unresolved, rule-not-matched, delayed, queued/running/completed, superseded, and ambiguous history while older clients may ignore the optional fields.
 
 ## 背景 / 问题陈述
 
@@ -124,6 +172,7 @@ Dockrev 目前把自动更新策略评估挂在“检查任务完成时提取出
 ### 候选身份
 
 - 候选的稳定通知身份是 <code>serviceId + candidateDigest</code>。
+- <code>candidateDigest</code> 在分组、唯一约束、查询和 settlement 写入前必须经过共享 digest 规整：去除外层空白、补全缺省的 <code>sha256:</code> 算法前缀并统一算法和十六进制部分的大小写；因此仅大小写或缺省前缀不同的等价 digest 只能形成一个候选。
 - 同一个 digest 因 raw tag 或 display tag 变化而重新展示时，不创建第二个候选，也不重复发送新候选通知。
 - 候选记录保留首次发现时间、最近一次可证明的来源、raw tag、当前服务基线和 digest 证据。
 - 新 digest 被接受为当前有效候选时，旧的同服务有效候选立即转为 <code>superseded</code>。旧记录保留用于历史和版本滞后统计，但不能 claim 或执行部署。
@@ -271,9 +320,12 @@ inference worker
 - candidate 不是 <code>superseded</code>；
 - effective policy 仍启用且 rule 仍匹配；
 - 若为 SemVer，resolved version 仍是 exact digest 证据；
+- source 仍来自成功的 Check，且 source job、creator 和 scope 仍满足 schedule/GHCR webhook provenance pairing；
 - service、Stack、全局更新和 Dockrev 自身保护均允许执行；
 - 没有另一个 active mutating operation；
 - 本 candidate 没有已接受的自动 update job。
+
+current service digest 的校验必须位于自动策略 job 插入的同一事务边界内；事务外的预检不能授权一个已经过期的 candidate。scope identity 比较对大小写差异保持稳定，不能因旧记录的大小写变体绕过来源门禁。
 
 claim 失败只能释放本次 claim 或写入明确的 skipped/retryable 状态，不能直接执行 Compose side effect。
 
@@ -285,7 +337,15 @@ claim 失败只能释放本次 claim 或写入明确的 skipped/retryable 状态
 - 新 digest 到来时，旧 candidate 和其 pending action 先标记 superseded/skipped，再让新 candidate 进入策略评估。
 - 单实例范围内使用数据库条件更新和现有 operation lock 防止重复 claim；本主题不承诺多实例全局唯一。
 
-修复上线时只补偿当前仍有效、来源可证明为 schedule/GHCR webhook 且有可信 <code>discoveredAt</code> 的旧候选。来源不明、时间缺失或已被替代的历史记录只能展示和统计，不能自动补发部署。
+修复上线时由 <code>service_new_version_discoveries</code> 与成功 check job provenance 回填当前 service digest 缺失的 candidate。只接受 type 为 check、status 为 success 且来源可证明为 schedule 或 GHCR webhook 的最早可信观察；它保存原始 <code>sourceJobId</code>、<code>source</code>、<code>discoveredAt</code> 和当前 baseline。candidate/current digest 必须保留显式 digest identity（<code>sha256:</code> 加 64 位十六进制 payload，或 legacy 64 位纯十六进制 shorthand）；任意 bare tag 或 malformed digest 不能通过 canonical fallback 获得候选身份。来源不明、image/baseline/source job/time/digest identity 不完整或已被替代的历史记录只能形成 <code>unresolved</code> 的 <code>migration_ambiguous_history</code> 审计事实，不能获得自动部署授权。
+
+迁移与启动/周期 reconciliation 复用同一 hydration helper。hydration 按完整 discovery history 恢复 service + digest candidate fact，按 service candidate 的 canonical identity 执行旧候选 supersession 和 pending 失效，即使当前历史本身 ambiguous 也不能让旧 action 继续 claim；不执行 Compose side effect。回填后仍须由当前 service digest、effective policy、SemVer evidence 与 operation protection 重新校验后才能 enqueue。对 inference settlement 使用原子递增并精确匹配的 `settlement_generation` token 条件更新，迟到的旧结果不能覆盖新的 retry/ready 状态。
+
+对历史 active pending 的有限修复也必须复用同一 provenance predicate：不满足成功 Check、合格 source、授权 creator、scope identity 或 current digest 条件的 queued action 必须取消；已经 running 的 action 只能写入 stop control，不能伪造成功或重新获得 claim 权限，并保留 <code>migration_ambiguous_history</code> 审计原因。enqueue 回写若发现 pending 已先被 supersede/skipped，同样必须取消 queued job 或为尚未提交 apply 的 running job 写入 stop control。
+
+恢复 queued auto-policy job 时，若缺少 persisted expected current digest 或 target digest，必须 fail-closed；恢复路径必须再次校验成功 Check、schedule/GHCR webhook source、creator/scope identity、candidate 当前性、effective policy 与 service current digest，不能因为旧 job 已经存在而绕过正常 enqueue 门禁。hydration 必须处理所有 qualifying 历史 digest，再将非当前 service candidate 的记录标记为 <code>superseded</code>，以阻止旧 pending/action 再次 claim。
+
+reconciliation 查询必须包含 <code>awaiting_inference</code> candidate；这只保证候选会被当前 evaluator 重新检查，不改变 SemVer policy 的安全门禁。没有 resolved version 时 policy action 仍为 <code>waiting_inference</code>，不得创建 pending 或 update job。
 
 ## API / UI 合同
 
@@ -302,6 +362,18 @@ claim 失败只能释放本次 claim 或写入明确的 skipped/retryable 状态
     "reason": "inference_running",
     "attempts": 1,
     "retryAt": null,
+    "discoveredAt": "...",
+    "source": "github_webhook",
+    "sourceJobId": "check-...",
+    "hydrationOrigin": "discovery_history"
+  },
+  "candidateHydration": {
+    "status": "hydrated",
+    "reason": null,
+    "candidateDigest": "sha256:...",
+    "source": "github_webhook",
+    "sourceJobId": "check-...",
+    "hydrationOrigin": "discovery_history",
     "discoveredAt": "..."
   },
   "autoUpdate": {
@@ -327,6 +399,7 @@ UI 至少表达以下不同状态：
 - “等待延迟”：规则命中，显示时间门槛和版本滞后门槛；
 - “已排队/执行中/已完成”：对应真实 update job 状态；
 - “候选已被替代”：只读历史状态。
+- “历史回填不完整”：显示 <code>ambiguous_history</code> 与 <code>migration_ambiguous_history</code>，明确不可自动部署；只有发现历史存在且当前 digest 确实没有 candidate row 时显示 <code>candidate_missing</code>。已有运行时 candidate 即使没有 hydration origin，也不能被误报为 candidate missing。
 
 前端 SemVer 预览必须复用后端相同的严格解析规则：没有 resolved version 时显示“不确定/等待解析”，不能显示“确定未命中”。Regex/Glob 预览可明确展示 raw tag 的匹配结果。
 
@@ -346,6 +419,16 @@ UI 至少表达以下不同状态：
 - Given来源是 UI 手动 check，When规则匹配，Then只记录候选，不创建自动 update job。
 - Given update job 完成，When服务状态 settlement 成功，Then UI 才显示自动更新完成；inference 完成不会被显示为部署完成或镜像发布。
 - Given API 返回未解析状态，When用户查看 Service/Stack，Then能区分 inference waiting、unresolved、rule not matched、delayed 和 update running。
+- Given discovery history 存在但 candidate row 缺失，When migration 或启动/周期 reconciliation 运行，Then只为当前 service digest 创建唯一 candidate，保留首次 discoveredAt 与合格 source provenance，并继续经过 policy evaluator。
+- Given discovery history 缺少 image、baseline、source job 或合格成功 check，When hydration 运行，Then candidate 为 unresolved、reason 为 <code>migration_ambiguous_history</code>、source 不合格且不会创建 update job。
+- Given 同一 candidate 存在多个并发 inference 结果，When较旧 worker 晚于较新 retry/ready 结果完成，Then只有当前 worker 持有的 <code>settlement_generation</code> token 能提交，旧结果不能覆盖新状态。
+- Given recovery queued auto-policy job 缺少 expected current digest 或 provenance 不完整，When恢复 reconciliation 运行，Then action fail-closed、不会 enqueue/claim，并保留 <code>migration_ambiguous_history</code> 审计原因。
+- Given discovery history 包含当前和旧 digest，When hydration 或 reconciliation 运行，Then所有 qualifying digest 均按 service + digest 幂等恢复，旧 digest 为 <code>superseded</code> 且其 pending/action 不可执行。
+- Given candidate 已由运行时流程创建且 discovery history 同时存在，When读取 hydration diagnostic，Then不显示 <code>candidate_missing</code>，并保持运行时 candidate 的既有 settlement 状态。
+- Given candidate 为 <code>awaiting_inference</code>，When启动或周期 reconciliation 运行，Then候选会进入 policy evaluator；SemVer policy 仍为 <code>waiting_inference</code>，不创建 pending 或 update job。
+- Given source job 不是成功的 Check、source 不属于 schedule/GHCR webhook、creator/scope pairing 不合法或 service digest 已变化，When claim 或 enqueue 运行，Then不创建自动 update job；已经 queued 的历史 action 按其状态取消或写入 stop control。
+- Given candidate 与 service digest 在 enqueue 预检后发生变化，When同一受保护事务插入自动策略 job，Then事务拒绝该 job，不能依赖事务外的旧 digest 预检授权执行。
+- Given pending 在 job 创建后、关联回写前被 supersede，When enqueue 回写发现 pending 已不再是 enqueuing，Then queued job 被取消，running job 获得 stop control 且不能绕过 apply protection。
 
 ## 非功能性验收 / 质量门槛
 
@@ -356,12 +439,14 @@ UI 至少表达以下不同状态：
 - retry：退避、上限、force/new qualified check reopen；
 - event/restart：settlement 先提交、重复事件、事件丢失、启动 reconciliation；
 - candidate identity：重复 digest 去重、新 digest supersede、旧 pending 不可执行；
-- policy：当前策略重评估、来源门控、延迟起点、版本滞后、claim 条件；
+- hydration：成功 schedule/webhook discovery 回填、重复 hydration、最早可信观察、ambiguous history fail-closed 和 migration copy；
+- policy：当前策略重评估、来源门控、大小写不敏感的 scope identity、延迟起点、版本滞后、claim 条件和事务内 current-digest 校验；
 - update：显式 digest target、正常 updater 保护、终态服务状态 settlement。
 
 ### API / Web tests
 
 - API 可选字段与旧 payload 兼容；
+- candidate source/hydration origin 与 candidateHydration diagnostic 在 Service/Stack/Overview 可观察，旧客户端可忽略；
 - Service/Stack 页面区分五类推断/策略/更新状态；
 - SemVer preview 在无 resolved version 时为不确定而非未命中；
 - 通知、历史与 API 使用同一 candidate settlement；
@@ -369,7 +454,7 @@ UI 至少表达以下不同状态：
 
 ### Operational checks
 
-- 启动 reconciliation 能恢复 waiting、retryable、delayed candidate；
+- 启动 reconciliation 能恢复 waiting、retryable、delayed candidate，并包含 <code>awaiting_inference</code> candidate；
 - 日志包含 candidate identity、source、settlement status、policy action、reason 和 update job identity；
 - 不引入需要跨实例锁或新的外部发布权限的运行时依赖。
 

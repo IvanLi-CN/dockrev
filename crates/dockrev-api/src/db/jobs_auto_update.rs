@@ -161,13 +161,53 @@ LIMIT ?1
         job_id: &str,
         started_at: &str,
     ) -> anyhow::Result<bool> {
+        self.claim_queued_job_by_id_with_skip_reason(
+            job_id,
+            started_at,
+            "policy_changed_before_start",
+        )
+        .await
+    }
+
+    pub async fn claim_queued_job_by_id_for_recovery(
+        &self,
+        job_id: &str,
+        started_at: &str,
+    ) -> anyhow::Result<bool> {
+        self.claim_queued_job_by_id_with_skip_reason(
+            job_id,
+            started_at,
+            "migration_ambiguous_history",
+        )
+        .await
+    }
+
+    async fn claim_queued_job_by_id_with_skip_reason(
+        &self,
+        job_id: &str,
+        started_at: &str,
+        skip_reason: &str,
+    ) -> anyhow::Result<bool> {
         let job_id = job_id.to_string();
         let query_job_id = job_id.clone();
         let started_at = started_at.to_string();
         let query_started_at = started_at.clone();
+        let skip_reason = skip_reason.to_string();
         let claimed = self
             .call(move |conn| {
-                Ok(conn.execute(
+                let candidate_digest = super::strict_canonical_digest_sql("c.candidate_digest");
+                let pending_digest = super::strict_canonical_digest_sql("p.candidate_digest");
+                let service_digest = super::strict_canonical_digest_sql("s.candidate_digest");
+                let candidate_current_digest =
+                    super::strict_canonical_digest_sql("c.current_digest");
+                let pending_current_digest = super::strict_canonical_digest_sql("p.current_digest");
+                let target_digest =
+                    super::strict_canonical_digest_sql("json_extract(target.value, '$.targetDigest')");
+                let expected_current_digest = super::strict_canonical_digest_sql(
+                    "json_extract(target.value, '$.autoPolicyContext.expectedCurrentDigest')",
+                );
+                let service_current_digest = super::strict_canonical_digest_sql("s.current_digest");
+                let sql = format!(
                     r#"
 UPDATE jobs
 SET status = 'running', started_at = ?2
@@ -180,22 +220,60 @@ WHERE id = ?1
     JOIN services s ON s.id = p.service_id
     JOIN auto_update_candidates c
       ON c.service_id = p.service_id
-     AND c.candidate_digest = p.candidate_digest
+     AND {candidate_digest} = {pending_digest}
+    JOIN jobs source_job ON source_job.id = p.source_check_job_id
     WHERE p.update_job_id = jobs.id
       AND p.status = 'enqueued'
-      AND s.candidate_digest = p.candidate_digest
-      AND (p.candidate_id IS NULL OR p.candidate_id = c.id)
+      AND {service_digest} = {pending_digest}
+      AND p.candidate_id = c.id
       AND c.status <> 'superseded'
       AND c.policy_status = 'queued'
+      AND {candidate_current_digest} = {pending_current_digest}
+      AND {pending_current_digest} = {service_current_digest}
+      AND c.source_job_id = p.source_check_job_id
+      AND LOWER(source_job.type) = 'check'
+      AND LOWER(source_job.status) = 'success'
+      AND LOWER(c.source) IN ('schedule', 'github_webhook')
+      AND (
+        (LOWER(c.source) = 'schedule'
+          AND LOWER(source_job.reason) = 'schedule'
+          AND LOWER(source_job.created_by) = 'schedule')
+        OR (LOWER(c.source) = 'github_webhook'
+          AND LOWER(source_job.created_by) IN ('webhook', 'github')
+          AND LOWER(COALESCE(json_extract(CASE WHEN json_valid(source_job.summary_json) THEN source_job.summary_json ELSE '{{}}' END, '$.source'), '')) = 'github_webhook')
+      )
+      AND (
+        (LOWER(source_job.scope) = 'service'
+          AND LOWER(TRIM(source_job.stack_id)) = LOWER(TRIM(p.stack_id))
+          AND LOWER(TRIM(source_job.service_id)) = LOWER(TRIM(p.service_id)))
+        OR (LOWER(source_job.scope) = 'stack'
+          AND LOWER(TRIM(source_job.stack_id)) = LOWER(TRIM(p.stack_id))
+          AND source_job.service_id IS NULL)
+        OR (LOWER(source_job.scope) = 'all'
+          AND source_job.stack_id IS NULL
+          AND source_job.service_id IS NULL)
+      )
+      AND LOWER(jobs.scope) = 'service'
+      AND LOWER(TRIM(jobs.stack_id)) = LOWER(TRIM(p.stack_id))
+      AND LOWER(TRIM(jobs.service_id)) = LOWER(TRIM(p.service_id))
+      AND json_array_length(CASE WHEN json_valid(jobs.summary_json) THEN jobs.summary_json ELSE '{{}}' END, '$.targets') = 1
+      AND EXISTS (
+        SELECT 1
+        FROM json_each(CASE WHEN json_valid(jobs.summary_json) THEN jobs.summary_json ELSE '{{}}' END, '$.targets') AS target
+        WHERE json_extract(target.value, '$.serviceId') = p.service_id
+          AND NULLIF(TRIM(json_extract(target.value, '$.targetTag')), '') = NULLIF(TRIM(s.image_tag), '')
+          AND {target_digest} = {pending_digest}
+          AND {expected_current_digest} = {service_current_digest}
+      )
       AND (
         (
-          p.policy_scope_type = 'service'
-          AND p.policy_scope_id = s.id
+          LOWER(TRIM(p.policy_scope_type)) = 'service'
+          AND LOWER(TRIM(p.policy_scope_id)) = LOWER(TRIM(s.id))
           AND EXISTS (
             SELECT 1
             FROM auto_update_policies policy
-            WHERE policy.scope_type = 'service'
-              AND policy.scope_id = s.id
+            WHERE LOWER(TRIM(policy.scope_type)) = 'service'
+              AND LOWER(TRIM(policy.scope_id)) = LOWER(TRIM(s.id))
               AND policy.mode = 'override'
               AND policy.enabled <> 0
               AND policy.updated_at = json_extract(p.summary_json, '$.policyUpdatedAt')
@@ -208,20 +286,20 @@ WHERE id = ?1
           )
         )
         OR (
-          p.policy_scope_type = 'stack'
-          AND p.policy_scope_id = s.stack_id
+          LOWER(TRIM(p.policy_scope_type)) = 'stack'
+          AND LOWER(TRIM(p.policy_scope_id)) = LOWER(TRIM(s.stack_id))
           AND NOT EXISTS (
             SELECT 1
             FROM auto_update_policies service_policy
-            WHERE service_policy.scope_type = 'service'
-              AND service_policy.scope_id = s.id
+            WHERE LOWER(TRIM(service_policy.scope_type)) = 'service'
+              AND LOWER(TRIM(service_policy.scope_id)) = LOWER(TRIM(s.id))
               AND service_policy.mode <> 'inherit'
           )
           AND EXISTS (
             SELECT 1
             FROM auto_update_policies policy
-            WHERE policy.scope_type = 'stack'
-              AND policy.scope_id = s.stack_id
+            WHERE LOWER(TRIM(policy.scope_type)) = 'stack'
+              AND LOWER(TRIM(policy.scope_id)) = LOWER(TRIM(s.stack_id))
               AND policy.mode = 'override'
               AND policy.enabled <> 0
               AND policy.updated_at = json_extract(p.summary_json, '$.policyUpdatedAt')
@@ -235,15 +313,16 @@ WHERE id = ?1
         )
       )
   )
-"#,
-                    params![query_job_id, query_started_at],
-                )? == 1)
+"#
+                );
+                Ok(conn.execute(&sql, params![query_job_id, query_started_at])? == 1)
             })
             .await
             .context("claim queued job by id")?;
         if !claimed {
             let cancel_job_id = job_id.clone();
             let cancel_started_at = started_at.clone();
+            let cancel_skip_reason = skip_reason.clone();
             let cancelled = self.call(move |conn| {
                 let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
                 let changed = tx.execute(
@@ -260,13 +339,13 @@ WHERE id = ?1 AND status = 'queued' AND created_by = 'auto-policy'
 UPDATE auto_update_pending
 SET status = 'skipped',
     summary_json = CASE
-      WHEN json_valid(summary_json) THEN json_set(summary_json, '$.skipReason', 'policy_changed_before_start', '$.skippedAt', ?2)
-      ELSE json_object('skipReason', 'policy_changed_before_start', 'skippedAt', ?2)
+      WHEN json_valid(summary_json) THEN json_set(summary_json, '$.skipReason', ?3, '$.skippedAt', ?2)
+      ELSE json_object('skipReason', ?3, 'skippedAt', ?2)
     END,
     updated_at = ?2
 WHERE update_job_id = ?1 AND status = 'enqueued'
 "#,
-                        params![cancel_job_id, cancel_started_at],
+                        params![cancel_job_id, cancel_started_at, cancel_skip_reason],
                     )?;
                 }
                 tx.commit()?;

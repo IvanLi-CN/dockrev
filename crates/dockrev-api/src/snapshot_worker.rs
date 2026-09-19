@@ -1201,6 +1201,25 @@ pub fn normalize_digest(input: &str) -> Option<String> {
     Some(format!("sha256:{}", trimmed.to_ascii_lowercase()))
 }
 
+pub fn normalize_digest_identity(input: &str) -> Option<String> {
+    let trimmed = input.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+    let (algorithm, encoded) = trimmed
+        .split_once(':')
+        .map_or((None, trimmed), |(algorithm, encoded)| {
+            (Some(algorithm), encoded)
+        });
+    if algorithm.is_some_and(|value| !value.eq_ignore_ascii_case("sha256"))
+        || encoded.len() != 64
+        || !encoded.bytes().all(|byte| byte.is_ascii_hexdigit())
+    {
+        return None;
+    }
+    Some(format!("sha256:{}", encoded.to_ascii_lowercase()))
+}
+
 pub fn image_repo_from_image_ref(image_ref: &str) -> Option<String> {
     if let Ok(img) = registry::ImageRef::parse(image_ref) {
         return Some(format!("{}/{}", img.registry, img.name));

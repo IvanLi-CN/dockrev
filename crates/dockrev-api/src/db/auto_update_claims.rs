@@ -51,7 +51,7 @@ impl Db {
     ) -> anyhow::Result<Vec<AutoUpdateCandidateRow>> {
         self.call(move |conn| {
             let mut stmt = conn.prepare(&format!(
-                "SELECT {AUTO_UPDATE_CANDIDATE_COLUMNS} FROM auto_update_candidates WHERE status IN ('ready', 'unresolved') AND policy_status IS NOT 'completed' AND EXISTS (SELECT 1 FROM services s WHERE s.id = auto_update_candidates.service_id AND s.candidate_digest = auto_update_candidates.candidate_digest) AND (policy_evaluated_at IS NULL OR policy_evaluated_at < updated_at OR EXISTS (SELECT 1 FROM auto_update_policies p WHERE p.scope_type = auto_update_candidates.policy_scope_type AND p.scope_id = auto_update_candidates.policy_scope_id AND (auto_update_candidates.policy_evaluated_at IS NULL OR auto_update_candidates.policy_evaluated_at < p.updated_at)) OR (policy_status = 'delayed' AND NOT EXISTS (SELECT 1 FROM auto_update_pending p WHERE p.service_id = auto_update_candidates.service_id AND p.candidate_digest = auto_update_candidates.candidate_digest AND p.status IN ('pending', 'enqueuing', 'enqueued')))) ORDER BY updated_at ASC LIMIT ?1"
+                "SELECT {AUTO_UPDATE_CANDIDATE_COLUMNS} FROM auto_update_candidates WHERE status IN ('awaiting_inference', 'ready', 'unresolved') AND policy_status IS NOT 'completed' AND EXISTS (SELECT 1 FROM services s WHERE s.id = auto_update_candidates.service_id AND s.candidate_digest = auto_update_candidates.candidate_digest) AND (policy_evaluated_at IS NULL OR policy_evaluated_at < updated_at OR EXISTS (SELECT 1 FROM auto_update_policies p WHERE LOWER(TRIM(p.scope_type)) = LOWER(TRIM(auto_update_candidates.policy_scope_type)) AND LOWER(TRIM(p.scope_id)) = LOWER(TRIM(auto_update_candidates.policy_scope_id)) AND (auto_update_candidates.policy_evaluated_at IS NULL OR auto_update_candidates.policy_evaluated_at < p.updated_at)) OR (policy_status = 'delayed' AND NOT EXISTS (SELECT 1 FROM auto_update_pending p WHERE p.service_id = auto_update_candidates.service_id AND p.candidate_digest = auto_update_candidates.candidate_digest AND p.status IN ('pending', 'enqueuing', 'enqueued')))) ORDER BY updated_at ASC LIMIT ?1"
             ))?;
             let rows = stmt.query_map(params![limit as i64], map_auto_update_candidate_row)?;
             Ok(rows.collect::<Result<Vec<_>, _>>()?)
@@ -137,6 +137,10 @@ WHERE status = 'enqueuing' AND updated_at <= ?1
             };
             let mut repaired = 0;
             let mut recovered_jobs = Vec::new();
+            let target_digest = super::canonical_digest_sql(
+                "json_extract(target.value, '$.targetDigest')",
+            );
+            let pending_digest = super::canonical_digest_sql("?2");
             for (
                 pending_id,
                 service_id,
@@ -150,7 +154,8 @@ WHERE status = 'enqueuing' AND updated_at <= ?1
             {
                 let existing_job = tx
                     .query_row(
-                        r#"
+                        &format!(
+                            r#"
 SELECT j.id
 FROM jobs j
 WHERE j.created_by = 'auto-policy'
@@ -161,7 +166,7 @@ WHERE j.created_by = 'auto-policy'
     SELECT 1
     FROM json_each(j.summary_json, '$.targets') target
     WHERE json_extract(target.value, '$.serviceId') = ?1
-      AND json_extract(target.value, '$.targetDigest') = ?2
+      AND {target_digest} = {pending_digest}
       AND json_extract(target.value, '$.autoPolicyContext.pendingId') = ?4
       AND json_extract(target.value, '$.autoPolicyContext.ruleId') = ?5
       AND json_extract(target.value, '$.autoPolicyContext.policyScopeType') = ?6
@@ -170,7 +175,8 @@ WHERE j.created_by = 'auto-policy'
   )
 ORDER BY j.created_at DESC, j.id DESC
 LIMIT 1
-"#,
+"#
+                        ),
                         params![
                             service_id,
                             candidate_digest,

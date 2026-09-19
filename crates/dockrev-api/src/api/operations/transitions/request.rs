@@ -249,30 +249,137 @@ async fn enqueue_update_job_with_start(
     });
 
     let mut job_db = job.to_db();
+    let auto_policy_job = created_by == "auto-policy";
     job_db.created_by = created_by;
     job_db.reason = reason;
     let has_operation_targets = !operation_targets.is_empty();
     if !has_operation_targets {
         state.db.insert_job(job_db).await.map_err(map_internal)?;
-    } else if let Some(conflict) = state
-        .db
-        .insert_service_operation_job_if_unblocked(
-            job_db,
-            operation_targets,
-            Some(JobLogLine {
-                ts: now.clone(),
-                level: "info".to_string(),
-                msg: if start_immediately {
-                    "update started".to_string()
-                } else {
-                    "update queued".to_string()
-                },
-            }),
-        )
-        .await
-        .map_err(map_internal)?
-    {
-        return Err(service_operation_conflict_error(&conflict));
+    } else {
+        let initial_log = Some(JobLogLine {
+            ts: now.clone(),
+            level: "info".to_string(),
+            msg: if start_immediately {
+                "update started".to_string()
+            } else {
+                "update queued".to_string()
+            },
+        });
+        let expected_current_digest = req.targets.as_deref().and_then(|targets| {
+            let values = targets
+                .iter()
+                .filter_map(|target| target.auto_policy_context.as_ref())
+                .filter_map(|context| context.expected_current_digest.as_deref())
+                .collect::<Vec<_>>();
+            if values.len() == 1 {
+                values.into_iter().next()
+            } else {
+                None
+            }
+        });
+        let auto_policy_guard = req.targets.as_deref().and_then(|targets| {
+            if targets.len() != 1 {
+                return None;
+            }
+            let target = &targets[0];
+            let context = target.auto_policy_context.as_ref()?;
+            let expected_current_digest = context.expected_current_digest.clone()?;
+            if expected_current_digest.trim().is_empty() || context.candidate_id.trim().is_empty() {
+                return None;
+            }
+            Some(crate::db::AutoPolicyEnqueueGuard {
+                pending_id: context.pending_id.clone(),
+                service_id: target.service_id.clone(),
+                candidate_id: context.candidate_id.clone(),
+                candidate_digest: target.target_digest.clone(),
+                policy_scope_type: context.policy_scope_type.clone(),
+                policy_scope_id: context.policy_scope_id.clone(),
+                rule_id: context.rule_id.clone(),
+                expected_current_digest,
+            })
+        });
+        if auto_policy_job && auto_policy_guard.is_none() {
+            return Err(
+                ApiError::conflict("auto policy update is missing candidate provenance")
+                    .with_details(json!({
+                        "reason": "auto_policy_context_missing"
+                    })),
+            );
+        }
+        if auto_policy_job && expected_current_digest.is_none_or(|digest| digest.trim().is_empty())
+        {
+            return Err(ApiError::conflict(
+                "auto policy update is missing the current digest baseline",
+            )
+            .with_details(json!({
+                "reason": "auto_policy_baseline_missing"
+            })));
+        }
+        let conflict = if let Some(guard) = auto_policy_guard {
+            match state
+                .db
+                .insert_service_operation_job_if_unblocked_with_auto_policy_guard(
+                    job_db,
+                    operation_targets,
+                    initial_log,
+                    guard,
+                )
+                .await
+                .map_err(map_internal)?
+            {
+                crate::db::ServiceOperationAcquireOutcome::Acquired(_) => None,
+                crate::db::ServiceOperationAcquireOutcome::Conflict(job) => Some(*job),
+                crate::db::ServiceOperationAcquireOutcome::StaleCurrentDigest
+                | crate::db::ServiceOperationAcquireOutcome::StaleAutoPolicy => {
+                    return Err(ApiError::conflict(
+                        "service candidate changed while enqueueing auto policy update",
+                    )
+                    .with_details(json!({
+                        "reason": "candidate_changed"
+                    })));
+                }
+            }
+        } else if let Some(expected_current_digest) = expected_current_digest {
+            match state
+                .db
+                .insert_service_operation_job_if_unblocked_with_current_digest(
+                    job_db,
+                    operation_targets,
+                    initial_log,
+                    expected_current_digest,
+                )
+                .await
+                .map_err(map_internal)?
+            {
+                crate::db::ServiceOperationAcquireOutcome::Acquired(_) => None,
+                crate::db::ServiceOperationAcquireOutcome::Conflict(job) => Some(*job),
+                crate::db::ServiceOperationAcquireOutcome::StaleCurrentDigest => {
+                    return Err(ApiError::conflict(
+                        "service candidate changed while enqueueing auto policy update",
+                    )
+                    .with_details(json!({
+                        "reason": "candidate_changed"
+                    })));
+                }
+                crate::db::ServiceOperationAcquireOutcome::StaleAutoPolicy => {
+                    return Err(ApiError::conflict(
+                        "service candidate changed while enqueueing auto policy update",
+                    )
+                    .with_details(json!({
+                        "reason": "candidate_changed"
+                    })));
+                }
+            }
+        } else {
+            state
+                .db
+                .insert_service_operation_job_if_unblocked(job_db, operation_targets, initial_log)
+                .await
+                .map_err(map_internal)?
+        };
+        if let Some(conflict) = conflict {
+            return Err(service_operation_conflict_error(&conflict));
+        }
     }
     if matches!(&req.mode, UpdateMode::Apply) {
         state

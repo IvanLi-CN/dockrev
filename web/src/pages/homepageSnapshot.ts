@@ -219,6 +219,21 @@ function parseService(value: unknown): Service | null {
           lastError: asOptionalString(value.candidateSettlement.lastError),
           supersededAt: asOptionalString(value.candidateSettlement.supersededAt),
           supersededByCandidateId: asOptionalString(value.candidateSettlement.supersededByCandidateId),
+          source: asOptionalString(value.candidateSettlement.source),
+          sourceJobId: asOptionalString(value.candidateSettlement.sourceJobId),
+          hydrationOrigin: asOptionalString(value.candidateSettlement.hydrationOrigin),
+        }
+      : null;
+  const candidateHydration =
+    isRecord(value.candidateHydration) && asString(value.candidateHydration.status)
+      ? {
+          status: value.candidateHydration.status as string,
+          reason: asOptionalString(value.candidateHydration.reason),
+          candidateDigest: asOptionalString(value.candidateHydration.candidateDigest),
+          source: asOptionalString(value.candidateHydration.source),
+          sourceJobId: asOptionalString(value.candidateHydration.sourceJobId),
+          hydrationOrigin: asOptionalString(value.candidateHydration.hydrationOrigin),
+          discoveredAt: asOptionalString(value.candidateHydration.discoveredAt),
         }
       : null;
   const autoUpdate =
@@ -277,6 +292,7 @@ function parseService(value: unknown): Service | null {
     ignore,
     versionInference,
     candidateSettlement,
+    candidateHydration,
     autoUpdate,
     newVersionDiscoveryCount:
       typeof value.newVersionDiscoveryCount === "number"

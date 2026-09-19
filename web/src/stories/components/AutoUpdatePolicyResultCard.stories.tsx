@@ -74,6 +74,9 @@ function renderCard(status: ProjectionStatus) {
               attempts: 1,
               retryAt: '2026-09-16T10:05:00Z',
               discoveredAt: '2026-09-16T10:00:00Z',
+              source: 'github_webhook',
+              sourceJobId: 'check-webhook',
+              hydrationOrigin: 'discovery_history',
             }
           : status === 'completed'
             ? {
@@ -85,6 +88,9 @@ function renderCard(status: ProjectionStatus) {
                 attempts: 1,
                 retryAt: null,
                 discoveredAt: '2026-09-16T09:55:00Z',
+                source: 'schedule',
+                sourceJobId: 'check-schedule',
+                hydrationOrigin: 'discovery_history',
               }
           : status === 'unresolved'
             ? {
@@ -134,6 +140,12 @@ export const StateGallery: Story = {
     if (!canvasElement.textContent?.includes('尝试 3 次')) {
       throw new Error('unresolved inference attempts missing')
     }
+    if (!canvasElement.textContent?.includes('来源任务 check-webhook')) {
+      throw new Error('candidate source job provenance missing')
+    }
+    if (!canvasElement.textContent?.includes('回填 discovery_history')) {
+      throw new Error('candidate hydration origin missing')
+    }
   },
 }
 
@@ -147,6 +159,117 @@ export const Delayed: Story = {
 
 export const UpdateCompleted: Story = {
   render: () => renderCard('completed'),
+}
+
+export const ServiceResults: Story = {
+  render: () => (
+    <div
+      data-visual-evidence-surface
+      style={{ background: 'var(--bg)', padding: 48 }}
+    >
+      <div data-visual-evidence-target>
+        <AutoUpdatePolicyResultCard
+          onOpenSettings={() => undefined}
+          policy={policy}
+          projection={{
+            policyStatus: 'queued',
+            reason: '服务策略已通过 claim',
+            ruleId: 'stable',
+            evaluatedAt: '2026-09-16T10:00:00Z',
+          }}
+          scope="stack"
+          serviceResults={[
+            {
+              serviceName: 'web',
+              projection: {
+                policyStatus: 'waiting_inference',
+                reason: '等待版本证据',
+                ruleId: null,
+                evaluatedAt: '2026-09-16T10:00:00Z',
+              },
+              candidateSettlement: {
+                status: 'awaiting_inference',
+                rawTag: 'latest',
+                candidateDigest: 'sha256:awaiting',
+                reason: 'version_inference_pending',
+                attempts: 1,
+                retryAt: null,
+                discoveredAt: '2026-09-16T10:00:00Z',
+              },
+            },
+            {
+              serviceName: 'worker',
+              projection: {
+                policyStatus: 'completed',
+                reason: '更新已完成',
+                ruleId: 'stable',
+                evaluatedAt: '2026-09-16T10:00:00Z',
+              },
+              candidateSettlement: {
+                status: 'superseded',
+                rawTag: 'latest',
+                candidateDigest: 'sha256:superseded',
+                reason: 'candidate_superseded',
+                attempts: 0,
+                retryAt: null,
+                discoveredAt: '2026-09-16T09:55:00Z',
+              },
+            },
+          ]}
+        />
+      </div>
+    </div>
+  ),
+  play: async ({ canvasElement }) => {
+    const text = canvasElement.textContent ?? ''
+    if (text.includes('awaiting_inference') || text.includes('superseded')) {
+      throw new Error('service result labels should not expose raw candidate statuses')
+    }
+    if (!text.includes('候选已被新版本替代') || !text.includes('等待版本证据')) {
+      throw new Error('service result candidate status labels missing')
+    }
+  },
+}
+
+export const ServiceResultsMobile: Story = {
+  ...ServiceResults,
+  parameters: { viewport: { defaultViewport: 'dockrevMobile' } },
+}
+
+export const AmbiguousHistory: Story = {
+  render: () => (
+    <div
+      data-visual-evidence-surface
+      style={{ background: 'var(--bg)', padding: 48 }}
+    >
+      <div data-visual-evidence-target>
+        <AutoUpdatePolicyResultCard
+          onOpenSettings={() => undefined}
+          policy={policy}
+          projection={{
+            policyStatus: 'skipped',
+            reason: 'migration_ambiguous_history',
+            ruleId: null,
+            evaluatedAt: '2026-09-16T10:00:00Z',
+          }}
+          scope="stack"
+          candidateHydration={{
+            status: 'ambiguous_history',
+            reason: 'migration_ambiguous_history',
+            candidateDigest: 'sha256:ambiguous',
+          }}
+          candidateSettlement={{
+            status: 'unresolved',
+            rawTag: 'latest',
+            candidateDigest: 'sha256:ambiguous',
+            reason: 'migration_ambiguous_history',
+            attempts: 0,
+            discoveredAt: '2026-09-16T10:00:00Z',
+          }}
+        />
+      </div>
+    </div>
+  ),
 }
 
 export const StateGalleryMobile: Story = {

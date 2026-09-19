@@ -1019,6 +1019,7 @@ pub(super) async fn get_homepage_nav(
                 ignore: row.service.ignore.clone(),
                 version_inference: row.service.version_inference.clone(),
                 candidate_settlement: row.service.candidate_settlement.clone(),
+                candidate_hydration: row.service.candidate_hydration.clone(),
                 auto_update: row.service.auto_update.clone(),
                 new_version_discovery_count: row.service.new_version_discovery_count,
                 settings: row.service.settings.clone(),

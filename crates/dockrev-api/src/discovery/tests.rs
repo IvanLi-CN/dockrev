@@ -158,6 +158,7 @@ fn stack_services_match_specs_detects_changes() {
             ignore: None,
             version_inference: None,
             candidate_settlement: None,
+            candidate_hydration: None,
             auto_update: None,
             new_version_discovery_count: None,
             settings: crate::api::types::ServiceSettings {

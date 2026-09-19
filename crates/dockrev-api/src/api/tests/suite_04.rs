@@ -578,6 +578,88 @@ services:
 }
 
 #[tokio::test]
+async fn service_new_version_timeline_joins_legacy_prefixless_candidate_digest() {
+    let state = test_state(":memory:").await;
+    let compose_path = format!("/tmp/dockrev-test-{}.yml", ulid::Ulid::new());
+    std::fs::write(
+        &compose_path,
+        r#"
+services:
+  web:
+    image: ghcr.io/acme/web:latest
+"#,
+    )
+    .unwrap();
+
+    let stack_id = seed_stack_from_compose(&state, "demo", &compose_path).await;
+    let service_id = set_single_service_check_result(
+        &state,
+        &stack_id,
+        Some("sha256:current"),
+        Some("latest"),
+        None,
+    )
+    .await;
+    let candidate_digest =
+        "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+    let now = test_now_rfc3339();
+    state
+        .db
+        .update_service_check_result(
+            &service_id,
+            Some("sha256:current".to_string()),
+            None,
+            None,
+            Some("latest".to_string()),
+            None,
+            Some(candidate_digest.to_string()),
+            Some("match".to_string()),
+            Some(r#"["linux/amd64"]"#.to_string()),
+            None,
+            None,
+            &now,
+            &now,
+        )
+        .await
+        .unwrap();
+    state
+        .db
+        .upsert_auto_update_candidate(
+            &crate::db::AutoUpdateCandidateInput {
+                id: format!("{service_id}:sha256:{candidate_digest}"),
+                stack_id,
+                service_id: service_id.clone(),
+                image_ref: "ghcr.io/acme/web".to_string(),
+                raw_tag: "latest".to_string(),
+                candidate_digest: format!("sha256:{candidate_digest}"),
+                resolved_version: Some("1.4.0".to_string()),
+                status: "ready".to_string(),
+                reason: Some("digest_bound_version".to_string()),
+                attempts: 0,
+                retry_at: None,
+                discovered_at: now.clone(),
+                source_job_id: "check".to_string(),
+                source: "schedule".to_string(),
+                current_tag: "latest".to_string(),
+                current_display_tag: "1.3.0".to_string(),
+                current_digest: Some("sha256:current".to_string()),
+            },
+            &now,
+        )
+        .await
+        .unwrap();
+
+    let context = state
+        .db
+        .get_service_new_version_timeline_context(&service_id)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(context.candidate_digest, Some(candidate_digest.to_string()));
+    assert_eq!(context.candidate_resolved_tag.as_deref(), Some("1.4.0"));
+}
+
+#[tokio::test]
 async fn sync_stack_compose_reset_clears_runtime_started_at_from_timeline_context() {
     let state = test_state(":memory:").await;
 
