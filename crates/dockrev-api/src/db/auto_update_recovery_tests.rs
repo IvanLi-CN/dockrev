@@ -596,6 +596,10 @@ async fn digest_identity_migration_deduplicates_active_pending_rows() {
                 [],
             )?;
             conn.execute(
+                "INSERT INTO auto_update_pending (id, policy_scope_type, policy_scope_id, rule_id, stack_id, service_id, source_check_job_id, candidate_tag, candidate_display_tag, candidate_digest, current_display_tag, current_digest, first_seen_at, due_at, min_age_seconds, min_version_lag, status, update_job_id, created_at, updated_at, candidate_id, summary_json) VALUES ('pending-service-scope', 'service', 'service', 'rule', 'stack', 'service', 'check', 'latest', '1.2.0', 'sha256:abc', '1.0.0', 'sha256:current', '2026-04-30T00:00:02Z', '2026-04-30T00:00:02Z', 0, 0, 'pending', NULL, '2026-04-30T00:00:02Z', '2026-04-30T00:00:02Z', 'candidate-canonical', '{}')",
+                [],
+            )?;
+            conn.execute(
                 "DELETE FROM schema_migrations WHERE id = '0024_normalize_auto_update_digest_identity'",
                 [],
             )?;
@@ -682,6 +686,12 @@ async fn digest_identity_migration_deduplicates_active_pending_rows() {
                 "sha256:abc".to_string(),
                 "skipped".to_string(),
                 Some("migration_duplicate_candidate_digest".to_string())
+            ),
+            (
+                "pending-service-scope".to_string(),
+                "sha256:abc".to_string(),
+                "pending".to_string(),
+                None
             )
         ]
     );

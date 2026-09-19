@@ -1048,7 +1048,7 @@ mod tests {
             summary_json: serde_json::json!({
                 "targets": [{
                     "serviceId": "service",
-                    "targetDigest": "sha256:success",
+                    "targetDigest": "SUCCESS",
                     "autoPolicyContext": {
                         "pendingId": "pending-success",
                         "candidateId": "",

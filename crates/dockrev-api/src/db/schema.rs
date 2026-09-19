@@ -1338,7 +1338,9 @@ CREATE TABLE IF NOT EXISTS auto_update_pending (
   summary_json TEXT NOT NULL DEFAULT '{}'
 );
 CREATE UNIQUE INDEX IF NOT EXISTS idx_auto_update_pending_active_candidate
-  ON auto_update_pending(service_id, rule_id, candidate_digest)
+  ON auto_update_pending(
+    service_id, rule_id, policy_scope_type, policy_scope_id, candidate_digest
+  )
   WHERE status IN ('pending', 'enqueuing', 'enqueued');
 CREATE INDEX IF NOT EXISTS idx_auto_update_pending_due
   ON auto_update_pending(status, due_at);
