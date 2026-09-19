@@ -831,10 +831,8 @@ pub(super) fn apply_migration_0022_harden_auto_update_source_provenance(
     let candidate_digest = super::strict_canonical_digest_sql("c.candidate_digest");
     let pending_digest = super::strict_canonical_digest_sql("p.candidate_digest");
     let service_digest = super::strict_canonical_digest_sql("candidate_service.candidate_digest");
-    let candidate_current_digest = super::strict_canonical_digest_sql("c.current_digest");
-    let pending_current_digest = super::strict_canonical_digest_sql("p.current_digest");
-    let service_current_digest =
-        super::strict_canonical_digest_sql("candidate_service.current_digest");
+    let [candidate_current_digest, pending_current_digest, service_current_digest] =
+        auto_update_current_digest_sql();
     let sql = format!(
         r#"
 INSERT INTO migration_invalid_auto_update_pending (id)

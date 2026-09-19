@@ -162,6 +162,14 @@ WHERE status NOT IN ('superseded', 'completed')
     Ok(())
 }
 
+fn auto_update_current_digest_sql() -> [String; 3] {
+    [
+        super::strict_canonical_digest_sql("c.current_digest"),
+        super::strict_canonical_digest_sql("p.current_digest"),
+        super::strict_canonical_digest_sql("candidate_service.current_digest"),
+    ]
+}
+
 fn apply_migration_0015_add_auto_update_candidate_provenance(
     conn: &mut rusqlite::Connection,
 ) -> anyhow::Result<()> {
