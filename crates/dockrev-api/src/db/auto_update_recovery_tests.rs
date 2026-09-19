@@ -1481,3 +1481,4 @@ async fn recovered_auto_policy_job_reopens_its_pending_candidate() {
 }
 
 include!("auto_update_recovery_tests_tail.rs");
+include!("auto_update_policy_scope_tests.rs");

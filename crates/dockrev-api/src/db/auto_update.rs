@@ -109,7 +109,7 @@ ON CONFLICT(scope_type, scope_id) DO UPDATE SET
             let stale_rows = {
                 let mut stmt = tx.prepare(
                     r#"
-SELECT id, summary_json
+SELECT id, update_job_id, summary_json
 FROM auto_update_pending
 WHERE service_id = ?1 AND rule_id = ?2 AND candidate_digest = ?3
   AND status IN ('pending', 'enqueuing', 'enqueued')
@@ -124,11 +124,17 @@ WHERE service_id = ?1 AND rule_id = ?2 AND candidate_digest = ?3
                         input.policy_scope_type,
                         input.policy_scope_id,
                     ],
-                    |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)),
+                    |row| {
+                        Ok((
+                            row.get::<_, String>(0)?,
+                            row.get::<_, Option<String>>(1)?,
+                            row.get::<_, String>(2)?,
+                        ))
+                    },
                 )?;
                 rows.collect::<Result<Vec<_>, _>>()?
             };
-            for (pending_id, summary_raw) in stale_rows {
+            for (pending_id, update_job_id, summary_raw) in stale_rows {
                 let mut summary = serde_json::from_str::<serde_json::Value>(&summary_raw)
                     .unwrap_or_else(|_| serde_json::json!({}));
                 if !summary.is_object() {
@@ -146,6 +152,35 @@ WHERE id = ?1
 "#,
                     params![pending_id, serde_json::to_string(&summary)?, now],
                 )?;
+                if let Some(update_job_id) = update_job_id {
+                    tx.execute(
+                        r#"
+UPDATE jobs
+SET status = 'cancelled', finished_at = ?2
+WHERE id = ?1 AND status = 'queued' AND created_by = 'auto-policy'
+"#,
+                        params![update_job_id, now],
+                    )?;
+                    tx.execute(
+                        r#"
+INSERT INTO update_job_stop_controls (
+  job_id, stop_requested_at, stop_requested_by, updated_at
+)
+SELECT ?1, ?2, 'auto-policy-policy-change', ?2
+WHERE EXISTS (
+  SELECT 1 FROM jobs
+  WHERE id = ?1 AND status = 'running' AND created_by = 'auto-policy'
+)
+ON CONFLICT(job_id) DO UPDATE SET
+  stop_requested_at = COALESCE(update_job_stop_controls.stop_requested_at, excluded.stop_requested_at),
+  stop_requested_by = COALESCE(update_job_stop_controls.stop_requested_by, excluded.stop_requested_by),
+  updated_at = excluded.updated_at
+WHERE update_job_stop_controls.apply_committed_at IS NULL
+  AND update_job_stop_controls.stop_requested_at IS NULL
+"#,
+                        params![update_job_id, now],
+                    )?;
+                }
             }
             tx.execute(
                 r#"
