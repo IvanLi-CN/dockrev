@@ -1502,6 +1502,18 @@ html[data-theme="light"] .brandLogoForLight {
   min-width: 0;
 }
 
+.modalImageLinkRow {
+  flex-wrap: wrap;
+  max-width: 100%;
+}
+
+.modalImageLinkRow .monoSplitBase {
+  flex: 1 1 auto;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+  white-space: normal;
+}
+
 .imageLinkIcons {
   display: inline-flex;
   align-items: center;
@@ -4091,7 +4103,10 @@ html[data-theme="light"] .modalOverlay {
 }
 
 .modalCard {
-  width: min(760px, calc(100vw - 48px));
+  width: fit-content;
+  min-width: min(520px, calc(100vw - 48px));
+  max-width: min(760px, calc(100vw - 48px));
+  box-sizing: border-box;
   border-radius: 16px;
   border: 1px solid rgba(229, 231, 235, 0.12);
   background: var(--panel);
@@ -4107,6 +4122,7 @@ html[data-theme="light"] .modalOverlay {
   flex-direction: column;
   align-items: stretch;
   gap: 12px;
+  min-width: 0;
 }
 
 .modalTitleRow {
@@ -4114,9 +4130,11 @@ html[data-theme="light"] .modalOverlay {
   align-items: center;
   justify-content: space-between;
   gap: 12px;
+  min-width: 0;
 }
 
 .modalTitle {
+  min-width: 0;
   font-size: 16px;
   font-weight: 750;
   color: var(--text);
@@ -4124,6 +4142,7 @@ html[data-theme="light"] .modalOverlay {
 
 .modalBody {
   min-width: 0;
+  min-height: 0;
   margin-top: 10px;
   color: var(--muted2);
   font-size: 12px;
@@ -4225,8 +4244,9 @@ html[data-theme="light"] .modalOverlay {
 .modalValueStack {
   display: flex;
   flex-direction: column;
-  align-items: flex-start;
+  align-items: stretch;
   gap: 2px;
+  width: 100%;
   min-width: 0;
 }
 

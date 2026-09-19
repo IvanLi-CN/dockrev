@@ -87,6 +87,17 @@
 
 ![窄屏单服务长 digest 确认](./assets/service-update-confirm-mobile.png)
 
+### 弹窗宽度响应
+
+- Source: Storybook canvas `Components/ConfirmDialog/ServiceUpdateLongDigest`
+- Viewports: 1440 x 900 (desktop), 393 x 852 (mobile)
+- Scope: single service update confirmation dialog width and long image reference wrapping
+- Notes: 验证弹窗随内容收缩，同时受视口安全边距与最大宽度约束；完整镜像引用和目标 digest 在卡片内换行，不产生横向溢出。
+
+![桌面弹窗宽度响应](./assets/service-update-confirm-width-desktop.png)
+
+![手机弹窗宽度响应](./assets/service-update-confirm-width-mobile.png)
+
 ### hint 状态 badge 语义确认
 
 - Source: Storybook canvas `Components/ServiceUpdateConfirmDetails/HintStatusBadge`

@@ -290,7 +290,7 @@ export const ServiceUpdateLongDigest: Story = {
       id: 'svc-ani-rss',
       name: 'media-ani-rss',
       image: {
-        ref: 'docker.io/wushuo894/ani-rss:latest',
+        ref: `docker.io/wushuo894/ani-rss@${CURRENT_DIGEST}`,
         tag: 'latest',
         digest: CURRENT_DIGEST,
         resolvedTag: 'v1.55.1',
@@ -340,6 +340,18 @@ export const ServiceUpdateLongDigest: Story = {
     expectStory(
       digestBounds.right <= cardBounds.right + 1,
       'long digest should stay inside the confirm dialog card',
+    )
+
+    const imageRow = canvasElement.ownerDocument.querySelector<HTMLElement>('.imageLinkRow')
+    expectStory(imageRow, 'expected image reference row to be rendered')
+    const imageRowBounds = imageRow.getBoundingClientRect()
+    expectStory(
+      imageRowBounds.right <= cardBounds.right + 1,
+      'long image reference should stay inside the confirm dialog card',
+    )
+    expectStory(
+      imageRow.scrollWidth <= imageRow.clientWidth + 1,
+      'long image reference should not create horizontal overflow',
     )
   },
 }
