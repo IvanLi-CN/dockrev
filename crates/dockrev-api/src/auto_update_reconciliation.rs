@@ -102,7 +102,9 @@ fn auto_policy_source_identity_matches(
     service_id: Option<&str>,
 ) -> bool {
     let matches = |actual: Option<&str>, expected: &str| {
-        actual.is_some_and(|actual| actual.eq_ignore_ascii_case(expected))
+        actual.is_some_and(|actual| {
+            actual.trim().eq_ignore_ascii_case(expected.trim())
+        })
     };
     match (stack_id, service_id, job_scope) {
         (Some(stack_id), Some(service_id), scope) if scope.eq_ignore_ascii_case("service") => {

@@ -352,8 +352,8 @@ WHERE id = ?1
   AND status = 'pending'
   AND service_id = ?2
   AND {pending_candidate_digest} = {expected_candidate_digest}
-  AND policy_scope_type = ?4
-  AND policy_scope_id = ?5
+  AND LOWER(TRIM(policy_scope_type)) = LOWER(TRIM(?4))
+  AND LOWER(TRIM(policy_scope_id)) = LOWER(TRIM(?5))
   AND rule_id = ?6
   AND EXISTS (
     SELECT 1
@@ -377,16 +377,16 @@ WHERE id = ?1
     SELECT 1
     FROM services s
     LEFT JOIN auto_update_policies service_policy
-      ON service_policy.scope_type = 'service'
-     AND service_policy.scope_id = s.id
+      ON LOWER(TRIM(service_policy.scope_type)) = 'service'
+     AND LOWER(TRIM(service_policy.scope_id)) = LOWER(TRIM(s.id))
     LEFT JOIN auto_update_policies stack_policy
-      ON stack_policy.scope_type = 'stack'
-     AND stack_policy.scope_id = s.stack_id
+      ON LOWER(TRIM(stack_policy.scope_type)) = 'stack'
+     AND LOWER(TRIM(stack_policy.scope_id)) = LOWER(TRIM(s.stack_id))
     WHERE s.id = ?2
       AND (
         (
-          ?4 = 'service'
-          AND ?5 = s.id
+          LOWER(TRIM(?4)) = 'service'
+          AND LOWER(TRIM(?5)) = LOWER(TRIM(s.id))
           AND service_policy.mode = 'override'
           AND service_policy.enabled <> 0
           AND service_policy.updated_at = json_extract(auto_update_pending.summary_json, '$.policyUpdatedAt')
@@ -399,8 +399,8 @@ WHERE id = ?1
           )
         )
         OR (
-          ?4 = 'stack'
-          AND ?5 = s.stack_id
+          LOWER(TRIM(?4)) = 'stack'
+          AND LOWER(TRIM(?5)) = LOWER(TRIM(s.stack_id))
           AND COALESCE(service_policy.mode, 'inherit') = 'inherit'
           AND stack_policy.mode = 'override'
           AND stack_policy.enabled <> 0

@@ -296,8 +296,8 @@ WHERE p.id = ?1
   AND p.status = 'enqueuing'
   AND p.service_id = ?2
   AND p.candidate_id = ?3
-  AND p.policy_scope_type = ?4
-  AND p.policy_scope_id = ?5
+  AND LOWER(TRIM(p.policy_scope_type)) = LOWER(TRIM(?4))
+  AND LOWER(TRIM(p.policy_scope_id)) = LOWER(TRIM(?5))
   AND p.rule_id = ?6
   AND {pending_digest} = {expected_digest}
   AND {candidate_digest} = {expected_digest}
@@ -342,8 +342,8 @@ WHERE p.id = ?1
       AND EXISTS (
         SELECT 1
         FROM auto_update_policies service_policy
-        WHERE service_policy.scope_type = 'service'
-          AND service_policy.scope_id = s.id
+        WHERE LOWER(TRIM(service_policy.scope_type)) = 'service'
+          AND LOWER(TRIM(service_policy.scope_id)) = LOWER(TRIM(s.id))
           AND service_policy.mode = 'override'
           AND service_policy.enabled <> 0
           AND service_policy.updated_at = json_extract(p.summary_json, '$.policyUpdatedAt')
@@ -361,15 +361,15 @@ WHERE p.id = ?1
       AND NOT EXISTS (
         SELECT 1
         FROM auto_update_policies service_policy
-        WHERE service_policy.scope_type = 'service'
-          AND service_policy.scope_id = s.id
+        WHERE LOWER(TRIM(service_policy.scope_type)) = 'service'
+          AND LOWER(TRIM(service_policy.scope_id)) = LOWER(TRIM(s.id))
           AND service_policy.mode <> 'inherit'
       )
       AND EXISTS (
         SELECT 1
         FROM auto_update_policies stack_policy
-        WHERE stack_policy.scope_type = 'stack'
-          AND stack_policy.scope_id = s.stack_id
+        WHERE LOWER(TRIM(stack_policy.scope_type)) = 'stack'
+          AND LOWER(TRIM(stack_policy.scope_id)) = LOWER(TRIM(s.stack_id))
           AND stack_policy.mode = 'override'
           AND stack_policy.enabled <> 0
           AND stack_policy.updated_at = json_extract(p.summary_json, '$.policyUpdatedAt')

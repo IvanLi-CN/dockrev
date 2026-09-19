@@ -244,18 +244,18 @@ WHERE id = ?1
       )
       AND (
         (LOWER(source_job.scope) = 'service'
-          AND LOWER(source_job.stack_id) = LOWER(p.stack_id)
-          AND LOWER(source_job.service_id) = LOWER(p.service_id))
+          AND LOWER(TRIM(source_job.stack_id)) = LOWER(TRIM(p.stack_id))
+          AND LOWER(TRIM(source_job.service_id)) = LOWER(TRIM(p.service_id)))
         OR (LOWER(source_job.scope) = 'stack'
-          AND LOWER(source_job.stack_id) = LOWER(p.stack_id)
+          AND LOWER(TRIM(source_job.stack_id)) = LOWER(TRIM(p.stack_id))
           AND source_job.service_id IS NULL)
         OR (LOWER(source_job.scope) = 'all'
           AND source_job.stack_id IS NULL
           AND source_job.service_id IS NULL)
       )
       AND LOWER(jobs.scope) = 'service'
-      AND LOWER(jobs.stack_id) = LOWER(p.stack_id)
-      AND LOWER(jobs.service_id) = LOWER(p.service_id)
+      AND LOWER(TRIM(jobs.stack_id)) = LOWER(TRIM(p.stack_id))
+      AND LOWER(TRIM(jobs.service_id)) = LOWER(TRIM(p.service_id))
       AND json_array_length(CASE WHEN json_valid(jobs.summary_json) THEN jobs.summary_json ELSE '{{}}' END, '$.targets') = 1
       AND EXISTS (
         SELECT 1
@@ -267,13 +267,13 @@ WHERE id = ?1
       )
       AND (
         (
-          p.policy_scope_type = 'service'
-          AND p.policy_scope_id = s.id
+          LOWER(TRIM(p.policy_scope_type)) = 'service'
+          AND LOWER(TRIM(p.policy_scope_id)) = LOWER(TRIM(s.id))
           AND EXISTS (
             SELECT 1
             FROM auto_update_policies policy
-            WHERE policy.scope_type = 'service'
-              AND policy.scope_id = s.id
+            WHERE LOWER(TRIM(policy.scope_type)) = 'service'
+              AND LOWER(TRIM(policy.scope_id)) = LOWER(TRIM(s.id))
               AND policy.mode = 'override'
               AND policy.enabled <> 0
               AND policy.updated_at = json_extract(p.summary_json, '$.policyUpdatedAt')
@@ -286,20 +286,20 @@ WHERE id = ?1
           )
         )
         OR (
-          p.policy_scope_type = 'stack'
-          AND p.policy_scope_id = s.stack_id
+          LOWER(TRIM(p.policy_scope_type)) = 'stack'
+          AND LOWER(TRIM(p.policy_scope_id)) = LOWER(TRIM(s.stack_id))
           AND NOT EXISTS (
             SELECT 1
             FROM auto_update_policies service_policy
-            WHERE service_policy.scope_type = 'service'
-              AND service_policy.scope_id = s.id
+            WHERE LOWER(TRIM(service_policy.scope_type)) = 'service'
+              AND LOWER(TRIM(service_policy.scope_id)) = LOWER(TRIM(s.id))
               AND service_policy.mode <> 'inherit'
           )
           AND EXISTS (
             SELECT 1
             FROM auto_update_policies policy
-            WHERE policy.scope_type = 'stack'
-              AND policy.scope_id = s.stack_id
+            WHERE LOWER(TRIM(policy.scope_type)) = 'stack'
+              AND LOWER(TRIM(policy.scope_id)) = LOWER(TRIM(s.stack_id))
               AND policy.mode = 'override'
               AND policy.enabled <> 0
               AND policy.updated_at = json_extract(p.summary_json, '$.policyUpdatedAt')

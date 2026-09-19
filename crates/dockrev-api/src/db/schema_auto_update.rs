@@ -275,8 +275,8 @@ SELECT
     FROM auto_update_pending p2
     WHERE p2.service_id = p.service_id
       AND p2.rule_id = p.rule_id
-      AND p2.policy_scope_type = p.policy_scope_type
-      AND p2.policy_scope_id = p.policy_scope_id
+      AND LOWER(TRIM(p2.policy_scope_type)) = LOWER(TRIM(p.policy_scope_type))
+      AND LOWER(TRIM(p2.policy_scope_id)) = LOWER(TRIM(p.policy_scope_id))
       AND {comparison_digest} = {pending_digest}
       AND p2.status IN ('pending', 'enqueuing', 'enqueued')
     ORDER BY

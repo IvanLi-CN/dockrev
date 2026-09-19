@@ -74,7 +74,7 @@ fn canonical_candidate_digest(value: &str) -> Option<String> {
 }
 
 fn scope_id_matches(value: Option<&str>, expected: &str) -> bool {
-    value.is_some_and(|value| value.eq_ignore_ascii_case(expected))
+    value.is_some_and(|value| value.trim().eq_ignore_ascii_case(expected.trim()))
 }
 
 fn reuse_equivalent_candidate_id(

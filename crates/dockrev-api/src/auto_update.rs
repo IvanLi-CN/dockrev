@@ -860,8 +860,14 @@ async fn pending_delay_gates_met(
             .await?;
         return Ok(false);
     };
-    if effective.scope_type != pending.policy_scope_type
-        || effective.scope_id != pending.policy_scope_id
+    if !effective
+        .scope_type
+        .trim()
+        .eq_ignore_ascii_case(pending.policy_scope_type.trim())
+        || !effective
+            .scope_id
+            .trim()
+            .eq_ignore_ascii_case(pending.policy_scope_id.trim())
     {
         state
             .db

@@ -772,6 +772,15 @@ async fn queued_auto_policy_recovery_requires_exact_candidate_and_target_identit
             false,
             "not-a-digest",
         ),
+        (
+            "scope-variant",
+            "2222222222222222222222222222222222222222222222222222222222222222",
+            Some("candidate"),
+            "latest",
+            "service",
+            true,
+            "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+        ),
     ];
 
     for (
@@ -860,6 +869,17 @@ async fn queued_auto_policy_recovery_requires_exact_candidate_and_target_identit
             )
             .await
             .unwrap();
+        if suffix == "scope-variant" {
+            db.call(|conn| {
+                conn.execute(
+                    "UPDATE auto_update_pending SET policy_scope_type = ' STACK ', policy_scope_id = ' StAcK ' WHERE id = 'pending-scope-variant'",
+                    [],
+                )?;
+                Ok(())
+            })
+            .await
+            .unwrap();
+        }
         assert!(db
             .try_claim_auto_update_pending(&pending.id, "2026-04-30T00:01:02Z")
             .await

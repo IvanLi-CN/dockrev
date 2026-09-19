@@ -66,11 +66,15 @@ async fn pending_claim_rejects_a_service_candidate_that_changed_after_preflight(
             [],
         )?;
         conn.execute(
-            "INSERT INTO services (id, stack_id, name, image_ref, image_tag, current_digest, candidate_digest, auto_rollback, backup_targets_bind_paths_json, backup_targets_volume_names_json, created_at, updated_at) VALUES ('service', 'stack', 'service', 'ghcr.io/acme/app', 'latest', 'sha256:old-current', 'sha256:old', 0, '{}', '{}', '2026-04-30', '2026-04-30')",
+            "INSERT INTO services (id, stack_id, name, image_ref, image_tag, current_digest, candidate_digest, auto_rollback, backup_targets_bind_paths_json, backup_targets_volume_names_json, created_at, updated_at) VALUES ('service', 'stack', 'service', 'ghcr.io/acme/app', 'latest', 'sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb', 'sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa', 0, '{}', '{}', '2026-04-30', '2026-04-30')",
             [],
         )?;
         conn.execute(
             "INSERT INTO auto_update_policies (scope_type, scope_id, mode, enabled, rules_json, created_at, updated_at) VALUES ('stack', 'stack', 'override', 1, '[{\"id\":\"rule\",\"enabled\":true}]', '2026-04-30T00:00:00Z', '2026-04-30T00:00:00Z')",
+            [],
+        )?;
+        conn.execute(
+            "INSERT INTO jobs (id, type, scope, stack_id, service_id, status, allow_arch_mismatch, backup_mode, created_by, reason, created_at, summary_json) VALUES ('check', 'check', 'service', 'stack', 'service', 'success', 0, 'inherit', 'schedule', 'schedule', '2026-04-30T00:00:00Z', '{}')",
             [],
         )?;
         Ok(())
@@ -80,7 +84,7 @@ async fn pending_claim_rejects_a_service_candidate_that_changed_after_preflight(
     db.upsert_auto_update_candidate(
         &candidate_input(
             "candidate-claim",
-            "sha256:old",
+            "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
             "ready",
             "2026-04-30T00:00:00Z",
         ),
@@ -90,7 +94,7 @@ async fn pending_claim_rejects_a_service_candidate_that_changed_after_preflight(
     .unwrap();
     db.set_auto_update_candidate_policy(
         "service",
-        "sha256:old",
+        "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
         "delayed",
         Some("policy_matched"),
         Some("rule"),
@@ -110,25 +114,40 @@ async fn pending_claim_rejects_a_service_candidate_that_changed_after_preflight(
                 source_check_job_id: "check".to_string(),
                 candidate_tag: "latest".to_string(),
                 candidate_display_tag: "1.4.0".to_string(),
-                candidate_digest: "sha256:old".to_string(),
+                candidate_digest: "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa".to_string(),
                 current_display_tag: "1.0.0".to_string(),
                 first_seen_at: "2026-04-30T00:00:00Z".to_string(),
                 due_at: "2026-04-30T00:00:00Z".to_string(),
                 min_age_seconds: 0,
                 min_version_lag: 0,
                 summary_json: serde_json::json!({
-                    "currentDigest": "sha256:old-current",
+                    "currentDigest": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
                     "policyUpdatedAt": "2026-04-30T00:00:00Z"
                 }),
-                candidate_id: Some("service:sha256:old".to_string()),
+                candidate_id: Some("candidate-claim".to_string()),
             },
             "2026-04-30T00:00:02Z",
         )
         .await
         .unwrap();
+    assert!(db
+        .try_claim_auto_update_pending_if_current(
+            &pending.id,
+            "service",
+            "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            " STACK ",
+            " Stack ",
+            "rule",
+            "2026-04-30T00:00:02Z",
+        )
+        .await
+        .unwrap());
+    db.release_auto_update_pending_claim(&pending.id, "2026-04-30T00:00:02Z")
+        .await
+        .unwrap();
     db.call(|conn| {
         conn.execute(
-            "UPDATE services SET current_digest = 'sha256:new-current' WHERE id = 'service'",
+            "UPDATE services SET current_digest = 'sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc' WHERE id = 'service'",
             [],
         )?;
         Ok(())
@@ -139,7 +158,7 @@ async fn pending_claim_rejects_a_service_candidate_that_changed_after_preflight(
         .try_claim_auto_update_pending_if_current(
             &pending.id,
             "service",
-            "sha256:old",
+            "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
             "stack",
             "stack",
             "rule",
