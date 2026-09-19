@@ -836,6 +836,18 @@ async fn invalid_digest_migration_rejects_blank_candidate_identities() {
             [],
         )?;
         conn.execute(
+            "INSERT INTO auto_update_candidates (id, stack_id, service_id, image_ref, raw_tag, candidate_digest, status, reason, discovered_at, source_job_id, source, current_tag, current_display_tag, current_digest, created_at, updated_at) VALUES ('malformed-candidate', 'blank-stack', 'blank-service', 'ghcr.io/acme/app', 'latest', 'not-a-digest', 'ready', 'digest_bound_version', '2026-04-30T00:00:00Z', 'missing-check', 'schedule', 'latest', '1.0.0', 'sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa', '2026-04-30T00:00:00Z', '2026-04-30T00:00:00Z')",
+            [],
+        )?;
+        conn.execute(
+            "INSERT INTO jobs (id, type, scope, stack_id, service_id, status, allow_arch_mismatch, backup_mode, created_by, reason, created_at, summary_json) VALUES ('malformed-candidate-job', 'update', 'service', 'blank-stack', 'blank-service', 'queued', 0, 'inherit', 'auto-policy', 'auto_policy', '2026-04-30T00:00:00Z', '{\"mode\":\"apply\"}')",
+            [],
+        )?;
+        conn.execute(
+            "INSERT INTO auto_update_pending (id, policy_scope_type, policy_scope_id, rule_id, stack_id, service_id, source_check_job_id, candidate_tag, candidate_display_tag, candidate_digest, current_display_tag, current_digest, first_seen_at, due_at, min_age_seconds, min_version_lag, status, update_job_id, candidate_id, created_at, updated_at, summary_json) VALUES ('malformed-link-pending', 'stack', 'blank-stack', 'malformed-rule', 'blank-stack', 'blank-service', 'missing-check', 'latest', '1.1.0', 'sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb', '1.0.0', 'sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa', '2026-04-30T00:00:00Z', '2026-04-30T00:00:00Z', 0, 0, 'enqueued', 'malformed-candidate-job', 'malformed-candidate', '2026-04-30T00:00:00Z', '2026-04-30T00:00:00Z', '{}')",
+            [],
+        )?;
+        conn.execute(
             "DELETE FROM schema_migrations WHERE id = '0026_reject_invalid_auto_update_digest_identity'",
             [],
         )?;
@@ -858,7 +870,17 @@ async fn invalid_digest_migration_rejects_blank_candidate_identities() {
                 [],
                 |row| Ok((row.get::<_, String>(0)?, row.get::<_, Option<String>>(1)?)),
             )?;
-            Ok((service_digest, pending_status))
+            let linked_pending = conn.query_row(
+                "SELECT candidate_id, status FROM auto_update_pending WHERE id = 'malformed-link-pending'",
+                [],
+                |row| Ok((row.get::<_, Option<String>>(0)?, row.get::<_, String>(1)?)),
+            )?;
+            let linked_job_status = conn.query_row(
+                "SELECT status FROM jobs WHERE id = 'malformed-candidate-job'",
+                [],
+                |row| row.get::<_, String>(0),
+            )?;
+            Ok((service_digest, pending_status, linked_pending, linked_job_status))
         })
         .await
         .unwrap();
@@ -870,6 +892,8 @@ async fn invalid_digest_migration_rejects_blank_candidate_identities() {
             Some("migration_ambiguous_history".to_string())
         )
     );
+    assert_eq!(result.2, (None, "skipped".to_string()));
+    assert_eq!(result.3, "cancelled");
 
     drop(db);
     std::fs::remove_file(&db_path).unwrap();

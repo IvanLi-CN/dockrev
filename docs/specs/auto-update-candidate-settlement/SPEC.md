@@ -14,6 +14,8 @@
 - Ambiguous-history mobile: [auto-update-policy-ambiguous-history-mobile.png](assets/auto-update-policy-ambiguous-history-mobile.png)
 - Stack detail awaiting-inference desktop: [stack-detail-policy-awaiting-desktop.png](assets/stack-detail-policy-awaiting-desktop.png)
 - Stack detail awaiting-inference mobile: [stack-detail-policy-awaiting-mobile.png](assets/stack-detail-policy-awaiting-mobile.png)
+- Stack service-results desktop: [auto-update-service-results-desktop.png](assets/auto-update-service-results-desktop.png)
+- Stack service-results mobile: [auto-update-service-results-mobile.png](assets/auto-update-service-results-mobile.png)
 - 覆盖候选等待、版本可用、版本未解析、规则未命中、延迟、排队、执行中、完成和跳过等策略动作状态；ambiguous-history 状态明确显示 provenance 不完整、候选 unresolved 且禁止自动部署。
 
 ## Related ADRs

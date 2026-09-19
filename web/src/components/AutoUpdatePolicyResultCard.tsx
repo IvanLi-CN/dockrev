@@ -57,6 +57,7 @@ function policyResult(props: {
 export function policyActionLabel(status: string): string {
   switch (status) {
     case 'waiting_inference': return '等待版本证据'
+    case 'awaiting_inference': return '等待版本证据'
     case 'rule_not_matched': return '规则未命中'
     case 'delayed': return '等待延迟条件'
     case 'queued': return '更新已排队'
@@ -64,6 +65,8 @@ export function policyActionLabel(status: string): string {
     case 'completed': return '更新已完成'
     case 'failed': return '更新失败'
     case 'skipped': return '已跳过'
+    case 'ready': return '候选已就绪'
+    case 'superseded': return '候选已被新版本替代'
     case 'unresolved': return '版本无法解析'
     default: return status
   }
@@ -180,7 +183,7 @@ export function AutoUpdatePolicyResultCard(props: {
                   <Mono>{service.serviceName}</Mono>
                   <span>
                     {service.projection ? policyActionLabel(service.projection.policyStatus) : service.fallbackLabel ?? '暂无候选动作'}
-                    {service.candidateSettlement ? ` · 候选 ${service.candidateSettlement.status}` : ''}
+                    {service.candidateSettlement ? ` · 候选 ${policyActionLabel(service.candidateSettlement.status)}` : ''}
                     {service.candidateHydration ? ` · ${candidateHydrationDetail(service.candidateHydration)}` : ''}
                   </span>
                 </div>

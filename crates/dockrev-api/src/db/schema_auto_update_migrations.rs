@@ -66,9 +66,13 @@ pub(super) fn apply_migration_0026_reject_invalid_auto_update_digest_identity(
     let now = now_rfc3339()?;
     let pending_digest = super::strict_canonical_digest_sql("p.candidate_digest");
     let pending_update_digest = super::strict_canonical_digest_sql("candidate_digest");
+    let linked_candidate_digest = super::strict_canonical_digest_sql("c.candidate_digest");
+    let invalid_candidate_link = format!(
+        "EXISTS (SELECT 1 FROM auto_update_candidates c WHERE c.id = p.candidate_id AND c.candidate_digest IS NOT NULL AND ({linked_candidate_digest}) IS NULL)"
+    );
     tx.execute(
         &format!(
-            "UPDATE jobs SET status = 'cancelled', finished_at = ?1 WHERE id IN (SELECT p.update_job_id FROM auto_update_pending p WHERE p.status IN ('pending', 'enqueuing', 'enqueued') AND p.update_job_id IS NOT NULL AND p.candidate_digest IS NOT NULL AND ({pending_digest}) IS NULL) AND status = 'queued' AND created_by = 'auto-policy'"
+            "UPDATE jobs SET status = 'cancelled', finished_at = ?1 WHERE id IN (SELECT p.update_job_id FROM auto_update_pending p WHERE p.status IN ('pending', 'enqueuing', 'enqueued') AND p.update_job_id IS NOT NULL AND ((p.candidate_digest IS NOT NULL AND ({pending_digest}) IS NULL) OR {invalid_candidate_link})) AND status = 'queued' AND created_by = 'auto-policy'"
         ),
         params![&now],
     )?;
@@ -84,8 +88,7 @@ JOIN jobs j ON j.id = p.update_job_id
 WHERE p.status IN ('pending', 'enqueuing', 'enqueued')
   AND p.update_job_id IS NOT NULL
   AND j.status = 'running'
-  AND p.candidate_digest IS NOT NULL
-  AND ({pending_digest}) IS NULL
+  AND ((p.candidate_digest IS NOT NULL AND ({pending_digest}) IS NULL) OR {invalid_candidate_link})
 ON CONFLICT(job_id) DO UPDATE SET
   stop_requested_at = COALESCE(update_job_stop_controls.stop_requested_at, excluded.stop_requested_at),
   stop_requested_by = COALESCE(update_job_stop_controls.stop_requested_by, excluded.stop_requested_by),
@@ -110,8 +113,16 @@ SET candidate_id = NULL,
     END,
     updated_at = ?1
 WHERE status IN ('pending', 'enqueuing', 'enqueued')
-  AND candidate_digest IS NOT NULL
-  AND ({pending_update_digest}) IS NULL
+  AND (
+    (candidate_digest IS NOT NULL AND ({pending_update_digest}) IS NULL)
+    OR EXISTS (
+      SELECT 1
+      FROM auto_update_candidates c
+      WHERE c.id = auto_update_pending.candidate_id
+        AND c.candidate_digest IS NOT NULL
+        AND ({linked_candidate_digest}) IS NULL
+    )
+  )
 "#
         ),
         params![&now],
