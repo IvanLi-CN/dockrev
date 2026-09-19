@@ -173,7 +173,7 @@ export function ServiceUpdateConfirmDetails(props: {
         <div className="modalKvLabel">镜像</div>
         <div className="modalKvValue">
           <div className="modalValueStack">
-            <div className="mono monoPrimary monoSplit imageLinkRow">
+            <div className="mono monoPrimary monoSplit imageLinkRow modalImageLinkRow">
               <span className="monoSplitBase">
                 {displayName.suffix ? `${displayName.base}${displayName.suffix}` : displayName.base}
               </span>
