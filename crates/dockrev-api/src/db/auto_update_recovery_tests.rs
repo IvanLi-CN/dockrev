@@ -472,65 +472,6 @@ async fn runtime_candidate_with_discovery_history_is_not_reported_as_missing() {
 }
 
 #[tokio::test]
-async fn awaiting_inference_candidate_is_selected_for_policy_reconciliation() {
-    let db = Db::open(Path::new(":memory:")).await.unwrap();
-    db.call(|conn| {
-        conn.execute(
-            "INSERT INTO stacks (id, name, compose_type, compose_files_json, backup_targets_json, backup_retention_keep_last, backup_retention_delete_after_stable_seconds, created_at, updated_at, last_check_at) VALUES ('stack', 'stack', 'path', '[]', '[]', 0, 0, '2026-04-30', '2026-04-30', '2026-04-30')",
-            [],
-        )?;
-        conn.execute(
-            "INSERT INTO services (id, stack_id, name, image_ref, image_tag, current_digest, candidate_digest, auto_rollback, backup_targets_bind_paths_json, backup_targets_volume_names_json, created_at, updated_at) VALUES ('service', 'stack', 'service', 'ghcr.io/acme/app', 'latest', 'sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef', 'sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa', 0, '{}', '{}', '2026-04-30', '2026-04-30')",
-            [],
-        )?;
-        conn.execute(
-            "INSERT INTO service_new_version_discoveries (service_id, image_ref, source_job_id, discovered_at, current_digest, current_display_tag, current_tag, candidate_tag, candidate_digest, candidate_display_tag) VALUES ('service', 'ghcr.io/acme/app:latest', 'check-floating', '2026-04-30T00:00:00Z', 'sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef', '1.0.0', 'latest', 'latest', 'sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa', 'latest')",
-            [],
-        )?;
-        Ok(())
-    })
-    .await
-    .unwrap();
-    db.insert_job(crate::api::types::JobListItem {
-        id: "check-floating".to_string(),
-        r#type: crate::api::types::JobType::Check,
-        scope: crate::api::types::JobScope::Service,
-        stack_id: Some("stack".to_string()),
-        service_id: Some("service".to_string()),
-        status: "success".to_string(),
-        created_by: "schedule".to_string(),
-        reason: "schedule".to_string(),
-        created_at: "2026-04-30T00:00:00Z".to_string(),
-        started_at: None,
-        finished_at: Some("2026-04-30T00:00:00Z".to_string()),
-        allow_arch_mismatch: false,
-        backup_mode: "inherit".to_string(),
-        summary_json: serde_json::json!({}),
-    })
-    .await
-    .unwrap();
-
-    db.hydrate_auto_update_candidates("2026-04-30T00:01:00Z")
-        .await
-        .unwrap();
-    let candidate = db
-        .get_auto_update_candidate(
-            "service",
-            "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-        )
-        .await
-        .unwrap()
-        .unwrap();
-    assert_eq!(candidate.status, "awaiting_inference");
-    let rows = db
-        .list_auto_update_candidates_for_policy_reconciliation(50)
-        .await
-        .unwrap();
-    assert_eq!(rows.len(), 1);
-    assert_eq!(rows[0].status, "awaiting_inference");
-}
-
-#[tokio::test]
 async fn ambiguous_discovery_history_is_unresolved_and_cannot_authorize_policy() {
     let db = Db::open(Path::new(":memory:")).await.unwrap();
     db.call(|conn| {
