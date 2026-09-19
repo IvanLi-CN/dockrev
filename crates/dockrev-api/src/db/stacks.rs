@@ -1250,9 +1250,13 @@ WHERE id = ?1
     ) -> anyhow::Result<Option<ServiceNewVersionTimelineContext>> {
         let service_id = service_id.to_string();
         self.call(move |conn| {
+            let candidate_digest =
+                super::canonical_digest_sql("auto_update_candidates.candidate_digest");
+            let service_digest = super::canonical_digest_sql("services.candidate_digest");
             Ok(conn
                 .query_row(
-                    r#"
+                    &format!(
+                        r#"
 SELECT
   services.image_ref,
   services.image_tag,
@@ -1265,9 +1269,12 @@ SELECT
 FROM services
 LEFT JOIN auto_update_candidates
   ON auto_update_candidates.service_id = services.id
- AND auto_update_candidates.candidate_digest = services.candidate_digest
+ AND {candidate_digest} = {service_digest}
 WHERE services.id = ?1
 "#,
+                        candidate_digest = candidate_digest,
+                        service_digest = service_digest,
+                    ),
                     params![service_id],
                     |row| {
                         Ok(ServiceNewVersionTimelineContext {
