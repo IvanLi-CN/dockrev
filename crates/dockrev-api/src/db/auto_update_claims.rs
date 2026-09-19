@@ -137,6 +137,10 @@ WHERE status = 'enqueuing' AND updated_at <= ?1
             };
             let mut repaired = 0;
             let mut recovered_jobs = Vec::new();
+            let target_digest = super::canonical_digest_sql(
+                "json_extract(target.value, '$.targetDigest')",
+            );
+            let pending_digest = super::canonical_digest_sql("?2");
             for (
                 pending_id,
                 service_id,
@@ -150,7 +154,8 @@ WHERE status = 'enqueuing' AND updated_at <= ?1
             {
                 let existing_job = tx
                     .query_row(
-                        r#"
+                        &format!(
+                            r#"
 SELECT j.id
 FROM jobs j
 WHERE j.created_by = 'auto-policy'
@@ -161,7 +166,7 @@ WHERE j.created_by = 'auto-policy'
     SELECT 1
     FROM json_each(j.summary_json, '$.targets') target
     WHERE json_extract(target.value, '$.serviceId') = ?1
-      AND json_extract(target.value, '$.targetDigest') = ?2
+      AND {target_digest} = {pending_digest}
       AND json_extract(target.value, '$.autoPolicyContext.pendingId') = ?4
       AND json_extract(target.value, '$.autoPolicyContext.ruleId') = ?5
       AND json_extract(target.value, '$.autoPolicyContext.policyScopeType') = ?6
@@ -170,7 +175,8 @@ WHERE j.created_by = 'auto-policy'
   )
 ORDER BY j.created_at DESC, j.id DESC
 LIMIT 1
-"#,
+"#
+                        ),
                         params![
                             service_id,
                             candidate_digest,

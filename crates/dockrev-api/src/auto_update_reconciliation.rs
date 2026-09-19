@@ -23,16 +23,8 @@ fn candidate_event_targets(
     (keys, targets)
 }
 
-fn candidate_match_values<'a>(
-    candidate: &'a notify::NewVersionDiscoveredService,
-    resolved_tags: Option<&'a [String]>,
-) -> Vec<&'a str> {
-    let mut values = resolved_tags
-        .into_iter()
-        .flatten()
-        .map(String::as_str)
-        .filter(|value| !value.trim().is_empty())
-        .collect::<Vec<_>>();
+fn candidate_match_values(candidate: &notify::NewVersionDiscoveredService) -> Vec<&str> {
+    let mut values = Vec::new();
     let display_tag = candidate.candidate_display_tag.trim();
     let raw_tag = candidate.candidate_tag.trim();
     if !display_tag.is_empty() && display_tag != raw_tag {

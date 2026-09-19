@@ -38,7 +38,9 @@ CREATE TABLE IF NOT EXISTS auto_update_pending (
   summary_json TEXT NOT NULL DEFAULT '{}'
 );
 CREATE UNIQUE INDEX IF NOT EXISTS idx_auto_update_pending_active_candidate
-  ON auto_update_pending(service_id, rule_id, candidate_digest)
+  ON auto_update_pending(
+    service_id, rule_id, policy_scope_type, policy_scope_id, candidate_digest
+  )
   WHERE status IN ('pending', 'enqueuing', 'enqueued');
 CREATE INDEX IF NOT EXISTS idx_auto_update_pending_due
   ON auto_update_pending(status, due_at);
@@ -274,6 +276,8 @@ SELECT
     FROM auto_update_pending p2
     WHERE p2.service_id = p.service_id
       AND p2.rule_id = p.rule_id
+      AND p2.policy_scope_type = p.policy_scope_type
+      AND p2.policy_scope_id = p.policy_scope_id
       AND {comparison_digest} = {pending_digest}
       AND p2.status IN ('pending', 'enqueuing', 'enqueued')
     ORDER BY
@@ -673,6 +677,7 @@ pub(super) fn apply_migration_0024_normalize_auto_update_digest_identity(
     }
     let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
     let now = now_rfc3339()?;
+    tx.execute_batch("DROP INDEX IF EXISTS idx_auto_update_pending_active_candidate")?;
     deduplicate_auto_update_pending_digests_tx(&tx, &now)?;
     for table in ["services", "auto_update_pending"] {
         let digest = super::canonical_digest_sql("candidate_digest");
@@ -688,6 +693,9 @@ pub(super) fn apply_migration_0024_normalize_auto_update_digest_identity(
             "UPDATE auto_update_candidates SET candidate_digest = {digest} WHERE candidate_digest IS NOT NULL AND TRIM(candidate_digest) <> ''"
         ),
         [],
+    )?;
+    tx.execute_batch(
+        "CREATE UNIQUE INDEX idx_auto_update_pending_active_candidate\n         ON auto_update_pending(\n           service_id, rule_id, policy_scope_type, policy_scope_id, candidate_digest\n         )\n         WHERE status IN ('pending', 'enqueuing', 'enqueued')",
     )?;
     record_migration_tx(&tx, id)?;
     tx.commit()?;
