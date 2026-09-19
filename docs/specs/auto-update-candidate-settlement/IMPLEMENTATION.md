@@ -8,6 +8,7 @@
 - 自动策略 update job 先持久化为 queued，再通过候选有效性 CAS 转为 running；候选替代会取消尚未启动的 queued job，并在 apply 尚未提交时请求停止已运行 job。
 - 候选来源以结构化 provenance 保存为 schedule、github_webhook 或 unknown；unknown 历史只保留审计，不获得自动部署授权。
 - migration 0020 与运行时 hydration 从 discovery history 选择最早可信的成功 check observation；缺失 image、baseline、source job 或合格来源时生成 unresolved 的 `migration_ambiguous_history` 审计事实，并保持 source unknown。
+- hydration 只把带显式 `sha256:` 算法前缀或 legacy 纯十六进制 shorthand 的 digest 当作候选身份；任意 bare tag 不会因为 canonical fallback 获得 source provenance 或自动执行资格。当前 service candidate 的 canonical identity 即使对应历史不完整，也会先 supersede 旧 candidate/pending。
 - migration 0022 对已执行旧 migration 的 active pending 重新应用相同的 Check、成功状态、授权 creator/source pairing 与 scope identity 门禁；不合格的 queued job 会取消，running job 只写入 stop control，pending 保留 `migration_ambiguous_history` 审计结果。
 - hydration 事务只创建 candidate fact、supersede 旧候选和跳过旧 pending；启动/周期 reconciliation 随后复用现有 evaluator 与 claim safety，不直接执行 Compose。
 - policy reconciliation 显式包含 `awaiting_inference` candidate；SemVer evaluator 仍返回 waiting 状态并保持无 pending/update job 的 fail-closed 语义。

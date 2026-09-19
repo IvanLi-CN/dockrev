@@ -53,6 +53,19 @@ fn non_empty(value: &str) -> bool {
     !value.trim().is_empty()
 }
 
+fn has_digest_identity(value: &str) -> bool {
+    let trimmed = value.trim();
+    if trimmed.is_empty() {
+        return false;
+    }
+    if let Some((algorithm, encoded)) = trimmed.split_once(':') {
+        // Keep synthetic sha256 values used by legacy records, but require an
+        // explicit digest algorithm so floating tags cannot use the fallback.
+        return algorithm.eq_ignore_ascii_case("sha256") && non_empty(encoded);
+    }
+    trimmed.bytes().all(|byte| byte.is_ascii_hexdigit())
+}
+
 fn canonical_candidate_digest(value: &str) -> String {
     crate::snapshot_worker::normalize_digest(value)
         .unwrap_or_else(|| value.trim().to_ascii_lowercase())
@@ -153,9 +166,9 @@ fn is_complete_hydration(row: &DiscoveryHistoryRow) -> bool {
         && non_empty(&row.image_ref)
         && non_empty(&row.source_job_id)
         && non_empty(&row.discovered_at)
-        && non_empty(&row.current_digest)
+        && has_digest_identity(&row.current_digest)
         && non_empty(&row.current_tag)
-        && non_empty(&row.candidate_digest)
+        && has_digest_identity(&row.candidate_digest)
         && (non_empty(&row.candidate_tag) || non_empty(&row.candidate_display_tag))
 }
 
@@ -561,11 +574,10 @@ ON CONFLICT(service_id, candidate_digest) DO UPDATE SET
             params![service_id, candidate_digest],
             |row| row.get::<_, String>(0),
         )?;
-        if complete
-            && source_row
-                .service_candidate_digest
-                .as_deref()
-                .is_some_and(|digest| canonical_candidate_digest(digest) == candidate_digest)
+        if source_row
+            .service_candidate_digest
+            .as_deref()
+            .is_some_and(|digest| canonical_candidate_digest(digest) == candidate_digest)
         {
             current_candidates.insert(
                 service_id.clone(),

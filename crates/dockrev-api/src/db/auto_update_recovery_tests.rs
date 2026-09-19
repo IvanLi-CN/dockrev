@@ -515,11 +515,32 @@ async fn ambiguous_discovery_history_is_unresolved_and_cannot_authorize_policy()
             [],
         )?;
         conn.execute(
-            "INSERT INTO services (id, stack_id, name, image_ref, image_tag, current_digest, candidate_digest, auto_rollback, backup_targets_bind_paths_json, backup_targets_volume_names_json, created_at, updated_at) VALUES ('service', 'stack', 'service', 'ghcr.io/acme/app', 'latest', 'sha256:current', 'AMBIGUOUS', 0, '{}', '{}', '2026-04-30', '2026-04-30')",
+            "INSERT INTO services (id, stack_id, name, image_ref, image_tag, current_digest, candidate_digest, auto_rollback, backup_targets_bind_paths_json, backup_targets_volume_names_json, created_at, updated_at) VALUES ('service', 'stack', 'service', 'ghcr.io/acme/app', 'latest', 'sha256:current', 'sha256:ambiguous', 0, '{}', '{}', '2026-04-30', '2026-04-30')",
             [],
         )?;
         conn.execute(
             "INSERT INTO service_new_version_discoveries (service_id, image_ref, source_job_id, discovered_at, current_digest, current_display_tag, current_tag, candidate_tag, candidate_digest, candidate_display_tag) VALUES ('service', '', '', '', '', '1.0.0', 'latest', 'latest', 'sha256:ambiguous', 'latest')",
+            [],
+        )?;
+        Ok(())
+    })
+    .await
+    .unwrap();
+
+    db.upsert_auto_update_candidate(
+        &candidate_input(
+            "candidate-old-ambiguous",
+            "sha256:old-ambiguous",
+            "ready",
+            "2026-04-29T23:59:00Z",
+        ),
+        "2026-04-29T23:59:00Z",
+    )
+    .await
+    .unwrap();
+    db.call(|conn| {
+        conn.execute(
+            "INSERT INTO auto_update_pending (id, policy_scope_type, policy_scope_id, rule_id, stack_id, service_id, source_check_job_id, candidate_tag, candidate_display_tag, candidate_digest, current_display_tag, current_digest, first_seen_at, due_at, min_age_seconds, min_version_lag, status, update_job_id, created_at, updated_at, candidate_id, summary_json) VALUES ('pending-old-ambiguous', 'stack', 'stack', 'rule', 'stack', 'service', 'old-check', 'latest', '1.2.0', 'sha256:old-ambiguous', '1.0.0', 'sha256:current', '2026-04-29T23:59:00Z', '2026-04-29T23:59:00Z', 0, 0, 'pending', NULL, '2026-04-29T23:59:00Z', '2026-04-29T23:59:00Z', 'candidate-old-ambiguous', '{}')",
             [],
         )?;
         Ok(())
@@ -543,6 +564,24 @@ async fn ambiguous_discovery_history_is_unresolved_and_cannot_authorize_policy()
     assert_eq!(
         candidate.hydration_origin.as_deref(),
         Some("discovery_history_ambiguous")
+    );
+    let old_candidate = db
+        .get_auto_update_candidate("service", "sha256:old-ambiguous")
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(old_candidate.status, "superseded");
+    assert_eq!(
+        old_candidate.superseded_by_candidate_id.as_deref(),
+        Some(candidate.id.as_str())
+    );
+    assert_eq!(
+        db.get_auto_update_pending_by_id("pending-old-ambiguous")
+            .await
+            .unwrap()
+            .unwrap()
+            .status,
+        "skipped"
     );
     let diagnostics = db
         .list_candidate_hydration_diagnostics(&["service".to_string()])

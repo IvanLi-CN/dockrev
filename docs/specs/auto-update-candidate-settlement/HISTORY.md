@@ -26,6 +26,7 @@
 - migration `0024_normalize_auto_update_digest_identity` 现在也在 canonicalize 前确定 candidate keeper，重绑关联 pending，失效没有保留 active pending 的重复 action，并删除重复 candidate fact；`0014` legacy backfill 与 queued recovery 同时收紧 Check/source/scope 与 canonical digest 门禁。
 - migration `0024` 在删除等价 candidate 前会重写指向 duplicate 的 `superseded_by_candidate_id`，保留可遍历的 supersession audit lineage；enqueue guard 在 claim 后的最终事务中再次校验 current policy 与 source provenance。
 - discovery hydration 的可信 provenance 选择固定为按 `discovered_at`、再按 discovery id 的最早完整成功 check observation；current-digest CAS 与 hydration diagnostic 共享同一 canonical digest 规则，覆盖缺省 `sha256:` 前缀和大小写差异。
+- hydration 不再把 bare tag 通过 canonical fallback 当作 digest identity；当前候选 identity 与 provenance completeness 分离，ambiguous current history 仍会 supersede 旧 candidate/pending，但自身保持不可执行。
 - stale queued-claim recovery now canonicalizes job target digests before reattaching an existing auto-policy job; migration `0024` and the active pending index preserve separate effective policy scopes for the same service and digest; Regex/Glob and version-lag evaluation no longer treats unrelated exact-digest alias tags as matcher input.
 
 ## Decision Trace
