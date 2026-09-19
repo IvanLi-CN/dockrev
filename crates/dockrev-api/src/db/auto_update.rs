@@ -472,10 +472,10 @@ WHERE id = ?1
       )
       AND (
         (LOWER(source_job.scope) = 'service'
-          AND source_job.stack_id = c.stack_id
-          AND source_job.service_id = c.service_id)
+          AND LOWER(TRIM(source_job.stack_id)) = LOWER(TRIM(c.stack_id))
+          AND LOWER(TRIM(source_job.service_id)) = LOWER(TRIM(c.service_id)))
         OR (LOWER(source_job.scope) = 'stack'
-          AND source_job.stack_id = c.stack_id
+          AND LOWER(TRIM(source_job.stack_id)) = LOWER(TRIM(c.stack_id))
           AND source_job.service_id IS NULL)
         OR (LOWER(source_job.scope) = 'all'
           AND source_job.stack_id IS NULL
@@ -1115,7 +1115,7 @@ mod tests {
                 [],
             )?;
             conn.execute(
-                "INSERT INTO jobs (id, type, scope, stack_id, service_id, status, allow_arch_mismatch, backup_mode, created_by, reason, created_at, summary_json) VALUES ('check', 'check', 'service', 'stack', 'service', 'success', 0, 'inherit', 'schedule', 'schedule', '2026-04-30T00:00:00Z', '{}')",
+                "INSERT INTO jobs (id, type, scope, stack_id, service_id, status, allow_arch_mismatch, backup_mode, created_by, reason, created_at, summary_json) VALUES ('check', 'check', 'SERVICE', 'STACK', 'SERVICE', 'success', 0, 'inherit', 'schedule', 'schedule', '2026-04-30T00:00:00Z', '{}')",
                 [],
             )?;
             Ok(())
