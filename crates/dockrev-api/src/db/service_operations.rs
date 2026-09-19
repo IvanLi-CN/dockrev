@@ -279,10 +279,11 @@ WHERE id = ?1
             .call(move |conn| {
                 let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
                 if let Some(guard) = auto_policy_guard.as_ref() {
-                    let pending_digest = super::canonical_digest_sql("p.candidate_digest");
-                    let candidate_digest = super::canonical_digest_sql("c.candidate_digest");
-                    let service_digest = super::canonical_digest_sql("s.candidate_digest");
-                    let expected_digest = super::canonical_digest_sql("?7");
+                    let pending_digest =
+                        super::strict_canonical_digest_sql("p.candidate_digest");
+                    let candidate_digest = super::strict_canonical_digest_sql("c.candidate_digest");
+                    let service_digest = super::strict_canonical_digest_sql("s.candidate_digest");
+                    let expected_digest = super::strict_canonical_digest_sql("?7");
                     let current_digest = super::canonical_digest_sql("s.current_digest");
                     let expected_current_digest = super::canonical_digest_sql("?8");
                     let sql = format!(

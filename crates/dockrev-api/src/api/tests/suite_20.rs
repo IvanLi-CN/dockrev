@@ -324,7 +324,7 @@ services:
     .unwrap();
     let stack_id = seed_stack_from_compose(&state, "demo", &compose_path).await;
     let service_id =
-        set_single_service_check_result(&state, &stack_id, Some("sha256:old"), Some("latest"), Some("sha256:new")).await;
+        set_single_service_check_result(&state, &stack_id, Some("sha256:0000000000000000000000000000000000000000000000000000000000000001"), Some("latest"), Some("sha256:0000000000000000000000000000000000000000000000000000000000000002")).await;
 
     state
         .db
@@ -337,7 +337,7 @@ services:
         .await
         .unwrap();
 
-    let summary = auto_update_discovery_summary(&stack_id, &service_id, "sha256:new");
+    let summary = auto_update_discovery_summary(&stack_id, &service_id, "sha256:0000000000000000000000000000000000000000000000000000000000000002");
 
     crate::auto_update::handle_completed_check(&state, "chk_manual", "ui", &now, &summary)
         .await
@@ -384,7 +384,7 @@ services:
     );
     assert_eq!(
         job.summary_json["targets"][0]["targetDigest"].as_str(),
-        Some("sha256:new")
+        Some("sha256:0000000000000000000000000000000000000000000000000000000000000002")
     );
 }
 
@@ -412,7 +412,7 @@ services:
     .unwrap();
     let stack_id = seed_stack_from_compose(&state, "demo", &compose_path).await;
     let service_id =
-        set_single_service_check_result(&state, &stack_id, Some("sha256:old"), Some("latest"), Some("sha256:new")).await;
+        set_single_service_check_result(&state, &stack_id, Some("sha256:0000000000000000000000000000000000000000000000000000000000000001"), Some("latest"), Some("sha256:0000000000000000000000000000000000000000000000000000000000000002")).await;
 
     state
         .db
@@ -425,7 +425,7 @@ services:
         .await
         .unwrap();
 
-    let summary = auto_update_discovery_summary(&stack_id, &service_id, "sha256:new");
+    let summary = auto_update_discovery_summary(&stack_id, &service_id, "sha256:0000000000000000000000000000000000000000000000000000000000000002");
     crate::auto_update::handle_completed_check(&state, "chk_generic_webhook", "webhook", &now, &summary)
         .await
         .unwrap();
@@ -496,17 +496,17 @@ services:
     .unwrap();
     let stack_id = seed_stack_from_compose(&state, "demo", &compose_path).await;
     let service_id =
-        set_single_service_check_result(&state, &stack_id, Some("sha256:old"), Some("latest"), Some("sha256:new")).await;
+        set_single_service_check_result(&state, &stack_id, Some("sha256:0000000000000000000000000000000000000000000000000000000000000001"), Some("latest"), Some("sha256:0000000000000000000000000000000000000000000000000000000000000002")).await;
     state
         .db
         .update_service_check_result(
             &service_id,
-            crate::snapshot_worker::normalize_digest("sha256:old"),
+            crate::snapshot_worker::normalize_digest("sha256:0000000000000000000000000000000000000000000000000000000000000001"),
             None,
             None,
             Some("latest".to_string()),
             None,
-            crate::snapshot_worker::normalize_digest("sha256:new"),
+            crate::snapshot_worker::normalize_digest("sha256:0000000000000000000000000000000000000000000000000000000000000002"),
             None,
             None,
             Some("ignored".to_string()),
@@ -527,7 +527,7 @@ services:
         .await
         .unwrap();
 
-    let summary = auto_update_discovery_summary(&stack_id, &service_id, "sha256:new");
+    let summary = auto_update_discovery_summary(&stack_id, &service_id, "sha256:0000000000000000000000000000000000000000000000000000000000000002");
     insert_schedule_check_job(&state, "chk_schedule", &now).await;
     crate::auto_update::handle_completed_check(&state, "chk_schedule", "schedule", &now, &summary)
         .await
@@ -568,7 +568,7 @@ services:
     .unwrap();
     let stack_id = seed_stack_from_compose(&state, "demo", &compose_path).await;
     let service_id =
-        set_single_service_check_result(&state, &stack_id, Some("sha256:old"), Some("latest"), Some("sha256:new")).await;
+        set_single_service_check_result(&state, &stack_id, Some("sha256:0000000000000000000000000000000000000000000000000000000000000001"), Some("latest"), Some("sha256:0000000000000000000000000000000000000000000000000000000000000002")).await;
     state
         .db
         .put_auto_update_policy(
@@ -580,7 +580,7 @@ services:
         .await
         .unwrap();
 
-    let summary = auto_update_discovery_summary(&stack_id, &service_id, "sha256:new");
+    let summary = auto_update_discovery_summary(&stack_id, &service_id, "sha256:0000000000000000000000000000000000000000000000000000000000000002");
     insert_schedule_check_job(&state, "chk_schedule", &now).await;
     crate::auto_update::handle_completed_check(&state, "chk_schedule", "schedule", &now, &summary)
         .await
@@ -624,17 +624,17 @@ services:
     .unwrap();
     let stack_id = seed_stack_from_compose(&state, "demo", &compose_path).await;
     let service_id =
-        set_single_service_check_result(&state, &stack_id, Some("sha256:old"), Some("latest"), Some("sha256:new")).await;
+        set_single_service_check_result(&state, &stack_id, Some("sha256:0000000000000000000000000000000000000000000000000000000000000001"), Some("latest"), Some("sha256:0000000000000000000000000000000000000000000000000000000000000002")).await;
     state
         .db
         .update_service_check_result(
             &service_id,
-            crate::snapshot_worker::normalize_digest("sha256:old"),
+            crate::snapshot_worker::normalize_digest("sha256:0000000000000000000000000000000000000000000000000000000000000001"),
             None,
             None,
             Some("latest".to_string()),
             None,
-            crate::snapshot_worker::normalize_digest("sha256:new"),
+            crate::snapshot_worker::normalize_digest("sha256:0000000000000000000000000000000000000000000000000000000000000002"),
             Some("mismatch".to_string()),
             None,
             None,
@@ -655,7 +655,7 @@ services:
         .await
         .unwrap();
 
-    let summary = auto_update_discovery_summary(&stack_id, &service_id, "sha256:new");
+    let summary = auto_update_discovery_summary(&stack_id, &service_id, "sha256:0000000000000000000000000000000000000000000000000000000000000002");
     insert_schedule_check_job(&state, "chk_schedule", &now).await;
     crate::auto_update::handle_completed_check(&state, "chk_schedule", "schedule", &now, &summary)
         .await
@@ -700,7 +700,7 @@ services:
     .unwrap();
     let stack_id = seed_stack_from_compose(&state, "demo", &compose_path).await;
     let service_id =
-        set_single_service_check_result(&state, &stack_id, Some("sha256:old"), Some("latest"), Some("sha256:new")).await;
+        set_single_service_check_result(&state, &stack_id, Some("sha256:0000000000000000000000000000000000000000000000000000000000000001"), Some("latest"), Some("sha256:0000000000000000000000000000000000000000000000000000000000000002")).await;
     state
         .db
         .put_auto_update_policy(
@@ -712,7 +712,7 @@ services:
         .await
         .unwrap();
 
-    let summary = auto_update_discovery_summary(&stack_id, &service_id, "sha256:new");
+    let summary = auto_update_discovery_summary(&stack_id, &service_id, "sha256:0000000000000000000000000000000000000000000000000000000000000002");
     insert_schedule_check_job(&state, "chk_schedule_initial", &first_seen).await;
     crate::auto_update::handle_completed_check(
         &state,
@@ -790,7 +790,7 @@ services:
     .unwrap();
     let stack_id = seed_stack_from_compose(&state, "demo", &compose_path).await;
     let service_id =
-        set_single_service_check_result(&state, &stack_id, Some("sha256:old"), Some("latest"), Some("sha256:new")).await;
+        set_single_service_check_result(&state, &stack_id, Some("sha256:0000000000000000000000000000000000000000000000000000000000000001"), Some("latest"), Some("sha256:0000000000000000000000000000000000000000000000000000000000000002")).await;
 
     state
         .db
@@ -803,7 +803,7 @@ services:
         .await
         .unwrap();
 
-    let summary = auto_update_discovery_summary(&stack_id, &service_id, "sha256:new");
+    let summary = auto_update_discovery_summary(&stack_id, &service_id, "sha256:0000000000000000000000000000000000000000000000000000000000000002");
     insert_schedule_check_job(&state, "chk_schedule_initial", &first_seen).await;
     crate::auto_update::handle_completed_check(
         &state,
@@ -863,7 +863,7 @@ services:
     .unwrap();
     let stack_id = seed_stack_from_compose(&state, "demo", &compose_path).await;
     let service_id =
-        set_single_service_check_result(&state, &stack_id, Some("sha256:old"), Some("latest"), Some("sha256:new")).await;
+        set_single_service_check_result(&state, &stack_id, Some("sha256:0000000000000000000000000000000000000000000000000000000000000001"), Some("latest"), Some("sha256:0000000000000000000000000000000000000000000000000000000000000002")).await;
 
     state
         .db
@@ -876,7 +876,7 @@ services:
         .await
         .unwrap();
 
-    let summary = auto_update_discovery_summary(&stack_id, &service_id, "sha256:new");
+    let summary = auto_update_discovery_summary(&stack_id, &service_id, "sha256:0000000000000000000000000000000000000000000000000000000000000002");
     insert_schedule_check_job(&state, "chk_schedule_initial", &first_seen).await;
     crate::auto_update::handle_completed_check(
         &state,
@@ -945,7 +945,7 @@ services:
     .unwrap();
     let stack_id = seed_stack_from_compose(&state, "demo", &compose_path).await;
     let service_id =
-        set_single_service_check_result(&state, &stack_id, Some("sha256:old"), Some("latest"), Some("sha256:new")).await;
+        set_single_service_check_result(&state, &stack_id, Some("sha256:0000000000000000000000000000000000000000000000000000000000000001"), Some("latest"), Some("sha256:0000000000000000000000000000000000000000000000000000000000000002")).await;
 
     state
         .db
@@ -958,7 +958,7 @@ services:
         .await
         .unwrap();
 
-    let summary = auto_update_discovery_summary(&stack_id, &service_id, "sha256:new");
+    let summary = auto_update_discovery_summary(&stack_id, &service_id, "sha256:0000000000000000000000000000000000000000000000000000000000000002");
     insert_schedule_check_job(&state, "chk_schedule_initial", &first_seen).await;
     crate::auto_update::handle_completed_check(
         &state,

@@ -924,6 +924,167 @@ async fn auto_policy_enqueue_guard_rejects_changed_candidate_without_creating_a_
 }
 
 #[tokio::test]
+async fn auto_policy_enqueue_guard_rejects_malformed_candidate_digest() {
+    let db = Db::open(Path::new(":memory:")).await.unwrap();
+    db.call(|conn| {
+        conn.execute(
+            "INSERT INTO stacks (id, name, compose_type, compose_files_json, backup_targets_json, backup_retention_keep_last, backup_retention_delete_after_stable_seconds, created_at, updated_at, last_check_at) VALUES ('stack', 'stack', 'path', '[]', '[]', 0, 0, '2026-04-30', '2026-04-30', '2026-04-30')",
+            [],
+        )?;
+        conn.execute(
+            "INSERT INTO services (id, stack_id, name, image_ref, image_tag, current_digest, candidate_digest, auto_rollback, backup_targets_bind_paths_json, backup_targets_volume_names_json, created_at, updated_at) VALUES ('service', 'stack', 'service', 'ghcr.io/acme/app', 'latest', 'sha256:0000000000000000000000000000000000000000000000000000000000000000', 'latest', 0, '{}', '{}', '2026-04-30', '2026-04-30')",
+            [],
+        )?;
+        conn.execute(
+            "INSERT INTO auto_update_policies (scope_type, scope_id, mode, enabled, rules_json, created_at, updated_at) VALUES ('stack', 'stack', 'override', 1, '[{\"id\":\"rule\",\"enabled\":true}]', '2026-04-30T00:00:00Z', '2026-04-30T00:00:00Z')",
+            [],
+        )?;
+        Ok(())
+    })
+    .await
+    .unwrap();
+    db.insert_job(crate::api::types::JobListItem {
+        id: "source-check-malformed".to_string(),
+        r#type: crate::api::types::JobType::Check,
+        scope: crate::api::types::JobScope::Service,
+        stack_id: Some("stack".to_string()),
+        service_id: Some("service".to_string()),
+        status: "success".to_string(),
+        created_by: "schedule".to_string(),
+        reason: "schedule".to_string(),
+        created_at: "2026-04-30T00:00:00Z".to_string(),
+        started_at: None,
+        finished_at: Some("2026-04-30T00:00:01Z".to_string()),
+        allow_arch_mismatch: false,
+        backup_mode: "inherit".to_string(),
+        summary_json: serde_json::json!({}),
+    })
+    .await
+    .unwrap();
+    let candidate = db
+        .upsert_auto_update_candidate(
+            &candidate_input(
+                "candidate-malformed",
+                "latest",
+                "ready",
+                "2026-04-30T00:00:00Z",
+            ),
+            "2026-04-30T00:00:00Z",
+        )
+        .await
+        .unwrap();
+    db.set_auto_update_candidate_policy(
+        "service",
+        "latest",
+        "delayed",
+        Some("policy_matched"),
+        Some("rule"),
+        "2026-04-30T00:00:01Z",
+    )
+    .await
+    .unwrap();
+    db.call(|conn| {
+        conn.execute(
+            "UPDATE auto_update_candidates SET source_job_id = 'source-check-malformed' WHERE id = 'candidate-malformed'",
+            [],
+        )?;
+        Ok(())
+    })
+    .await
+    .unwrap();
+    let pending = db
+        .reserve_auto_update_pending(
+            &AutoUpdatePendingInput {
+                id: "pending-malformed".to_string(),
+                policy_scope_type: "stack".to_string(),
+                policy_scope_id: "stack".to_string(),
+                rule_id: "rule".to_string(),
+                stack_id: "stack".to_string(),
+                service_id: "service".to_string(),
+                source_check_job_id: "source-check-malformed".to_string(),
+                candidate_tag: "latest".to_string(),
+                candidate_display_tag: "1.4.0".to_string(),
+                candidate_digest: "latest".to_string(),
+                current_display_tag: "1.0.0".to_string(),
+                first_seen_at: "2026-04-30T00:00:00Z".to_string(),
+                due_at: "2026-04-30T00:00:00Z".to_string(),
+                min_age_seconds: 0,
+                min_version_lag: 0,
+                summary_json: serde_json::json!({
+                    "currentDigest": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+                    "policyUpdatedAt": "2026-04-30T00:00:00Z"
+                }),
+                candidate_id: Some(candidate.id.clone()),
+            },
+            "2026-04-30T00:00:02Z",
+        )
+        .await
+        .unwrap();
+    assert!(db
+        .try_claim_auto_update_pending_if_current(
+            &pending.id,
+            "service",
+            "latest",
+            "stack",
+            "stack",
+            "rule",
+            "2026-04-30T00:00:03Z",
+        )
+        .await
+        .unwrap());
+
+    let mut job = crate::api::types::JobRecord::new_running(
+        "malformed-auto-policy-job".to_string(),
+        crate::api::types::JobType::Update,
+        crate::api::types::JobScope::Service,
+        Some("stack".to_string()),
+        Some("service".to_string()),
+        "2026-04-30T00:01:02Z",
+    );
+    job.status = "queued".to_string();
+    job.started_at = None;
+    let outcome = db
+        .insert_service_operation_job_if_unblocked_with_auto_policy_guard(
+            job.to_db(),
+            vec![crate::db::ServiceOperationTarget {
+                service_id: "service".to_string(),
+                stack_id: "stack".to_string(),
+            }],
+            None,
+            crate::db::AutoPolicyEnqueueGuard {
+                pending_id: pending.id.clone(),
+                service_id: "service".to_string(),
+                candidate_id: candidate.id,
+                candidate_digest: "latest".to_string(),
+                policy_scope_type: "stack".to_string(),
+                policy_scope_id: "stack".to_string(),
+                rule_id: "rule".to_string(),
+                expected_current_digest: "sha256:0000000000000000000000000000000000000000000000000000000000000000"
+                    .to_string(),
+            },
+        )
+        .await
+        .unwrap();
+    assert!(matches!(
+        outcome,
+        crate::db::ServiceOperationAcquireOutcome::StaleAutoPolicy
+    ));
+    assert!(db
+        .get_job("malformed-auto-policy-job")
+        .await
+        .unwrap()
+        .is_none());
+    assert_eq!(
+        db.get_auto_update_pending_by_id(&pending.id)
+            .await
+            .unwrap()
+            .unwrap()
+            .status,
+        "skipped"
+    );
+}
+
+#[tokio::test]
 async fn skipping_pending_auto_update_stops_attached_jobs_idempotently() {
     let db = Db::open(Path::new(":memory:")).await.unwrap();
     let pending_input = |id: &str| AutoUpdatePendingInput {

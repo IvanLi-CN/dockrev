@@ -47,7 +47,7 @@ fn auto_update_discovery_summary(
                 "serviceName": "web",
                 "imageRef": "ghcr.io/acme/web",
                 "currentTag": "latest",
-                "currentDigest": "sha256:old",
+                "currentDigest": "sha256:0000000000000000000000000000000000000000000000000000000000000001",
                 "currentDisplayTag": "1.0.0",
                 "candidateTag": "1.1.0",
                 "candidateDisplayTag": "1.1.0",
@@ -539,9 +539,9 @@ services:
     let service_id = set_single_service_check_result(
         &state,
         &stack_id,
-        Some("sha256:old"),
+        Some("sha256:0000000000000000000000000000000000000000000000000000000000000001"),
         Some("latest"),
-        Some("sha256:new"),
+        Some("sha256:0000000000000000000000000000000000000000000000000000000000000002"),
     )
     .await;
 
@@ -554,7 +554,14 @@ services:
         .await
         .unwrap();
 
-    let mut summary = auto_update_discovery_summary(&stack_id, &service_id, "sha256:new");
+    let mut summary = auto_update_discovery_summary(
+        &stack_id,
+        &service_id,
+        "sha256:0000000000000000000000000000000000000000000000000000000000000002",
+    );
+    summary["newVersions"]["services"][0]["currentDigest"] = json!(
+        "sha256:0000000000000000000000000000000000000000000000000000000000000001"
+    );
     summary["newVersions"]["services"][0]["candidateTag"] = json!("latest");
     summary["newVersions"]["services"][0]["candidateDisplayTag"] = json!("latest");
     insert_schedule_check_job(&state, "chk_schedule_raw_tag", &now).await;
@@ -570,7 +577,10 @@ services:
 
     let candidate = state
         .db
-        .get_auto_update_candidate(&service_id, "sha256:new")
+        .get_auto_update_candidate(
+            &service_id,
+            "sha256:0000000000000000000000000000000000000000000000000000000000000002",
+        )
         .await
         .unwrap()
         .unwrap();
