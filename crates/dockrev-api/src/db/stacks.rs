@@ -1257,18 +1257,11 @@ WHERE id = ?1
                 .query_row(
                     &format!(
                         r#"
-SELECT
-  services.image_ref,
-  services.image_tag,
-  services.current_digest,
-  services.current_runtime_started_at,
-  services.current_resolved_tag,
-  services.candidate_tag,
-  COALESCE(auto_update_candidates.resolved_version, services.candidate_resolved_tag),
-  services.candidate_digest
+SELECT services.image_ref, services.image_tag, services.current_digest,
+  services.current_runtime_started_at, services.current_resolved_tag, services.candidate_tag,
+  COALESCE(auto_update_candidates.resolved_version, services.candidate_resolved_tag), services.candidate_digest
 FROM services
-LEFT JOIN auto_update_candidates
-  ON auto_update_candidates.service_id = services.id
+LEFT JOIN auto_update_candidates ON auto_update_candidates.service_id = services.id
  AND {candidate_digest} = {service_digest}
 WHERE services.id = ?1
 "#,
