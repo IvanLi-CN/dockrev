@@ -1,4 +1,4 @@
-use rusqlite::{Transaction, params};
+use rusqlite::{OptionalExtension as _, Transaction, params};
 use std::collections::BTreeMap;
 
 const HYDRATION_ORIGIN_DISCOVERY_HISTORY: &str = "discovery_history";
@@ -84,7 +84,7 @@ fn reuse_equivalent_candidate_id(
 ) -> anyhow::Result<Option<String>> {
     let digest = super::strict_canonical_digest_sql("candidate_digest");
     let mut stmt = tx.prepare(&format!(
-        "SELECT id, candidate_digest FROM auto_update_candidates WHERE service_id = ?1 ORDER BY CASE WHEN {digest} = ?2 THEN 0 ELSE 1 END, CASE WHEN status = 'superseded' THEN 1 ELSE 0 END, created_at ASC, id ASC"
+        "SELECT id, candidate_digest FROM auto_update_candidates WHERE service_id = ?1 ORDER BY CASE WHEN lower(trim(candidate_digest)) LIKE 'sha256:%' THEN 0 ELSE 1 END, CASE WHEN {digest} = ?2 THEN 0 ELSE 1 END, CASE WHEN status = 'superseded' THEN 1 ELSE 0 END, created_at ASC, id ASC"
     ))?;
     let rows = stmt.query_map(params![service_id, candidate_digest], |row| {
         Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
@@ -96,6 +96,38 @@ fn reuse_equivalent_candidate_id(
         }
     }
     Ok(None)
+}
+
+fn canonicalize_reused_candidate_id(
+    tx: &Transaction<'_>,
+    service_id: &str,
+    candidate_digest: &str,
+    candidate_id: &str,
+) -> anyhow::Result<String> {
+    tx.execute(
+        r#"
+UPDATE auto_update_candidates
+SET candidate_digest = ?2
+WHERE id = ?1
+  AND service_id = ?3
+  AND candidate_digest <> ?2
+  AND NOT EXISTS (
+    SELECT 1
+    FROM auto_update_candidates other
+    WHERE other.service_id = ?3
+      AND other.candidate_digest = ?2
+      AND other.id <> ?1
+  )
+"#,
+        params![candidate_id, candidate_digest, service_id],
+    )?;
+    tx.query_row(
+        "SELECT id FROM auto_update_candidates WHERE service_id = ?1 AND candidate_digest = ?2 ORDER BY id LIMIT 1",
+        params![service_id, candidate_digest],
+        |row| row.get::<_, String>(0),
+    )
+    .optional()?
+    .ok_or_else(|| anyhow::anyhow!("equivalent auto-update candidate disappeared during hydration"))
 }
 
 fn job_summary(row: &DiscoveryHistoryRow) -> serde_json::Value {
@@ -435,8 +467,13 @@ pub(super) fn hydrate_auto_update_candidates_tx(
         } else {
             "version_inference_pending"
         };
-        let candidate_id = reuse_equivalent_candidate_id(tx, &service_id, &candidate_digest)?
-            .unwrap_or_else(|| format!("{service_id}:{candidate_digest}"));
+        let candidate_id = match reuse_equivalent_candidate_id(tx, &service_id, &candidate_digest)?
+        {
+            Some(candidate_id) => {
+                canonicalize_reused_candidate_id(tx, &service_id, &candidate_digest, &candidate_id)?
+            }
+            None => format!("{service_id}:{candidate_digest}"),
+        };
         let hydration_origin = if complete {
             HYDRATION_ORIGIN_DISCOVERY_HISTORY
         } else {

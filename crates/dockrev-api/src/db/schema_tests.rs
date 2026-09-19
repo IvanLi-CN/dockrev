@@ -932,6 +932,73 @@ async fn hydration_migration_survives_equivalent_legacy_candidate_rows() {
 }
 
 #[tokio::test]
+async fn hydration_migration_normalizes_a_single_prefixless_candidate_before_upsert() {
+    let db_path = temporary_db_path();
+    let db = Db::open(&db_path).await.unwrap();
+    db.call(|conn| {
+        conn.execute(
+            "INSERT INTO stacks (id, name, compose_type, compose_files_json, backup_targets_json, backup_retention_keep_last, backup_retention_delete_after_stable_seconds, created_at, updated_at, last_check_at) VALUES ('single-legacy-stack', 'single-legacy-stack', 'path', '[]', '[]', 0, 0, '2026-04-30', '2026-04-30', '2026-04-30')",
+            [],
+        )?;
+        conn.execute(
+            "INSERT INTO services (id, stack_id, name, image_ref, image_tag, current_digest, candidate_digest, auto_rollback, backup_targets_bind_paths_json, backup_targets_volume_names_json, created_at, updated_at) VALUES ('single-legacy-service', 'single-legacy-stack', 'service', 'ghcr.io/acme/app', 'latest', 'sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa', '0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef', 0, '{}', '{}', '2026-04-30', '2026-04-30')",
+            [],
+        )?;
+        conn.execute(
+            "INSERT INTO jobs (id, type, scope, stack_id, service_id, status, allow_arch_mismatch, backup_mode, created_by, reason, created_at, finished_at, summary_json) VALUES ('single-legacy-check', 'check', 'service', 'single-legacy-stack', 'single-legacy-service', 'success', 0, 'inherit', 'schedule', 'schedule', '2026-04-30T00:00:00Z', '2026-04-30T00:00:01Z', '{}')",
+            [],
+        )?;
+        conn.execute(
+            "INSERT INTO service_new_version_discoveries (service_id, image_ref, source_job_id, discovered_at, current_digest, current_display_tag, current_tag, candidate_tag, candidate_digest, candidate_display_tag) VALUES ('single-legacy-service', 'ghcr.io/acme/app:latest', 'single-legacy-check', '2026-04-30T00:00:00Z', 'sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa', '1.0.0', 'latest', 'latest', '0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef', 'latest')",
+            [],
+        )?;
+        conn.execute(
+            "INSERT INTO auto_update_candidates (id, stack_id, service_id, image_ref, raw_tag, candidate_digest, status, reason, attempts, discovered_at, source_job_id, source, current_tag, current_display_tag, current_digest, created_at, updated_at) VALUES ('single-legacy-candidate', 'single-legacy-stack', 'single-legacy-service', 'ghcr.io/acme/app', 'latest', '0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef', 'awaiting_inference', 'version_inference_pending', 0, '2026-04-30T00:00:00Z', 'single-legacy-check', 'schedule', 'latest', '1.0.0', 'sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa', '2026-04-30T00:00:00Z', '2026-04-30T00:00:00Z')",
+            [],
+        )?;
+        conn.execute(
+            "DELETE FROM schema_migrations WHERE id IN ('0020_hydrate_auto_update_candidates_from_discoveries', '0024_normalize_auto_update_digest_identity')",
+            [],
+        )?;
+        Ok(())
+    })
+    .await
+    .unwrap();
+    drop(db);
+
+    let reopened = Db::open(&db_path).await;
+    assert!(
+        reopened.is_ok(),
+        "startup migration failed: {:?}",
+        reopened.err()
+    );
+    let db = reopened.unwrap();
+    let candidate = db
+        .get_auto_update_candidate(
+            "single-legacy-service",
+            "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+        )
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(candidate.id, "single-legacy-candidate");
+    assert_eq!(
+        candidate.candidate_digest,
+        "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+    );
+    assert_eq!(candidate.source, "schedule");
+    assert_eq!(
+        candidate.hydration_origin.as_deref(),
+        Some("discovery_history")
+    );
+
+    drop(db);
+    std::fs::remove_file(&db_path).unwrap();
+    let _ = std::fs::remove_file(db_path.with_extension("sqlite3-wal"));
+    let _ = std::fs::remove_file(db_path.with_extension("sqlite3-shm"));
+}
+
+#[tokio::test]
 async fn invalid_digest_migration_rejects_blank_candidate_identities() {
     let db_path = temporary_db_path();
     let db = Db::open(&db_path).await.unwrap();
