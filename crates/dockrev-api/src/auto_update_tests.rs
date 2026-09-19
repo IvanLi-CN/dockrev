@@ -153,7 +153,8 @@ fn semver_is_fail_closed_until_digest_bound_version_exists() {
         current_display_tag: "1.0.0".to_string(),
         candidate_tag: "latest".to_string(),
         candidate_display_tag: "latest".to_string(),
-        candidate_digest: "sha256:new".to_string(),
+        candidate_digest: "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+            .to_string(),
     };
     let semver = rule(AutoUpdateMatcherType::Semver, ">=1, <2");
     assert!(!rule_matches_candidate(&semver, &candidate, None, None));
@@ -190,7 +191,8 @@ fn candidate_settlement_requires_a_strict_or_digest_bound_version() {
         current_display_tag: "1.0.0".to_string(),
         candidate_tag: "latest".to_string(),
         candidate_display_tag: "latest".to_string(),
-        candidate_digest: "sha256:new".to_string(),
+        candidate_digest: "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+            .to_string(),
     };
     assert_eq!(
         candidate_settlement_state(&candidate).0,
@@ -206,6 +208,37 @@ fn candidate_settlement_requires_a_strict_or_digest_bound_version() {
     candidate.candidate_tag = "1.5.0".to_string();
     candidate.candidate_display_tag = "1.5.0".to_string();
     assert_eq!(candidate_settlement_state(&candidate).0, "ready");
+}
+
+#[test]
+fn candidate_settlement_rejects_malformed_digest_evidence() {
+    let mut candidate = notify::NewVersionDiscoveredService {
+        stack_id: "stack".to_string(),
+        service_id: "service".to_string(),
+        image_ref: "ghcr.io/acme/app".to_string(),
+        current_tag: "latest".to_string(),
+        current_digest: Some("sha256:old".to_string()),
+        current_display_tag: "1.0.0".to_string(),
+        candidate_tag: "1.5.0".to_string(),
+        candidate_display_tag: "1.5.0".to_string(),
+        candidate_digest: "sha256:new".to_string(),
+    };
+
+    assert_eq!(
+        candidate_settlement_state(&candidate),
+        (
+            "unresolved",
+            None,
+            Some("invalid_candidate_digest".to_string()),
+        )
+    );
+
+    candidate.candidate_digest = "not-a-digest".to_string();
+    assert_eq!(candidate_settlement_state(&candidate).0, "unresolved");
+    assert_eq!(
+        candidate_settlement_state(&candidate).2.as_deref(),
+        Some("invalid_candidate_digest")
+    );
 }
 
 #[test]

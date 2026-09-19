@@ -385,6 +385,13 @@ fn candidate_settlement_state(
             Some("missing_candidate_evidence".to_string()),
         );
     }
+    if crate::snapshot_worker::normalize_digest_identity(&candidate.candidate_digest).is_none() {
+        return (
+            "unresolved",
+            None,
+            Some("invalid_candidate_digest".to_string()),
+        );
+    }
     if let Some(version) = resolved_candidate_version(candidate) {
         return (
             "ready",
