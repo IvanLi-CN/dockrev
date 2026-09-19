@@ -246,7 +246,7 @@ async fn digest_bound_snapshot_settles_candidate_and_re_evaluates_policy() {
                 service_id: "service".to_string(),
                 image_ref: "ghcr.io/acme/web".to_string(),
                 raw_tag: "latest".to_string(),
-                candidate_digest: "sha256:new".to_string(),
+                candidate_digest: "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa".to_string(),
                 resolved_version: None,
                 status: "awaiting_inference".to_string(),
                 reason: Some("version_inference_pending".to_string()),
@@ -264,7 +264,7 @@ async fn digest_bound_snapshot_settles_candidate_and_re_evaluates_policy() {
         .await
         .unwrap();
     let snapshot = crate::api::types::ServiceDigestTagsSnapshotResponse {
-        digest: "sha256:new".to_string(),
+        digest: "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa".to_string(),
         tags: vec!["latest".to_string(), "1.4.0".to_string()],
         checked_at: "2026-04-30T00:00:30Z".to_string(),
         scan: crate::api::types::ServiceDigestTagsScanSummary {
@@ -279,7 +279,7 @@ async fn digest_bound_snapshot_settles_candidate_and_re_evaluates_policy() {
         .db
         .upsert_image_digest_tags_snapshot(
             "ghcr.io/acme/web",
-            "sha256:new",
+            "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
             "linux/amd64",
             &serde_json::to_string(&snapshot).unwrap(),
             &snapshot.checked_at,
@@ -291,7 +291,7 @@ async fn digest_bound_snapshot_settles_candidate_and_re_evaluates_policy() {
     crate::auto_update::reconcile_inference_for_digest(
         &state,
         "ghcr.io/acme/web",
-        "sha256:new",
+        "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
         "linux/amd64",
         "2026-04-30T00:01:00Z",
     )
@@ -300,7 +300,10 @@ async fn digest_bound_snapshot_settles_candidate_and_re_evaluates_policy() {
 
     let candidate = state
         .db
-        .get_auto_update_candidate("service", "sha256:new")
+        .get_auto_update_candidate(
+            "service",
+            "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        )
         .await
         .unwrap()
         .unwrap();
@@ -341,7 +344,7 @@ async fn terminal_unresolved_candidate_re_evaluates_policy_as_skipped() {
                 service_id: "service".to_string(),
                 image_ref: "ghcr.io/acme/web".to_string(),
                 raw_tag: "latest".to_string(),
-                candidate_digest: "sha256:unresolved-policy".to_string(),
+                candidate_digest: "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb".to_string(),
                 resolved_version: None,
                 status: "awaiting_inference".to_string(),
                 reason: Some("version_inference_pending".to_string()),
@@ -362,7 +365,7 @@ async fn terminal_unresolved_candidate_re_evaluates_policy_as_skipped() {
     crate::auto_update::reconcile_inference_for_digest(
         &state,
         "ghcr.io/acme/web",
-        "sha256:unresolved-policy",
+        "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
         "linux/amd64",
         "2026-04-30T00:01:00Z",
     )
@@ -371,7 +374,10 @@ async fn terminal_unresolved_candidate_re_evaluates_policy_as_skipped() {
 
     let candidate = state
         .db
-        .get_auto_update_candidate("service", "sha256:unresolved-policy")
+        .get_auto_update_candidate(
+            "service",
+            "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        )
         .await
         .unwrap()
         .unwrap();
