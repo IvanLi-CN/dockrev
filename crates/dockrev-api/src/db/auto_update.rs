@@ -1198,6 +1198,9 @@ mod tests {
     }
 
     include!("auto_update_recovery_tests.rs");
+    include!("auto_update_recovery_tests_tail.rs");
+    include!("auto_update_policy_scope_tests.rs");
+    include!("auto_update_recovery_tests_final.rs");
 
     #[tokio::test]
     async fn newer_candidate_supersedes_old_candidate_and_pending_action() {
