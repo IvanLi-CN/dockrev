@@ -156,14 +156,27 @@ fn semver_is_fail_closed_until_digest_bound_version_exists() {
         candidate_digest: "sha256:new".to_string(),
     };
     let semver = rule(AutoUpdateMatcherType::Semver, ">=1, <2");
-    assert!(!rule_matches_candidate(&semver, &candidate, None));
-    assert!(rule_matches_candidate(&semver, &candidate, Some("1.4.0"),));
+    assert!(!rule_matches_candidate(&semver, &candidate, None, None));
+    assert!(rule_matches_candidate(
+        &semver,
+        &candidate,
+        Some("1.4.0"),
+        None,
+    ));
 
     let regex = rule(AutoUpdateMatcherType::Regex, "latest");
-    assert!(rule_matches_candidate(&regex, &candidate, None));
+    assert!(rule_matches_candidate(&regex, &candidate, None, None));
 
     let stable = rule(AutoUpdateMatcherType::Glob, "stable");
-    assert!(!rule_matches_candidate(&stable, &candidate, None,));
+    assert!(!rule_matches_candidate(&stable, &candidate, None, None,));
+
+    let resolved_tags = vec!["1.4.0".to_string(), "stable".to_string()];
+    assert!(rule_matches_candidate(
+        &stable,
+        &candidate,
+        Some("1.4.0"),
+        Some(resolved_tags.as_slice()),
+    ));
 }
 
 #[test]
