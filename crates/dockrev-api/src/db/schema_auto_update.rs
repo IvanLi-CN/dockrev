@@ -668,40 +668,6 @@ WHERE id IN (
     Ok(())
 }
 
-pub(super) fn apply_migration_0024_normalize_auto_update_digest_identity(
-    conn: &mut rusqlite::Connection,
-) -> anyhow::Result<()> {
-    let id = "0024_normalize_auto_update_digest_identity";
-    if migration_applied(conn, id)? {
-        return Ok(());
-    }
-    let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
-    let now = now_rfc3339()?;
-    tx.execute_batch("DROP INDEX IF EXISTS idx_auto_update_pending_active_candidate")?;
-    deduplicate_auto_update_pending_digests_tx(&tx, &now)?;
-    for table in ["services", "auto_update_pending"] {
-        let digest = super::canonical_digest_sql("candidate_digest");
-        let sql = format!(
-            "UPDATE {table} SET candidate_digest = {digest} WHERE candidate_digest IS NOT NULL AND TRIM(candidate_digest) <> ''"
-        );
-        tx.execute(&sql, [])?;
-    }
-    deduplicate_auto_update_candidate_digests_tx(&tx, &now)?;
-    let digest = super::canonical_digest_sql("candidate_digest");
-    tx.execute(
-        &format!(
-            "UPDATE auto_update_candidates SET candidate_digest = {digest} WHERE candidate_digest IS NOT NULL AND TRIM(candidate_digest) <> ''"
-        ),
-        [],
-    )?;
-    tx.execute_batch(
-        "CREATE UNIQUE INDEX idx_auto_update_pending_active_candidate\n         ON auto_update_pending(\n           service_id, rule_id, policy_scope_type, policy_scope_id, candidate_digest\n         )\n         WHERE status IN ('pending', 'enqueuing', 'enqueued')",
-    )?;
-    record_migration_tx(&tx, id)?;
-    tx.commit()?;
-    Ok(())
-}
-
 pub(super) fn apply_migration_0025_normalize_new_version_notification_digest_identity(
     conn: &mut rusqlite::Connection,
 ) -> anyhow::Result<()> {
