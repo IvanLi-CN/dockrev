@@ -119,7 +119,12 @@ impl MetricsStore {
             anyhow::bail!(message);
         }
         let retained_pruned_legacy_ids = self.pruned_legacy_ids().await?;
-        if !raw_source_matches_manifest && !retained_pruned_legacy_ids.is_empty() {
+        let legacy_raw_retired =
+            active_service_ids.is_some() && self.legacy_raw_samples_are_retired().await?;
+        if !raw_source_matches_manifest
+            && !retained_pruned_legacy_ids.is_empty()
+            && !legacy_raw_retired
+        {
             let message =
                 "legacy raw source changed after retention and cannot rebuild long-window rollups"
                     .to_string();
