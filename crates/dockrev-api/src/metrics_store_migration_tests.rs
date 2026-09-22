@@ -486,6 +486,45 @@ async fn metrics_store_migration_rejects_legacy_raw_changes_after_retention() {
 }
 
 #[tokio::test]
+async fn metrics_store_migration_allows_retired_raw_when_source_shrinks() {
+    let main_path = temp_path("metrics-migration-retired-source-shrinks-main");
+    let metrics_path = temp_path("metrics-migration-retired-source-shrinks-target");
+    let db = Db::open(&main_path).await.unwrap();
+    db.insert_legacy_metric_fixture(&[
+        sample("svc-a", "2026-08-16T12:02:00Z", 10.0, 1_000),
+        sample("svc-a", "2026-08-16T12:04:00Z", 30.0, 2_000),
+    ])
+    .await
+    .unwrap();
+    let metrics = MetricsStore::open(&metrics_path).await.unwrap();
+    let active_service_ids = BTreeSet::from(["svc-a".to_string()]);
+    metrics
+        .migrate_from_legacy_with_active_services(&db, &active_service_ids)
+        .await
+        .unwrap();
+    metrics.gc(&active_service_ids).await.unwrap();
+
+    db.delete_legacy_metric_fixture_samples_only("svc-a")
+        .await
+        .unwrap();
+
+    metrics
+        .migrate_from_legacy_with_active_services(&db, &active_service_ids)
+        .await
+        .unwrap();
+
+    assert_eq!(metrics.pruned_legacy_ids().await.unwrap().len(), 2);
+    assert!(
+        metrics
+            .history_since("svc-a", "1970-01-01T00:00:00Z", None)
+            .await
+            .unwrap()
+            .samples
+            .is_empty()
+    );
+}
+
+#[tokio::test]
 async fn metrics_store_migration_preserves_rollups_after_legacy_raw_retirement() {
     let main_path = temp_path("metrics-migration-retired-legacy-source-main");
     let metrics_path = temp_path("metrics-migration-retired-legacy-source-target");

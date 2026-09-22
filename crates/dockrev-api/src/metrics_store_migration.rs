@@ -212,7 +212,12 @@ impl MetricsStore {
         }
 
         let target = self.migrated_legacy_integrity().await?;
-        let target_is_verified = if retained_pruned_legacy_ids.is_empty() {
+        let target_is_verified = if legacy_raw_retired && !retained_pruned_legacy_ids.is_empty() {
+            // Retention tombstones describe the historical source revision. Once all legacy raw
+            // rows are retired, their count cannot be compared with a source that has since
+            // shrunk; latest projection and rollup integrity were verified above instead.
+            true
+        } else if retained_pruned_legacy_ids.is_empty() {
             (source.sample_count, source.sample_hash.clone()) == target
         } else {
             self.legacy_sample_coverage_is_complete(source.sample_count)
