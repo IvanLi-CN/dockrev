@@ -486,6 +486,78 @@ async fn metrics_store_migration_rejects_legacy_raw_changes_after_retention() {
 }
 
 #[tokio::test]
+async fn metrics_store_migration_preserves_rollups_after_legacy_raw_retirement() {
+    let main_path = temp_path("metrics-migration-retired-legacy-source-main");
+    let metrics_path = temp_path("metrics-migration-retired-legacy-source-target");
+    let db = Db::open(&main_path).await.unwrap();
+    let sampled_at = format_time(time::OffsetDateTime::now_utc()).unwrap();
+    db.insert_legacy_metric_fixture(&[sample("svc-a", &sampled_at, 0.12345678901234567, 1_000)])
+        .await
+        .unwrap();
+    let metrics = MetricsStore::open(&metrics_path).await.unwrap();
+    metrics.migrate_from_legacy(&db).await.unwrap();
+
+    metrics
+        .writer_call(|conn| {
+            let active_service_ids = BTreeSet::new();
+            gc_batch_tx(
+                conn,
+                "9999-12-31T00:00:00Z",
+                "1970-01-01T00:00:00Z",
+                "1970-01-01T00:00:00Z",
+                &active_service_ids,
+            )?;
+            conn.execute(
+                "UPDATE metrics_rollup_integrity SET row_count = row_count + 10, trusted_row_count = trusted_row_count + 10 WHERE id = 1",
+                [],
+            )?;
+            Ok(())
+        })
+        .await
+        .unwrap();
+    db.update_legacy_metric_fixture_cpu("svc-a", 0.25)
+        .await
+        .unwrap();
+
+    metrics
+        .migrate_from_legacy_with_active_services(&db, &BTreeSet::from(["svc-a".to_string()]))
+        .await
+        .unwrap();
+
+    assert_eq!(
+        db.metrics_migration_state()
+            .await
+            .unwrap()
+            .as_ref()
+            .map(|state| state.state.as_str()),
+        Some("complete")
+    );
+    let (legacy_rows, rollup_rows, integrity_count) = metrics
+        .reader_call(|conn| {
+            Ok((
+                conn.query_row(
+                    "SELECT COUNT(*) FROM service_resource_samples WHERE legacy_id IS NOT NULL",
+                    [],
+                    |row| row.get::<_, i64>(0),
+                )?,
+                conn.query_row("SELECT COUNT(*) FROM service_resource_rollups", [], |row| {
+                    row.get::<_, i64>(0)
+                })?,
+                conn.query_row(
+                    "SELECT row_count FROM metrics_rollup_integrity WHERE id = 1",
+                    [],
+                    |row| row.get::<_, i64>(0),
+                )?,
+            ))
+        })
+        .await
+        .unwrap();
+    assert_eq!(legacy_rows, 0);
+    assert!(rollup_rows > 0);
+    assert_eq!(integrity_count, rollup_rows);
+}
+
+#[tokio::test]
 async fn metrics_store_migration_repairs_corrupted_retained_legacy_content() {
     let main_path = temp_path("metrics-migration-corrupted-retained-legacy-main");
     let metrics_path = temp_path("metrics-migration-corrupted-retained-legacy-target");

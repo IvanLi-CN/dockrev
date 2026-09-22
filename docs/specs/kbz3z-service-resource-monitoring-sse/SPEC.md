@@ -73,7 +73,7 @@
 - 指标库包含 `service_resource_samples`、`service_resource_latest_samples` 与 `service_resource_rollups`。原始样本保留 24 小时，1 分钟桶保留 7 天，5 分钟桶保留 30 天。指标写事务必须通过受控写入 guard，读连接开启 `query_only` 与外键约束；legacy latest 投影刷新也必须在受控事务内完成，避免把内部修复误判为未受管 target 变更。
 - 启动时先从主库旧指标表可恢复复制到指标库。首次完整复制必须由主库迁移状态、幂等写入、稳定排序行哈希和行数验证控制；验证完成前不得启动新的采样写路径，旧表保持为回滚源。
 - 从旧表导入的原始行必须保存稳定内容签名。指标 GC 在删除带 legacy id 的原始行或孤儿服务数据前，必须记录该 id 的墓碑；后续启动以完整源哈希、保留原始行签名及“保留行数加墓碑数覆盖旧表行数”验证已迁移数据，深度恢复还必须比对墓碑活动 count/双校验和与受信快照，并验证每个墓碑对应主库源行。验证后 latest/rollup 只从现存 raw 重算；latest 还必须以来源标记重建 active service 的 legacy 投影并完成逐行验证，保留更新鲜的运行时样本，同时修复陈旧、缺失或时间回退的导入值；无来源列的旧 metrics latest 必须先标记为未知并保留，只有不早于未知行的 raw 或源投影才能替换它。rollup 以行级完整性指纹和行数元数据检测缺失或篡改，旧文件升级时从其既有桶字段补写指纹，仅在首次完整复制或校验失败时重建，已验证的重启不得全量重建。非 active service 的 legacy latest 不得回灌。必须保留超出 raw 留存期的 active latest 和长窗口桶；若已经 GC 的 legacy 或运行时 raw 使损坏的长窗口桶不可重建，迁移必须失败，不能把损坏值重新登记为完整。完整复制源变化时保留已验证墓碑；在清空旧 legacy raw 前必须记录其桶集合并随现存 raw 一同重建，确保已从源删除的 legacy 历史不会遗留在长窗口响应中，同时不触碰没有 legacy 来源的 native 长窗口桶；修复目标数据时不得复活已由 GC 裁剪的旧行。
-- 迁移 manifest 同时保存 legacy raw 与 latest 的稳定排序行哈希/行数、raw 最大 id 与源变更 revision；主库 source revision 仅在旧指标表变更时递增，健康重启不得扫描全部 raw。指标库 target revision 与受信 revision 不一致时必须重新执行深度验证；运行时 raw/latest 另以目标库内的增量行数和受信快照保护，任何 native 数据的未受信变更均不得猜测修复；空 target 中出现未受管 native 行也必须被识别为不可信。legacy projection 的重建写入不得绕过 guard。若 legacy raw 在已存在墓碑后改变，或 native raw 已裁剪后 rollup 不完整，系统不得假定长窗口桶仍可恢复，必须保持迁移未完成并阻断新采样路径。
+- 迁移 manifest 同时保存 legacy raw 与 latest 的稳定排序行哈希/行数、raw 最大 id 与源变更 revision；主库 source revision 仅在旧指标表变更时递增，健康重启不得扫描全部 raw。指标库 target revision 与受信 revision 不一致时必须重新执行深度验证；运行时 raw/latest 另以目标库内的增量行数和受信快照保护，任何 native 数据的未受信变更均不得猜测修复；空 target 中出现未受管 native 行也必须被识别为不可信。legacy projection 的重建写入不得绕过 guard。若 legacy raw 在已存在墓碑后改变且目标仍保留 legacy raw，系统不得假定长窗口桶仍可恢复，必须保持迁移未完成并阻断新采样路径；若 active-service 路径已证明目标中的 legacy raw 全部退役，则保留通过完整性验证的长期 rollup，不用已删除 raw 重建。native raw 已裁剪后 rollup 不完整时仍必须失败。
 - `GET /api/jobs?view=compact` 的查询只经 SQLite JSON 投影读取进度、结果原因、展示标签和目标版本等派生字段，Rust 不得选取或反序列化完整 `summary_json`；默认 jobs 响应继续保持兼容。
 - 后台历史采样任务：
   - 仅在开关开启时运行，由单一进程级 coordinator 以设置频率执行全局周期。
@@ -135,6 +135,10 @@
 - `python3 ./.github/scripts/check-file-budgets.py`
 - `bun run --cwd web build`
 - `bun run --cwd web build-storybook`
+
+## Related ADRs
+
+- [0013-retired-legacy-rollup-recovery](../../adr/0013-retired-legacy-rollup-recovery.md)
 
 ## Visual Evidence
 
@@ -223,6 +227,7 @@
 - 2026-07-26: 普通 Docker CLI 命令超时改为终止子进程；资源监控实时与历史采样共享 Docker Engine client，加入全局 4 请求限流、2 次连续可恢复故障熔断、5s 至 60s 指数退避与单半开探测，避免 daemon 退化时请求堆积。
 - 2026-07-27: 101 实测确认 `stats?stream=false` 每容器等待约两秒，而 `one-shot=true` 约十毫秒；采样重构为单一全局协调器、应用侧 CPU 差分基线和 24 小时分批留存，避免 per-project 历史 worker 放大扫描与 SQLite 积压。
 - 2026-07-27: 收紧基线与失效语义：基线窗口覆盖最长支持 cadence，缺少累计 CPU 计数不安装基线；监控关闭时已开始的采集只向等待者传播失效，不重新写入缓存或隐式重试。
+- 2026-09-22: 101 恢复验证显示 legacy raw 已全部退役但长期 rollup 仍可保留；迁移改为在类型感知完整性通过时修复陈旧派生计数器并保留该读模型，真正的内容损坏或未退役 legacy raw 仍 fail closed。
 
 ## 参考（References）
 

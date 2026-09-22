@@ -509,6 +509,19 @@ impl MetricsStore {
         .await
     }
 
+    async fn legacy_raw_samples_are_retired(&self) -> anyhow::Result<bool> {
+        self.reader_call(|conn| {
+            conn.query_row(
+                "SELECT NOT EXISTS(SELECT 1 FROM service_resource_samples WHERE legacy_id IS NOT NULL)",
+                [],
+                |row| row.get::<_, i64>(0).map(|value| value != 0),
+            )
+            .map_err(Into::into)
+        })
+        .await
+        .context("check legacy raw metrics retirement")
+    }
+
     async fn clear_legacy_samples(&self) -> anyhow::Result<()> {
         self.writer_call(|conn| {
             let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
