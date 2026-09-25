@@ -3,10 +3,14 @@ use super::*;
 use std::collections::HashSet;
 
 use crate::service_check;
+mod check_version_evidence;
 mod lifecycle;
 mod lifecycle_snapshot;
 mod progress_persistence;
 mod transitions;
+pub(super) use check_version_evidence::{
+    CheckConfiguredTagObservation, CheckDiscoveredVersion, configured_tag_observation_version,
+};
 pub(crate) use lifecycle::*;
 pub(crate) use lifecycle_snapshot::LifecycleSnapshotCoordinator;
 pub(crate) use progress_persistence::*;
@@ -259,28 +263,6 @@ pub(super) fn update_progress_snapshot(
 #[cfg(test)]
 mod tests;
 
-pub(super) fn configured_tag_observation_version(
-    configured_tag: &str,
-    observed_digest: &str,
-    candidate_digest: Option<&str>,
-    candidate_resolved_tag: Option<&str>,
-) -> Option<String> {
-    let configured_tag = configured_tag.trim();
-    if crate::ignore::is_strict_semver(configured_tag) {
-        return Some(configured_tag.to_string());
-    }
-
-    let observed_digest = snapshot_worker::normalize_digest(observed_digest);
-    let candidate_digest = candidate_digest.and_then(snapshot_worker::normalize_digest);
-    if observed_digest.is_none() || observed_digest != candidate_digest {
-        return None;
-    }
-
-    let candidate_resolved_tag = candidate_resolved_tag?.trim();
-    crate::ignore::is_strict_semver(candidate_resolved_tag)
-        .then(|| candidate_resolved_tag.to_string())
-}
-
 #[allow(clippy::too_many_arguments)]
 pub(super) async fn handle_check_worker_result(
     state: &Arc<AppState>,
@@ -520,30 +502,6 @@ pub(super) struct CheckWorkerResult {
     service_image_ref: String,
     service_image_tag: String,
     outcome: anyhow::Result<crate::service_check::ServiceCheckOutcome>,
-}
-
-#[derive(Clone, Debug)]
-pub(super) struct CheckDiscoveredVersion {
-    stack_id: String,
-    service_id: String,
-    service_name: String,
-    image_ref: String,
-    current_tag: String,
-    current_digest: Option<String>,
-    current_display_tag: String,
-    candidate_tag: String,
-    candidate_display_tag: String,
-    candidate_digest: String,
-}
-
-#[derive(Clone, Debug)]
-pub(super) struct CheckConfiguredTagObservation {
-    service_id: String,
-    image_repo: String,
-    configured_tag: String,
-    digest: String,
-    version: Option<String>,
-    observed_at: String,
 }
 
 pub(super) fn check_job_is_stale(
