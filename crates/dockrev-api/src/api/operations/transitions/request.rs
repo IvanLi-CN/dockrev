@@ -197,6 +197,7 @@ pub(crate) async fn enqueue_update_job_deferred(
     .await
 }
 
+#[allow(clippy::too_many_arguments)]
 pub(crate) async fn enqueue_selected_version_update_job(
     state: Arc<AppState>,
     created_by: String,
@@ -221,6 +222,7 @@ pub(crate) async fn enqueue_selected_version_update_job(
     .await
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn enqueue_update_job_with_start_and_targets(
     state: Arc<AppState>,
     created_by: String,

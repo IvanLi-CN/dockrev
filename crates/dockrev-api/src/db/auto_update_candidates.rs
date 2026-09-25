@@ -362,19 +362,18 @@ WHERE service_id = ?1 AND candidate_digest = ?2
                         |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)),
                     )
                     .optional()?;
-                if let Some((image_ref, configured_tag)) = candidate_identity {
-                    if let Some(image_repo) =
+                if let Some((image_ref, configured_tag)) = candidate_identity
+                    && let Some(image_repo) =
                         crate::snapshot_worker::image_repo_from_image_ref(&image_ref)
-                    {
-                        super::version_update_observations::bind_version_tx(
-                            &tx,
-                            &input.service_id,
-                            &image_repo,
-                            &configured_tag,
-                            &input.candidate_digest,
-                            version,
-                        )?;
-                    }
+                {
+                    super::version_update_observations::bind_version_tx(
+                        &tx,
+                        &input.service_id,
+                        &image_repo,
+                        &configured_tag,
+                        &input.candidate_digest,
+                        version,
+                    )?;
                 }
             }
             let row = tx.query_row(
