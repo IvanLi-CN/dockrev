@@ -84,6 +84,35 @@
 - covers: `REQ-SVSU-005`
 - Pass condition: the selected digest runs, the configured Compose tag remains unchanged and locally resolves to the running image, and generic update tag-pull behavior is unchanged.
 
+## Visual Evidence
+
+### Desktop version list
+
+- Source: local demo (`/demo/`)
+- Viewport: 1800 x 960
+- Scope: ordinary service version list with normal and forced update actions
+
+![Desktop version list showing normal and forced update actions](./assets/selected-version-actions-desktop.png)
+
+### Mobile version list actions
+
+- Source: local demo (`/demo/`)
+- Viewport: 393 x 852
+- Scope: forced-update and normal-update actions within the version cards
+
+![Mobile forced-update action](./assets/selected-version-forced-mobile.png)
+
+![Mobile normal-update action](./assets/selected-version-normal-mobile.png)
+
+### Mobile forced-update confirmation
+
+- Source: local demo (`/demo/`)
+- Viewport: 393 x 852
+- Scope: second confirmation with the configured tag and subsequent automatic-update notice
+- The owner confirmed this screenshot set represents the implemented actions and confirmation flow.
+
+![Mobile forced-update confirmation](./assets/selected-version-force-confirmation-mobile.png)
+
 ## Related ADRs
 
 None

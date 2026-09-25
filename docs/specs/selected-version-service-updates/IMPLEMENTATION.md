@@ -4,7 +4,7 @@
 
 ## Current Status
 
-- Implementation: 功能与自动验证完成；视觉证据待主人确认后持久化，之后进入 Tier 3 PR 收敛
+- Implementation: 功能与自动验证完成；视觉证据已获主人确认并归档；当前最终候选的经验验收与 Tier 3 PR 收敛待完成
 - Lifecycle: active
 - Catalog note: 服务版本列表指定版本部署
 
@@ -26,14 +26,14 @@
 ## Empirical Acceptance
 
 - Scenario: 在隔离 Compose 服务上先观察 `latest` 的 D34，再将 `latest` 指向 D37；检查后通过普通路径部署 D37，再让真实 cron 检查在策略启用时把服务推进到 D38。
-- Result: 指定部署与自动策略任务均成功；每次运行摘要都等于本地 `latest` 摘要，Compose 文件哈希保持不变。
-- Evidence: `/srv/codex/agents/01a0d6f3-3124-7432-9daa-99fd4bfb3755/dockrev-selected-version-e2e-5718409a.log`（`empirical_acceptance=passed selected_D37_then_scheduled_auto_D38`）。
+- Prior result: 指定部署与自动策略任务均成功；每次运行摘要都等于本地 `latest` 摘要，Compose 文件哈希保持不变。
+- Prior evidence: `/srv/codex/agents/01a0d6f3-3124-7432-9daa-99fd4bfb3755/dockrev-selected-version-e2e-5718409a.log`（`empirical_acceptance=passed selected_D37_then_scheduled_auto_D38`）。该运行早于当前最终候选，须按最终 SHA 重新绑定验收证据。
 - Test transport: 为隔离测试使用 loopback HTTP Registry 时，测试二进制临时启用了本地 HTTP scheme；最终源码的 Registry scheme 已恢复为 HTTPS。
 - Note: 自动更新任务有一次既有兼容 tag `2.71.38` 拉取告警，但目标 `latest` 摘要拉取、部署和本地 tag 同步成功。
 
 ## Remaining Gaps
 
-- 桌面与移动端截图已捕获，等待主人确认截图内容及允许将相同图片保存到 Spec/PR。
+- 当前最终候选的共享测试机经验验收证据。
 - 完成 Tier 3 四通道审查、PR CI 和 Step 5C Ready 收敛；不合并。
 
 ## Related Changes
