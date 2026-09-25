@@ -255,6 +255,7 @@ WHERE id = ?1
             initial_log,
             None,
             None,
+            None,
         )
         .await
     }
@@ -265,6 +266,7 @@ WHERE id = ?1
         targets: Vec<ServiceOperationTarget>,
         initial_log: Option<JobLogLine>,
         expected_current_digest: Option<&str>,
+        expected_service_image: Option<(&str, &str)>,
         auto_policy_guard: Option<&AutoPolicyEnqueueGuard>,
     ) -> anyhow::Result<ServiceOperationAcquireOutcome> {
         let event_job_id = job.id.clone();
@@ -274,6 +276,8 @@ WHERE id = ?1
         let event_type = job.r#type.as_str().to_string();
         let job_id = job.id.clone();
         let expected_current_digest = expected_current_digest.map(str::to_string);
+        let expected_service_image =
+            expected_service_image.map(|(image_ref, tag)| (image_ref.to_string(), tag.to_string()));
         let auto_policy_guard = auto_policy_guard.cloned();
         let outcome = self
             .call(move |conn| {
@@ -450,6 +454,24 @@ WHERE id = ?1 AND status <> 'superseded'
                             .query_row(
                                 &sql,
                                 params![target.service_id, expected_current_digest],
+                                |row| row.get::<_, bool>(0),
+                            )
+                            .optional()?
+                            .unwrap_or(false);
+                        if !matches {
+                            return Ok(ServiceOperationAcquireOutcome::StaleCurrentDigest);
+                        }
+                    }
+                }
+
+                if let Some((expected_image_ref, expected_image_tag)) =
+                    expected_service_image.as_ref()
+                {
+                    for target in &targets {
+                        let matches = tx
+                            .query_row(
+                                "SELECT COALESCE(image_ref = ?2 AND image_tag = ?3, 0) FROM services WHERE id = ?1",
+                                params![target.service_id, expected_image_ref, expected_image_tag],
                                 |row| row.get::<_, bool>(0),
                             )
                             .optional()?
@@ -742,6 +764,36 @@ WHERE id = ?1 AND accepted_state_generation = ?2 AND accepted_state_generation %
                 initial_log,
                 Some(expected_current_digest),
                 None,
+                None,
+            )
+            .await?
+        {
+            outcome @ ServiceOperationAcquireOutcome::Acquired(_)
+            | outcome @ ServiceOperationAcquireOutcome::StaleCurrentDigest
+            | outcome @ ServiceOperationAcquireOutcome::StaleAutoPolicy => Ok(outcome),
+            ServiceOperationAcquireOutcome::Conflict(job) => {
+                Ok(ServiceOperationAcquireOutcome::Conflict(job))
+            }
+        }
+    }
+
+    pub async fn insert_service_operation_job_if_unblocked_with_service_baseline(
+        &self,
+        job: JobListItem,
+        targets: Vec<ServiceOperationTarget>,
+        initial_log: Option<JobLogLine>,
+        expected_current_digest: &str,
+        expected_image_ref: &str,
+        expected_image_tag: &str,
+    ) -> anyhow::Result<ServiceOperationAcquireOutcome> {
+        match self
+            .insert_service_operation_job_with_accepted_state_if_unblocked_inner(
+                job,
+                targets,
+                initial_log,
+                Some(expected_current_digest),
+                Some((expected_image_ref, expected_image_tag)),
+                None,
             )
             .await?
         {
@@ -766,6 +818,7 @@ WHERE id = ?1 AND accepted_state_generation = ?2 AND accepted_state_generation %
             targets,
             initial_log,
             Some(&guard.expected_current_digest),
+            None,
             Some(&guard),
         )
         .await
@@ -1083,6 +1136,58 @@ INSERT INTO services (
                 .unwrap()
                 .generation,
             0
+        );
+    }
+
+    #[tokio::test]
+    async fn selected_version_enqueue_rechecks_configured_image_baseline_atomically() {
+        let db = Db::open(Path::new(":memory:")).await.unwrap();
+        let (stack_id, service_id) = seed_service(&db).await;
+        let baseline_digest =
+            "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+        let updated_service_id = service_id.clone();
+        db.call(move |conn| {
+            conn.execute(
+                "UPDATE services SET current_digest = ?1 WHERE id = ?2",
+                params![baseline_digest, updated_service_id],
+            )?;
+            Ok(())
+        })
+        .await
+        .unwrap();
+        let job = crate::api::types::JobRecord::new_running(
+            "job_stale_selected_version".to_string(),
+            JobType::Update,
+            JobScope::Service,
+            Some(stack_id.clone()),
+            Some(service_id.clone()),
+            "2026-08-30T00:01:00Z",
+        );
+
+        let outcome = db
+            .insert_service_operation_job_if_unblocked_with_service_baseline(
+                job.to_db(),
+                vec![ServiceOperationTarget {
+                    service_id: service_id.clone(),
+                    stack_id,
+                }],
+                None,
+                baseline_digest,
+                "ghcr.io/acme/web:stable",
+                "stable",
+            )
+            .await
+            .unwrap();
+
+        assert!(matches!(
+            outcome,
+            ServiceOperationAcquireOutcome::StaleCurrentDigest
+        ));
+        assert!(
+            db.get_job("job_stale_selected_version")
+                .await
+                .unwrap()
+                .is_none()
         );
     }
 

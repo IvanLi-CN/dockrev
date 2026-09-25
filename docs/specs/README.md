@@ -13,6 +13,7 @@
 | Release channel promotion | active | beta/RC/stable identity contract | `release-channel-promotion/SPEC.md` | - |
 | Workflow failure notification | 已完成 | expected-success workflow failure sidecar and Release-specific routing complete | `workflow-failure-notification/SPEC.md` | - |
 | Update rollback diagnostics | active | not started | `update-rollback-diagnostics/SPEC.md` | - |
+| Selected-version service updates | active | behavior, API, updater, UI and controlled Compose/cron acceptance complete; screenshot confirmation and Tier 3 PR convergence pending | `selected-version-service-updates/SPEC.md` | - |
 | Service accepted state consistency | active | not started | `service-accepted-state-consistency/SPEC.md` | - |
 | Brand media variants | active | dark/light posters delivered; social variants pending | `brand-media-variants/SPEC.md` | - |
 | CI duration optimization | superseded | historical candidate/readiness contract retained for context | `ci-duration-optimization/SPEC.md` | `docs/adr/0008-pr-label-release-identity.md` |

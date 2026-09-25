@@ -90,6 +90,7 @@ pub(super) fn explicit_targets(
         target_digest: target_digest.to_string(),
         pull_tags: Some(pull_tags.iter().map(|tag| (*tag).to_string()).collect()),
         skip_tag_followups: false,
+        skip_target_tag_pull: false,
         auto_policy_context: None,
     }]
 }

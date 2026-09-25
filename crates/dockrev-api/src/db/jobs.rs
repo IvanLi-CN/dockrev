@@ -546,6 +546,10 @@ WHERE id IN (
                         .as_ref()
                         .is_some_and(|(job_type, _)| job_type == "check")
                 {
+                    version_update_observations::record_from_successful_check_summary_tx(
+                        &tx,
+                        &summary_json,
+                    )?;
                     new_version_discoveries::record_new_version_discoveries_from_summary_conn(
                         &tx,
                         &job_id,

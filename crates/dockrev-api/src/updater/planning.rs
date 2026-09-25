@@ -80,6 +80,26 @@ fn comparable_semver_baseline(preferred_tag: Option<&str>, fallback_tag: &str) -
     }
 }
 
+pub(crate) fn strict_semver_tag_is_newer(target_tag: &str, current_tag: &str) -> bool {
+    let (Some(target), Some(current)) = (
+        parse_comparable_strict_semver_tag(target_tag),
+        parse_comparable_strict_semver_tag(current_tag),
+    ) else {
+        return false;
+    };
+    target > current
+}
+
+pub(crate) fn strict_semver_tags_equivalent(left_tag: &str, right_tag: &str) -> bool {
+    matches!(
+        (
+            parse_comparable_strict_semver_tag(left_tag),
+            parse_comparable_strict_semver_tag(right_tag),
+        ),
+        (Some(left), Some(right)) if left == right
+    )
+}
+
 fn semver_baseline_for_current(svc: &crate::api::types::Service) -> Option<Version> {
     comparable_semver_baseline(svc.image.resolved_tag.as_deref(), &svc.image.tag)
 }

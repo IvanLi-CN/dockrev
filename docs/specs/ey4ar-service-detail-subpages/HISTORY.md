@@ -57,6 +57,7 @@
 - 服务详情页已经承载多个主题能力，需要一个新的 topic spec 统一约束子页路由与内容归位。
 - 既有自动更新、回滚、Compose tag、资源监控等 feature specs 继续拥有各自能力契约；本 spec 只负责服务详情页的信息架构与导航层组织。
 - 实时日志属于高频、长列表、强滚动上下文的独立任务面，不适合继续依附在 `monitoring` 卡片区内。
+- 服务版本列表的指定版本部署由 `selected-version-service-updates` 主题定义；本 spec 继续拥有版本列表页面结构与导航语义。
 
 ## References
 
