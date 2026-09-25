@@ -4,7 +4,7 @@
 
 ## Current Status
 
-- Implementation: 功能与自动验证完成；视觉证据已获主人确认并归档；当前最终候选的经验验收与 Tier 3 PR 收敛待完成
+- Implementation: 功能与自动验证完成；视觉证据已获主人确认并归档；共享测试机 Docker/Compose 经验验收通过；Tier 3 PR 收敛待完成
 - Lifecycle: active
 - Catalog note: 服务版本列表指定版本部署
 
@@ -26,14 +26,13 @@
 ## Empirical Acceptance
 
 - Scenario: 在隔离 Compose 服务上先观察 `latest` 的 D34，再将 `latest` 指向 D37；检查后通过普通路径部署 D37，再让真实 cron 检查在策略启用时把服务推进到 D38。
-- Prior result: 指定部署与自动策略任务均成功；每次运行摘要都等于本地 `latest` 摘要，Compose 文件哈希保持不变。
-- Prior evidence: `/srv/codex/agents/01a0d6f3-3124-7432-9daa-99fd4bfb3755/dockrev-selected-version-e2e-5718409a.log`（`empirical_acceptance=passed selected_D37_then_scheduled_auto_D38`）。该运行早于当前最终候选，须按最终 SHA 重新绑定验收证据。
-- Test transport: 为隔离测试使用 loopback HTTP Registry 时，测试二进制临时启用了本地 HTTP scheme；最终源码的 Registry scheme 已恢复为 HTTPS。
-- Note: 自动更新任务有一次既有兼容 tag `2.71.38` 拉取告警，但目标 `latest` 摘要拉取、部署和本地 tag 同步成功。
+- Result: `v2.71.34` 检查后，历史关联使 `v2.71.37` 走普通指定部署并成功；未观测的 `v2.71.38` 预检分类为强制。随后真实计划检查和自动策略任务成功将服务推进到 `v2.71.38`。各步运行摘要与本地 `latest` 摘要一致，Compose 文件 SHA-256 保持不变。
+- Evidence: `/srv/codex/agents/01a0d6f3-3124-7432-9daa-99fd4bfb3755/dockrev-selected-version-final-c8ea2fb8-20260925T124015Z.log`（`empirical_acceptance=passed candidate_sha=c8ea2fb8a91d13b85db338b0122e603efec265f4`）；关联应用日志为同目录下对应的 `-app.log`。测试实例的 Docker 项目发现过滤器只暴露该次隔离 Compose 项目；本次任务容器、网络和镜像引用均按精确身份清理。
+- Test transport: loopback HTTP Registry 的验证二进制在测试机工作副本中临时使用 HTTP；仓库源码和最终构建仍使用 HTTPS。
+- Candidate binding: 最终候选 SHA、验收合同摘要、必需场景摘要和最终运行日志位置保存在当前交付流的 Candidate evidence card 中。
 
 ## Remaining Gaps
 
-- 当前最终候选的共享测试机经验验收证据。
 - 完成 Tier 3 四通道审查、PR CI 和 Step 5C Ready 收敛；不合并。
 
 ## Related Changes
