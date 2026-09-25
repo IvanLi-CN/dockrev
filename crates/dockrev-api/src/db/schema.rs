@@ -1,9 +1,5 @@
 use super::*;
 use rusqlite::{TransactionBehavior, params};
-use std::{
-    fs,
-    path::{Path, PathBuf},
-};
 #[path = "schema_accepted_state_generation.rs"]
 mod schema_accepted_state_generation;
 #[path = "schema_backup_cleanup_state.rs"]
@@ -15,17 +11,11 @@ mod schema_jobs;
 #[path = "schema_lifecycle_events.rs"]
 mod schema_lifecycle_events;
 mod schema_resource_latest;
+#[path = "schema_service_version_tag_observations.rs"]
+mod schema_service_version_tag_observations;
 mod schema_settings_release_notes;
 include!("schema_auto_update.rs");
-pub(super) fn ensure_parent_dir(path: &Path) -> anyhow::Result<PathBuf> {
-    let path = path.to_path_buf();
-    if let Some(parent) = path.parent()
-        && !parent.as_os_str().is_empty()
-    {
-        fs::create_dir_all(parent).with_context(|| format!("create dir {:?}", parent))?;
-    }
-    Ok(path)
-}
+
 fn ensure_service_columns(conn: &rusqlite::Connection) -> anyhow::Result<()> {
     #[derive(Clone)]
     struct Col<'a> {
@@ -659,40 +649,11 @@ pub(super) fn migrate(conn: &mut rusqlite::Connection) -> anyhow::Result<()> {
     apply_migration_0024_normalize_auto_update_digest_identity(conn)?;
     apply_migration_0025_normalize_new_version_notification_digest_identity(conn)?;
     apply_migration_0026_reject_invalid_auto_update_digest_identity(conn)?;
-    apply_migration_0027_add_service_version_tag_observations(conn)?;
+    schema_service_version_tag_observations::apply(conn)?;
     schema_lifecycle_events::apply(conn)?;
     schema_job_history_retention::apply(conn)?;
     schema_backup_cleanup_state::apply(conn)?;
     schema_accepted_state_generation::apply(conn)?;
-    Ok(())
-}
-
-fn apply_migration_0027_add_service_version_tag_observations(
-    conn: &mut rusqlite::Connection,
-) -> anyhow::Result<()> {
-    let id = "0027_add_service_version_tag_observations";
-    if migration_applied(conn, id)? {
-        return Ok(());
-    }
-
-    let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
-    tx.execute_batch(
-        r#"
-CREATE TABLE IF NOT EXISTS service_version_tag_observations (
-  service_id TEXT NOT NULL REFERENCES services(id) ON DELETE CASCADE,
-  image_repo TEXT NOT NULL,
-  configured_tag TEXT NOT NULL,
-  digest TEXT NOT NULL,
-  version TEXT,
-  observed_at TEXT NOT NULL,
-  PRIMARY KEY (service_id, image_repo, configured_tag, digest)
-);
-CREATE INDEX IF NOT EXISTS idx_service_version_tag_observations_lookup
-  ON service_version_tag_observations(service_id, image_repo, configured_tag, version);
-"#,
-    )?;
-    record_migration_tx(&tx, id)?;
-    tx.commit()?;
     Ok(())
 }
 
