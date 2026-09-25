@@ -141,6 +141,10 @@ WHERE id IN (
                         .as_ref()
                         .is_some_and(|(job_type, _, _)| job_type == "check")
                 {
+                    version_update_observations::record_from_successful_check_summary_tx(
+                        &tx,
+                        &summary_json,
+                    )?;
                     let event_enabled = match tx.query_row(
                         "SELECT event_new_version_enabled FROM notification_settings LIMIT 1",
                         [],

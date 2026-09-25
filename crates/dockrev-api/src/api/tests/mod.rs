@@ -47,6 +47,7 @@ include!("suite_17.rs");
 include!("suite_18.rs");
 include!("suite_19.rs");
 include!("suite_28_auto_update_candidate.rs");
+include!("suite_29_selected_version.rs");
 include!("suite_20.rs");
 include!("suite_21.rs");
 include!("suite_22.rs");

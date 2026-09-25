@@ -11,6 +11,7 @@ mod logs;
 mod release_notes;
 mod repo_links;
 mod settings;
+mod version_updates;
 
 use backup_records::get_service_backup_records as load_service_backup_records_response;
 use backup_targets::{
@@ -39,6 +40,10 @@ use github_releases::{
 };
 pub(super) use release_notes::{list_service_release_notes, locate_service_release_notes};
 pub(super) use settings::{get_service_settings, put_service_settings};
+pub(super) use version_updates::{
+    get_service_version_tag_observations, preview_service_version_update,
+    trigger_service_version_update,
+};
 
 pub(super) async fn get_service_backup_targets(
     State(state): State<Arc<AppState>>,
