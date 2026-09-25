@@ -1,4 +1,18 @@
 import type { ServiceReleaseNoteItem } from '../api'
+import { isStrictSemverTag } from '../versionDisplay'
+
+export function comparableCurrentVersion(
+  resolvedTag: string | null | undefined,
+  observedVersion: string | null | undefined,
+  configuredTag: string | null | undefined,
+): string | null {
+  const resolved = (resolvedTag ?? '').trim()
+  if (isStrictSemverTag(resolved)) return resolved
+  const observed = (observedVersion ?? '').trim()
+  if (isStrictSemverTag(observed)) return observed
+  const configured = (configuredTag ?? '').trim()
+  return configured || null
+}
 
 export function observeVersionSectionInlineWidth(
   element: HTMLElement,
