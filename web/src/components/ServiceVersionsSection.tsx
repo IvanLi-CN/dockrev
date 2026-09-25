@@ -30,6 +30,7 @@ import {
   compareStrictSemverTags,
   formatCandidateTagDisplay,
   formatCurrentTagDisplay,
+  isStrictSemverTag,
 } from '../versionDisplay'
 import {
   releaseVersionForServiceOperation,
@@ -46,7 +47,9 @@ import {
 import { Button, GitHubIcon, IconLink, Mono, OctoRillIcon } from '../ui'
 import { ReleaseNotesStaleAlert } from './ReleaseNotesStaleAlert'
 import { ServiceVersionCard } from './ServiceVersionCard'
+import { normalizeDigest } from './digest'
 import {
+  comparableCurrentVersion,
   formatVersionDirectoryTimeLabel,
   normalizeVersion,
   observeVersionSectionInlineWidth,
@@ -177,18 +180,31 @@ export function ServiceVersionsSection(props: ServiceVersionsSectionProps) {
     const activeJob = props.jobs.find((job) => job.id === props.updateActiveJob?.jobId)
     return activeJob ? releaseVersionForServiceOperation(activeJob, serviceId) : props.updateActiveJob.targetVersion ?? null
   }, [props.jobs, props.updateActiveJob, serviceId])
+  const observedCurrentVersion = useMemo(() => {
+    const currentDigest = normalizeDigest(props.service.image.digest)
+    if (!currentDigest || !tagObservations) return null
+    return (
+      tagObservations.observations.find(
+        (observation) =>
+          normalizeDigest(observation.digest) === currentDigest &&
+          isStrictSemverTag(observation.version),
+      )?.version ?? null
+    )
+  }, [props.service.image.digest, tagObservations])
   const currentVersion = useMemo(
-    () => (props.service.image.resolvedTag ?? '').trim() || props.service.image.tag.trim() || null,
-    [props.service.image.resolvedTag, props.service.image.tag],
+    () => comparableCurrentVersion(props.service.image.resolvedTag, observedCurrentVersion, props.service.image.tag),
+    [observedCurrentVersion, props.service.image.resolvedTag, props.service.image.tag],
   )
   const currentDisplayVersion = useMemo(
     () =>
       formatCurrentTagDisplay(
         props.service.image.tag,
-        props.service.image.resolvedTag ?? null,
+        isStrictSemverTag(props.service.image.resolvedTag)
+          ? props.service.image.resolvedTag
+          : observedCurrentVersion,
         props.service.versionInference?.status,
       ),
-    [props.service.image.resolvedTag, props.service.image.tag, props.service.versionInference?.status],
+    [observedCurrentVersion, props.service.image.resolvedTag, props.service.image.tag, props.service.versionInference?.status],
   )
   const settlement = props.service.candidateSettlement
   const candidateVersion = useMemo(() => {
@@ -665,7 +681,7 @@ export function ServiceVersionsSection(props: ServiceVersionsSectionProps) {
   )
 
   const cards = useMemo(() => {
-    const currentComparableVersion = (props.service.image.resolvedTag ?? '').trim() || props.service.image.tag.trim()
+    const currentComparableVersion = currentVersion ?? ''
     const candidateComparableVersion = candidateVersion
     const rollbackTargetVersion = normalizeVersion(props.rollbackTarget?.targetDisplayTag)
     return items.map((item) => {

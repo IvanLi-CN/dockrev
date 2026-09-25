@@ -2,10 +2,22 @@ import { describe, expect, test } from 'bun:test'
 
 import type { ServiceReleaseNoteItem } from '../src/api'
 import {
+  comparableCurrentVersion,
   formatVersionDirectoryTimeLabel,
   mergeReleaseNoteItems,
   observeVersionSectionInlineWidth,
 } from '../src/components/serviceVersionsSectionUtils'
+
+describe('comparableCurrentVersion', () => {
+  test('uses the observed version when a non-semver configured tag has no resolved tag', () => {
+    expect(comparableCurrentVersion(null, 'v2.71.34', 'latest')).toBe('v2.71.34')
+  })
+
+  test('prefers a strict resolved tag and falls back to the configured tag', () => {
+    expect(comparableCurrentVersion('v2.71.35', 'v2.71.34', 'latest')).toBe('v2.71.35')
+    expect(comparableCurrentVersion(null, null, 'latest')).toBe('latest')
+  })
+})
 
 const NOW = Date.UTC(2026, 6, 16, 12, 0, 0)
 
