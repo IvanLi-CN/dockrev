@@ -577,6 +577,7 @@ pub struct TriggerServiceVersionUpdateRequest {
     pub classification: ServiceVersionUpdateClassification,
     pub target_digest: String,
     pub current_digest: String,
+    pub current_version: String,
     pub image_reference: String,
     pub image_repo: String,
     pub configured_tag: String,
