@@ -16,6 +16,7 @@ export const PUBLIC_DEMO_SCENARIOS = [
   'queue-long-logs',
   'queue-mixed',
   'service-action-progress',
+  'service-selected-version-updates',
   'dashboard-demo-hydrated-update',
   'overview-discovery-readable',
 ] as const

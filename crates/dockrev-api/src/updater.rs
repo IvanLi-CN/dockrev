@@ -40,6 +40,7 @@ use planning::{
     retry_backoff_delay, should_sync_local_tag, tag_pull_warning_value,
 };
 pub use planning::{is_dockrev_image_ref, select_update_services};
+pub(crate) use planning::{strict_semver_tag_is_newer, strict_semver_tags_equivalent};
 use pull_progress::pull_progress_message;
 #[cfg(test)]
 use pull_progress::{PullProgressTracker, parse_pull_fraction_from_line};
@@ -825,6 +826,7 @@ pub(crate) async fn run_update_job_with_gate_using_root_unlocked(
         if !rolled_back
             && let Some(target) = target
             && !target.skip_tag_followups
+            && !target.skip_target_tag_pull
         {
             let repo = strip_tag_and_digest(&svc.image.reference)
                 .unwrap_or_else(|| svc.image.reference.clone());

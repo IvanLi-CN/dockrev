@@ -259,6 +259,28 @@ pub(super) fn update_progress_snapshot(
 #[cfg(test)]
 mod tests;
 
+pub(super) fn configured_tag_observation_version(
+    configured_tag: &str,
+    observed_digest: &str,
+    candidate_digest: Option<&str>,
+    candidate_resolved_tag: Option<&str>,
+) -> Option<String> {
+    let configured_tag = configured_tag.trim();
+    if crate::ignore::is_strict_semver(configured_tag) {
+        return Some(configured_tag.to_string());
+    }
+
+    let observed_digest = snapshot_worker::normalize_digest(observed_digest);
+    let candidate_digest = candidate_digest.and_then(snapshot_worker::normalize_digest);
+    if observed_digest.is_none() || observed_digest != candidate_digest {
+        return None;
+    }
+
+    let candidate_resolved_tag = candidate_resolved_tag?.trim();
+    crate::ignore::is_strict_semver(candidate_resolved_tag)
+        .then(|| candidate_resolved_tag.to_string())
+}
+
 #[allow(clippy::too_many_arguments)]
 pub(super) async fn handle_check_worker_result(
     state: &Arc<AppState>,
@@ -271,6 +293,7 @@ pub(super) async fn handle_check_worker_result(
     services_checked: &mut u32,
     services_with_candidate: &mut u32,
     discovered_versions: &mut Vec<CheckDiscoveredVersion>,
+    configured_tag_observations: &mut Vec<CheckConfiguredTagObservation>,
     latest_target: &mut Option<String>,
     last_progress_logged_at: &mut Option<std::time::Instant>,
     latest_progress: &mut JobProgress,
@@ -296,6 +319,10 @@ pub(super) async fn handle_check_worker_result(
     let image_repo = crate::snapshot_worker::image_repo_from_image_ref(&service_image_ref);
     let current_digest = outcome
         .current_digest
+        .as_deref()
+        .and_then(snapshot_worker::normalize_digest);
+    let configured_tag_digest = outcome
+        .configured_tag_digest
         .as_deref()
         .and_then(snapshot_worker::normalize_digest);
     let candidate_digest = outcome
@@ -360,6 +387,23 @@ pub(super) async fn handle_check_worker_result(
         crate::notify::notification_tag_requires_settle(current_tag_trim, &current_display_tag);
     let candidate_needs_inference =
         crate::notify::notification_tag_requires_settle(candidate_raw_tag, &candidate_display_tag);
+
+    if let (Some(image_repo), Some(digest)) = (image_repo.as_deref(), configured_tag_digest) {
+        let version = configured_tag_observation_version(
+            &service_image_tag,
+            &digest,
+            candidate_digest.as_deref(),
+            Some(&candidate_display_tag),
+        );
+        configured_tag_observations.push(CheckConfiguredTagObservation {
+            service_id: service_id.clone(),
+            image_repo: image_repo.to_string(),
+            configured_tag: service_image_tag.clone(),
+            digest,
+            version,
+            observed_at: now.to_string(),
+        });
+    }
 
     if outcome.candidate_present
         && outcome.candidate_digest_changed
@@ -490,6 +534,16 @@ pub(super) struct CheckDiscoveredVersion {
     candidate_tag: String,
     candidate_display_tag: String,
     candidate_digest: String,
+}
+
+#[derive(Clone, Debug)]
+pub(super) struct CheckConfiguredTagObservation {
+    service_id: String,
+    image_repo: String,
+    configured_tag: String,
+    digest: String,
+    version: Option<String>,
+    observed_at: String,
 }
 
 pub(super) fn check_job_is_stale(
@@ -1076,6 +1130,7 @@ pub(crate) async fn run_check_for_job(
     let mut services_checked = 0u32;
     let mut services_with_candidate = 0u32;
     let mut discovered_versions: Vec<CheckDiscoveredVersion> = Vec::new();
+    let mut configured_tag_observations: Vec<CheckConfiguredTagObservation> = Vec::new();
     let mut last_progress_logged_at: Option<std::time::Instant> = None;
     let mut latest_target: Option<String> = None;
     let mut next_spawn_not_before: Option<std::time::Instant> = None;
@@ -1096,6 +1151,7 @@ pub(crate) async fn run_check_for_job(
                 &mut services_checked,
                 &mut services_with_candidate,
                 &mut discovered_versions,
+                &mut configured_tag_observations,
                 &mut latest_target,
                 &mut last_progress_logged_at,
                 &mut latest_progress,
@@ -1116,6 +1172,7 @@ pub(crate) async fn run_check_for_job(
                     &mut services_checked,
                     &mut services_with_candidate,
                     &mut discovered_versions,
+                    &mut configured_tag_observations,
                     &mut latest_target,
                     &mut last_progress_logged_at,
                     &mut latest_progress,
@@ -1138,6 +1195,7 @@ pub(crate) async fn run_check_for_job(
                     &mut services_checked,
                     &mut services_with_candidate,
                     &mut discovered_versions,
+                    &mut configured_tag_observations,
                     &mut latest_target,
                     &mut last_progress_logged_at,
                     &mut latest_progress,
@@ -1167,6 +1225,7 @@ pub(crate) async fn run_check_for_job(
                             &mut services_checked,
                             &mut services_with_candidate,
                             &mut discovered_versions,
+                            &mut configured_tag_observations,
                             &mut latest_target,
                             &mut last_progress_logged_at,
                             &mut latest_progress,
@@ -1302,12 +1361,26 @@ pub(crate) async fn run_check_for_job(
             })
         })
         .collect::<Vec<_>>();
+    let configured_tag_observations_json = configured_tag_observations
+        .iter()
+        .map(|item| {
+            json!({
+                "serviceId": item.service_id,
+                "imageRepo": item.image_repo,
+                "configuredTag": item.configured_tag,
+                "digest": item.digest,
+                "version": item.version,
+                "observedAt": item.observed_at,
+            })
+        })
+        .collect::<Vec<_>>();
     Ok(json!({
         "hostPlatform": host_platform,
         "scope": scope.as_str(),
         "stackIds": stack_ids,
         "servicesChecked": services_checked,
         "servicesWithCandidate": services_with_candidate,
+        "configuredTagObservations": configured_tag_observations_json,
         "newVersions": {
             "count": new_versions_json.len(),
             "services": new_versions_json,

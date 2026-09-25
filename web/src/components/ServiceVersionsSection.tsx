@@ -1,12 +1,14 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { useVirtualizer, type VirtualItem } from '@tanstack/react-virtual'
 import {
+  getServiceVersionTagObservations,
   type JobListItem,
   type Service,
   type ServiceBackupRecordItem,
   type ServiceReleaseNoteItem,
   type ServiceReleaseNotesResponse,
   type ServiceRollbackTargetResponse,
+  type ServiceVersionTagObservationsResponse,
 } from '../api'
 import { useConfirm } from '../confirm'
 import { cn } from '../lib/utils'
@@ -74,6 +76,7 @@ type ServiceVersionsSectionProps = {
   rollbackActiveJobId: string | null
   rollbackActiveJobStatus: string | null
   onApplyUpdate: () => void
+  onApplyVersion: (releaseTag: string) => void
   onRollback: () => void
 }
 
@@ -134,8 +137,33 @@ export function ServiceVersionsSection(props: ServiceVersionsSectionProps) {
     return `${serviceId}::${anchorVersion}`
   }, [props.service.image.resolvedTag, props.service.image.tag, serviceId])
   const [showDesktopIndex, setShowDesktopIndex] = useState(false)
+  const [tagObservations, setTagObservations] = useState<ServiceVersionTagObservationsResponse | null>(null)
+  const [tagObservationsLoading, setTagObservationsLoading] = useState(true)
 
   const dockrevService = isDockrevService(props.service)
+  useEffect(() => {
+    let active = true
+    if (dockrevService || !serviceId) {
+      setTagObservations(null)
+      setTagObservationsLoading(false)
+      return () => {
+        active = false
+      }
+    }
+    setTagObservations(null)
+    setTagObservationsLoading(true)
+    void getServiceVersionTagObservations(serviceId)
+      .then((response) => {
+        if (active) setTagObservations(response)
+      })
+      .catch(() => undefined)
+      .finally(() => {
+        if (active) setTagObservationsLoading(false)
+      })
+    return () => {
+      active = false
+    }
+  }, [dockrevService, props.service.image.ref, props.service.image.tag, serviceId])
   const operationProgress = useMemo(
     () => describeServiceOperationProgress({
       updateSubmitting: props.updateSubmitting,
@@ -649,15 +677,26 @@ export function ServiceVersionsSection(props: ServiceVersionsSectionProps) {
       const newerThanCurrent = semverComparison != null && semverComparison > 0
       const deployedHistorical = deployedHistoricalVersions.has(normalizeVersion(item.tagName))
       const rollbackTargetMatch = rollbackTargetVersion !== '' && normalizeVersion(item.tagName) === rollbackTargetVersion
-      const showUpdate = dockrevService ? candidateMatch || newerThanCurrent : newerThanCurrent || candidateMatch
+      const showUpdate = dockrevService
+        ? candidateMatch || newerThanCurrent
+        : newerThanCurrent || activeUpdateTargetMatch
       const showRollback = !dockrevService && (deployedHistorical || rollbackTargetMatch)
+      const historicalAssociation = tagObservations?.observations.some(
+        (observation) => compareStrictSemverTags(observation.version, item.tagName) === 0,
+      ) ?? false
 
       let updateDisabledReason: string | null = null
       let updateDisabled = false
       let updateLoading = false
       let updateLoadingClickable = false
-      let updateActionLabel = '更新'
-      let updateActionHint = '发起当前 candidate 对应的服务更新任务。'
+      let updateActionLabel = tagObservationsLoading
+        ? '检查中…'
+        : historicalAssociation
+          ? '更新'
+          : '强制更新'
+      let updateActionHint = historicalAssociation
+        ? '部署当前镜像标签历史上指向的这个版本。'
+        : '当前镜像标签没有该版本的可信历史记录，将实时解析该 Release tag。'
       let updateActionVariant: 'primary' | 'ghost' = 'primary'
       let updateActionPresentation: 'default' | 'candidateOnly' = 'default'
       if (showUpdate) {
@@ -683,19 +722,14 @@ export function ServiceVersionsSection(props: ServiceVersionsSectionProps) {
             ? '任务进行中，点击查看任务详情'
             : '正在提交更新任务'
         } else {
-          updateDisabledReason =
-            serviceActionLockReason ??
+          updateDisabledReason = serviceActionLockReason ??
             (serviceRowStatus(props.service) === 'blocked'
               ? blockedReasonFor(props.service) ?? '当前服务已被阻止更新。'
-              : !props.service.candidate
-                ? '当前没有可执行的候选版本。'
-                : props.service.candidate.archMatch === 'mismatch'
-                  ? '架构不匹配（仅提示，不允许更新）。'
-                  : !candidateMatch
-                    ? '当前只允许部署现有 candidate 对应版本，不能直接从发布记录跨 tag 发起更新。'
-                    : null)
+              : tagObservationsLoading
+                ? '正在读取当前标签的历史版本记录。'
+                : null)
           updateDisabled = updateDisabledReason != null
-          updateActionHint = updateDisabledReason ?? '发起当前 candidate 对应的服务更新任务。'
+          updateActionHint = updateDisabledReason ?? updateActionHint
         }
       }
 
@@ -737,6 +771,8 @@ export function ServiceVersionsSection(props: ServiceVersionsSectionProps) {
     props.service,
     props.updateActiveJob,
     serviceActionLockReason,
+    tagObservations,
+    tagObservationsLoading,
     viewMode,
   ])
 
@@ -1079,7 +1115,7 @@ export function ServiceVersionsSection(props: ServiceVersionsSectionProps) {
                                 navigate({ name: 'job', jobId: props.updateActiveJob.jobId })
                                 return
                               }
-                              props.onApplyUpdate()
+                              props.onApplyVersion(card.item.tagName)
                             }}
                             onRollback={props.onRollback}
                             onOpenRollbackExplanation={(item) => {

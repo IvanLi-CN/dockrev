@@ -22,6 +22,10 @@ import type {
   ServiceGitHubReleasesResponse,
   ServiceReleaseNotesDirection,
   ServiceReleaseNotesResponse,
+  ServiceVersionTagObservationsResponse,
+  PreviewServiceVersionUpdateResponse,
+  TriggerServiceVersionUpdateInput,
+  TriggerServiceVersionUpdateResponse,
   VersionInferenceOverviewResponse,
   GetVersionInferenceOverviewInput,
   JobListItem,
@@ -696,6 +700,37 @@ export type ServiceRollbackTargetResponse = {
 export async function getServiceRollbackTarget(serviceId: string): Promise<ServiceRollbackTargetResponse> {
   const resp = await apiFetch(`/api/services/${encodeURIComponent(serviceId)}/rollback-target`)
   return (await resp.json()) as ServiceRollbackTargetResponse
+}
+
+export async function getServiceVersionTagObservations(
+  serviceId: string,
+): Promise<ServiceVersionTagObservationsResponse> {
+  const resp = await apiFetch(
+    `/api/services/${encodeURIComponent(serviceId)}/version-update-observations`,
+  )
+  return (await resp.json()) as ServiceVersionTagObservationsResponse
+}
+
+export async function previewServiceVersionUpdate(
+  serviceId: string,
+  releaseTag: string,
+): Promise<PreviewServiceVersionUpdateResponse> {
+  const resp = await apiFetch(`/api/services/${encodeURIComponent(serviceId)}/version-update/preview`, {
+    method: 'POST',
+    body: JSON.stringify({ releaseTag }),
+  })
+  return (await resp.json()) as PreviewServiceVersionUpdateResponse
+}
+
+export async function triggerServiceVersionUpdate(
+  serviceId: string,
+  input: TriggerServiceVersionUpdateInput,
+): Promise<TriggerServiceVersionUpdateResponse> {
+  const resp = await apiFetch(`/api/services/${encodeURIComponent(serviceId)}/version-update`, {
+    method: 'POST',
+    body: JSON.stringify(input),
+  })
+  return (await resp.json()) as TriggerServiceVersionUpdateResponse
 }
 
 export async function triggerServiceRollback(serviceId: string): Promise<{ jobId: string }> {

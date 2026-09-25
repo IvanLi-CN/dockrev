@@ -278,6 +278,18 @@ pub fn router(state: Arc<AppState>) -> Router {
             get(get_service_rollback_target),
         )
         .route(
+            "/api/services/{service_id}/version-update-observations",
+            get(get_service_version_tag_observations),
+        )
+        .route(
+            "/api/services/{service_id}/version-update/preview",
+            post(preview_service_version_update),
+        )
+        .route(
+            "/api/services/{service_id}/version-update",
+            post(trigger_service_version_update),
+        )
+        .route(
             "/api/services/{service_id}/rollback",
             post(trigger_service_rollback),
         )

@@ -31,6 +31,7 @@ mod stacks_accepted_state;
 mod stacks_backup_targets;
 mod tag_history;
 mod update_stops;
+mod version_update_observations;
 
 pub(super) fn canonical_digest_sql(column: &str) -> String {
     format!(

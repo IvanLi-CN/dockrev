@@ -646,6 +646,7 @@ impl CommandRunner for DigestPinnedRunner {
 #[derive(Default)]
 struct ExplicitTargetDigestSyncRunner {
     step: Mutex<usize>,
+    skip_target_tag_pull: bool,
 }
 
 #[async_trait::async_trait]
@@ -690,12 +691,14 @@ impl CommandRunner for ExplicitTargetDigestSyncRunner {
             },
             7 => {
                 assert_eq!(spec.program, "docker");
+                let expected = if self.skip_target_tag_pull {
+                    vec!["image", "tag", "sha256:new", "ghcr.io/org/web:1.0"]
+                } else {
+                    vec!["pull", "ghcr.io/org/web:1.0"]
+                };
                 assert_eq!(
                     spec.args,
-                    vec!["pull", "ghcr.io/org/web:1.0"]
-                        .into_iter()
-                        .map(|s| s.to_string())
-                        .collect::<Vec<_>>()
+                    expected.into_iter().map(str::to_string).collect::<Vec<_>>()
                 );
                 CommandOutput {
                     status: 0,
@@ -863,6 +866,39 @@ async fn explicit_target_digest_still_syncs_tag_based_service() {
         json!(["ghcr.io/org/web:1.0"])
     );
     assert_eq!(*runner.step.lock().unwrap(), 9);
+}
+
+#[tokio::test]
+async fn selected_version_skips_target_tag_pull_but_syncs_local_configured_tag() {
+    let stack = single_service_stack("ghcr.io/org/web:1.0", None);
+    let runner = ExplicitTargetDigestSyncRunner {
+        skip_target_tag_pull: true,
+        ..Default::default()
+    };
+    let mut targets = explicit_targets("svc_1", "1.0", "sha256:explicit", &[]);
+    targets[0].skip_target_tag_pull = true;
+
+    let outcome = run_update_job(
+        &runner,
+        "docker-compose",
+        None,
+        IdempotentRetryPolicy::default(),
+        &stack,
+        &JobScope::Service,
+        Some("svc_1"),
+        "live",
+        Some(targets.as_slice()),
+        false,
+        "ui",
+        None,
+        None,
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(outcome.status, "success");
+    assert_eq!(outcome.summary_json["targetTagsPulled"], json!([]));
+    assert_eq!(*runner.step.lock().unwrap(), 8);
 }
 
 #[tokio::test]

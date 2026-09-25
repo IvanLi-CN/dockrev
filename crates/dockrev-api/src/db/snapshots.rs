@@ -489,7 +489,10 @@ WHERE service_id = ?1 AND digest NOT IN (?2, ?3)
         let checked_at = checked_at.to_string();
         let now = now.to_string();
         self.call(move |conn| {
-            conn.execute(
+            let snapshot: crate::api::types::ServiceDigestTagsSnapshotResponse =
+                serde_json::from_str(&snapshot_json)?;
+            let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
+            tx.execute(
                 r#"
 INSERT INTO image_digest_tags_snapshots (
   image_repo,
@@ -513,6 +516,13 @@ ON CONFLICT(image_repo, digest, host_platform) DO UPDATE SET
                     now
                 ],
             )?;
+            super::version_update_observations::bind_observed_versions_from_snapshot_tx(
+                &tx,
+                &image_repo,
+                &digest,
+                &snapshot.tags,
+            )?;
+            tx.commit()?;
             Ok(())
         })
         .await
