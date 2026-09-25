@@ -215,7 +215,8 @@ pub(crate) async fn trigger_service_version_update(
         && snapshot_worker::normalize_digest(&req.target_digest).as_deref()
             == Some(preview.target_digest.as_str())
         && snapshot_worker::normalize_digest(&req.current_digest).as_deref()
-            == Some(preview.current_digest.as_str());
+            == Some(preview.current_digest.as_str())
+        && req.current_version.trim() == preview.current_version;
     if !same_baseline || req.image_reference != preview.image_reference {
         return Err(ApiError::conflict(
             "selected version preview is stale; preview the release again",

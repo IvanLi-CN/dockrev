@@ -479,6 +479,7 @@ async fn service_version_preview_classifies_observed_and_unobserved_releases_and
                         "classification": unknown["classification"],
                         "targetDigest": unknown["targetDigest"],
                         "currentDigest": unknown["currentDigest"],
+                        "currentVersion": unknown["currentVersion"],
                         "imageReference": unknown["imageReference"],
                         "imageRepo": unknown["imageRepo"],
                         "configuredTag": unknown["configuredTag"],
@@ -558,7 +559,7 @@ async fn service_version_preview_classifies_observed_and_unobserved_releases_and
         )
         .await
         .unwrap();
-    let stale_submit = app
+    let stale_submit = app.clone()
         .oneshot(
             Request::builder()
                 .method("POST")
@@ -570,6 +571,7 @@ async fn service_version_preview_classifies_observed_and_unobserved_releases_and
                         "classification": unknown["classification"],
                         "targetDigest": unknown["targetDigest"],
                         "currentDigest": unknown["currentDigest"],
+                        "currentVersion": unknown["currentVersion"],
                         "imageReference": unknown["imageReference"],
                         "imageRepo": unknown["imageRepo"],
                         "configuredTag": unknown["configuredTag"],
@@ -583,6 +585,92 @@ async fn service_version_preview_classifies_observed_and_unobserved_releases_and
         .await
         .unwrap();
     assert_eq!(stale_submit.status(), 409);
+    assert!(state
+        .db
+        .list_jobs()
+        .await
+        .unwrap()
+        .iter()
+        .all(|job| job.r#type.as_str() != "update"));
+
+    state
+        .db
+        .update_service_check_result(
+            &service_id,
+            Some(selected_version_digest('5')),
+            Some("v2.71.34".to_string()),
+            Some("[\"v2.71.34\"]".to_string()),
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            &changed_at,
+            &changed_at,
+        )
+        .await
+        .unwrap();
+    let current_version_only_preview = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri(format!("/api/services/{service_id}/version-update/preview"))
+                .header("content-type", "application/json")
+                .body(Body::from(r#"{"releaseTag":"v2.71.38"}"#))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(current_version_only_preview.status(), 200);
+    let current_version_only_preview = response_json(current_version_only_preview).await;
+    state
+        .db
+        .update_service_check_result(
+            &service_id,
+            Some(selected_version_digest('5')),
+            Some("v2.71.35".to_string()),
+            Some("[\"v2.71.35\"]".to_string()),
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            &changed_at,
+            &changed_at,
+        )
+        .await
+        .unwrap();
+    let current_version_only_submit = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri(format!("/api/services/{service_id}/version-update"))
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    serde_json::json!({
+                        "releaseTag": current_version_only_preview["releaseTag"],
+                        "classification": current_version_only_preview["classification"],
+                        "targetDigest": current_version_only_preview["targetDigest"],
+                        "currentDigest": current_version_only_preview["currentDigest"],
+                        "currentVersion": current_version_only_preview["currentVersion"],
+                        "imageReference": current_version_only_preview["imageReference"],
+                        "imageRepo": current_version_only_preview["imageRepo"],
+                        "configuredTag": current_version_only_preview["configuredTag"],
+                        "forceConfirmed": true,
+                        "backupMode": "inherit",
+                    })
+                    .to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(current_version_only_submit.status(), 409);
     assert!(state
         .db
         .list_jobs()
@@ -687,6 +775,7 @@ async fn normal_selected_version_submit_persists_exact_digest_and_tag_pull_polic
                         "classification": preview["classification"],
                         "targetDigest": preview["targetDigest"],
                         "currentDigest": preview["currentDigest"],
+                        "currentVersion": preview["currentVersion"],
                         "imageReference": preview["imageReference"],
                         "imageRepo": preview["imageRepo"],
                         "configuredTag": preview["configuredTag"],
