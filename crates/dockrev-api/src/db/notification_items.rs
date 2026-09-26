@@ -112,7 +112,10 @@ ON CONFLICT(identity_key) DO NOTHING
         now: &str,
     ) -> anyhow::Result<NotificationInboxPage> {
         let limit = limit.clamp(1, 50);
-        let cursor = cursor.map(decode_cursor).transpose()?;
+        let cursor = cursor
+            .map(decode_cursor)
+            .transpose()
+            .map_err(|error| anyhow::anyhow!("invalid notification cursor: {error}"))?;
         let now = now.to_string();
         self.call(move |conn| {
             let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
@@ -140,8 +143,9 @@ LIMIT ?3
 
             let mut items = rows;
             let next_cursor = if items.len() > limit {
-                let next = items.pop().expect("cursor row exists");
-                Some(encode_cursor(&next.created_at, &next.id))
+                items.pop().expect("cursor row exists");
+                let last = items.last().expect("page item exists");
+                Some(encode_cursor(&last.created_at, &last.id))
             } else {
                 None
             };
@@ -397,5 +401,53 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(result.unread_count, 0);
+    }
+
+    #[tokio::test]
+    async fn notification_cursor_returns_every_item_across_pages() {
+        let db = Db::open(std::path::Path::new(":memory:")).await.unwrap();
+        for index in 0..=50 {
+            db.ensure_notification_item(
+                &NotificationItemDraft {
+                    id: format!("ntf_{index}"),
+                    kind: NOTIFICATION_KIND_JOB_FINISHED.to_string(),
+                    identity_key: format!("job_finished:job_{index}"),
+                    title: "任务".to_string(),
+                    body: "完成".to_string(),
+                    target_url: format!("/queue/job_{index}"),
+                    source_job_id: Some(format!("job_{index}")),
+                    created_at: format!("2026-09-26T00:00:{index:02}Z"),
+                },
+                "2026-09-26T01:00:00Z",
+            )
+            .await
+            .unwrap();
+        }
+
+        let first_page = db
+            .list_notification_items(50, None, "2026-09-26T01:00:00Z")
+            .await
+            .unwrap();
+        assert_eq!(first_page.items.len(), 50);
+        assert_eq!(
+            first_page.items.first().map(|item| item.id.as_str()),
+            Some("ntf_50")
+        );
+        assert_eq!(
+            first_page.items.last().map(|item| item.id.as_str()),
+            Some("ntf_1")
+        );
+
+        let second_page = db
+            .list_notification_items(
+                50,
+                first_page.next_cursor.as_deref(),
+                "2026-09-26T01:00:00Z",
+            )
+            .await
+            .unwrap();
+        assert_eq!(second_page.items.len(), 1);
+        assert_eq!(second_page.items[0].id, "ntf_0");
+        assert!(second_page.next_cursor.is_none());
     }
 }

@@ -238,6 +238,20 @@ pub async fn notify_new_versions_discovered(
             &dispatch_now_rfc3339,
         )
         .await?;
+    let sent_channel_records = state
+        .db
+        .list_new_version_notification_sent_channels(
+            &sendable_reserved
+                .iter()
+                .map(|item| item.record_id.clone())
+                .collect::<Vec<_>>(),
+        )
+        .await?;
+    let previously_sent_channels = sent_channel_records
+        .values()
+        .flatten()
+        .cloned()
+        .collect::<std::collections::BTreeSet<_>>();
     let send_result = send_new_versions_with_badge(
         state,
         check_job_id,
@@ -245,6 +259,7 @@ pub async fn notify_new_versions_discovered(
         services_checked,
         &reserved_services,
         Some((&item.item.id, item.unread_count)),
+        &previously_sent_channels,
     )
     .await;
 
@@ -267,10 +282,12 @@ pub async fn notify_new_versions_discovered(
         }
     };
 
-    let mut sent_channels = successful_delivery_channels(&results);
+    let mut sent_channels = previously_sent_channels;
+    sent_channels.extend(successful_delivery_channels(&results));
     if !has_external_delivery {
-        sent_channels.push("inbox".to_string());
+        sent_channels.insert("inbox".to_string());
     }
+    let sent_channels = sent_channels.into_iter().collect::<Vec<_>>();
     let last_error = failed_delivery_error(&results);
     for item in &sendable_reserved {
         let _ = state

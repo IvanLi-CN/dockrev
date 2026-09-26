@@ -398,6 +398,38 @@ WHERE id = ?1 AND status IN (?7, ?8)
         .context("finalize new version notification")
     }
 
+    pub async fn list_new_version_notification_sent_channels(
+        &self,
+        notification_ids: &[String],
+    ) -> anyhow::Result<std::collections::HashMap<String, Vec<String>>> {
+        let notification_ids = notification_ids.to_vec();
+        self.call(move |conn| {
+            if notification_ids.is_empty() {
+                return Ok(std::collections::HashMap::new());
+            }
+            let placeholders = std::iter::repeat_n("?", notification_ids.len())
+                .collect::<Vec<_>>()
+                .join(",");
+            let mut stmt = conn.prepare(&format!(
+                "SELECT id, sent_channels_json FROM new_version_notifications WHERE id IN ({placeholders})"
+            ))?;
+            let rows = stmt.query_map(
+                rusqlite::params_from_iter(notification_ids.iter()),
+                |row| {
+                    let sent_channels_json: String = row.get(1)?;
+                    Ok((
+                        row.get::<_, String>(0)?,
+                        serde_json::from_str::<Vec<String>>(&sent_channels_json)
+                            .unwrap_or_default(),
+                    ))
+                },
+            )?;
+            Ok(rows.collect::<rusqlite::Result<std::collections::HashMap<_, _>>>()?)
+        })
+        .await
+        .context("list new version notification sent channels")
+    }
+
     #[allow(dead_code)]
     pub async fn reconcile_service_new_version_notifications(
         &self,

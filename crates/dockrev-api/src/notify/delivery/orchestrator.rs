@@ -7,6 +7,7 @@ pub(crate) async fn send_new_versions_with_badge(
     services_checked: u32,
     discovered_services: &[NewVersionDiscoveredService],
     badge: Option<(&str, u64)>,
+    skip_channels: &std::collections::BTreeSet<String>,
 ) -> anyhow::Result<Value> {
     let settings = state.db.get_notification_settings().await?;
     if !is_event_enabled(&settings, NotificationEventKind::NewVersionDiscovered) {
@@ -21,7 +22,7 @@ pub(crate) async fn send_new_versions_with_badge(
 
     let mut results = serde_json::Map::new();
 
-    if settings.webhook_enabled {
+    if settings.webhook_enabled && !skip_channels.contains("webhook") {
         let r = async {
             let payload = build_new_version_payload_v2(
                 state,
@@ -41,7 +42,7 @@ pub(crate) async fn send_new_versions_with_badge(
         results.insert("webhook".to_string(), result_value(r));
     }
 
-    if settings.telegram_enabled {
+    if settings.telegram_enabled && !skip_channels.contains("telegram") {
         let r = async {
             let payload = build_new_version_payload_v2(
                 state,
@@ -66,7 +67,7 @@ pub(crate) async fn send_new_versions_with_badge(
         results.insert("telegram".to_string(), telegram_result_value(r));
     }
 
-    if settings.email_enabled {
+    if settings.email_enabled && !skip_channels.contains("email") {
         let r = async {
             let payload = build_new_version_payload_v2(
                 state,
@@ -85,7 +86,7 @@ pub(crate) async fn send_new_versions_with_badge(
         results.insert("email".to_string(), result_value(r));
     }
 
-    if settings.webpush_enabled {
+    if settings.webpush_enabled && !skip_channels.contains("webPush") {
         let r = async {
             let payload = build_new_version_payload_v2(
                 state,
@@ -698,6 +699,7 @@ async fn send_web_push(
     let content = serde_json::to_vec(payload)?;
 
     let mut sent = 0u32;
+    let mut first_error = None;
     for (endpoint, p256dh, auth) in subs {
         let subscription = SubscriptionInfo::new(endpoint, p256dh, auth);
         let mut sig_builder =
@@ -720,13 +722,15 @@ async fn send_web_push(
                     .await;
             }
             Err(e) => {
-                return Err(anyhow::anyhow!("web push send failed: {}", e));
+                if first_error.is_none() {
+                    first_error = Some(anyhow::anyhow!("web push send failed: {}", e));
+                }
             }
         }
     }
 
     if sent == 0 {
-        return Err(anyhow::anyhow!("web push: no successful sends"));
+        return Err(first_error.unwrap_or_else(|| anyhow::anyhow!("web push: no successful sends")));
     }
 
     Ok(())

@@ -75,6 +75,8 @@ export function NotificationProvider(props: { children: ReactNode }) {
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const syncRef = useRef<Promise<void> | null>(null)
+  const syncInvalidatedRef = useRef(false)
+  const mutationRevisionRef = useRef(0)
   const isOpenRef = useRef(false)
   const itemsLoadedRef = useRef(false)
   const nextCursorRef = useRef<string | null>(null)
@@ -87,12 +89,18 @@ export function NotificationProvider(props: { children: ReactNode }) {
   const sync = useCallback(
     async (withItems = false): Promise<void> => {
       if (syncRef.current) return syncRef.current
+      const mutationRevision = mutationRevisionRef.current
       const task = (async () => {
         setLoading(true)
         setError(null)
         try {
           if (withItems || isOpenRef.current) {
             const response = await getNotificationInbox({ limit: 50 })
+            if (syncInvalidatedRef.current || mutationRevision !== mutationRevisionRef.current) {
+              syncInvalidatedRef.current = false
+              window.setTimeout(() => void sync(isOpenRef.current), 0)
+              return
+            }
             setItems(response.items)
             itemsLoadedRef.current = true
             nextCursorRef.current = response.nextCursor ?? null
@@ -100,6 +108,11 @@ export function NotificationProvider(props: { children: ReactNode }) {
             applyUnreadCount(response.unreadCount)
           } else {
             const response = await getNotificationUnreadCount()
+            if (syncInvalidatedRef.current || mutationRevision !== mutationRevisionRef.current) {
+              syncInvalidatedRef.current = false
+              window.setTimeout(() => void sync(isOpenRef.current), 0)
+              return
+            }
             applyUnreadCount(response.unreadCount)
           }
         } catch (cause) {
@@ -137,6 +150,7 @@ export function NotificationProvider(props: { children: ReactNode }) {
 
   const read = useCallback(
     async (item: NotificationItem) => {
+      mutationRevisionRef.current += 1
       const response = await markNotificationRead(item.id)
       setItems((current) =>
         current.map((candidate) =>
@@ -145,20 +159,23 @@ export function NotificationProvider(props: { children: ReactNode }) {
       )
       applyUnreadCount(response.unreadCount)
       broadcastUnreadCount(response.unreadCount, item.id)
+      void sync(isOpenRef.current)
     },
-    [applyUnreadCount],
+    [applyUnreadCount, sync],
   )
 
   const readAll = useCallback(async () => {
     try {
+      mutationRevisionRef.current += 1
       const response = await markAllNotificationsRead()
       setItems((current) => current.map((item) => ({ ...item, readAt: response.readAt })))
       applyUnreadCount(response.unreadCount)
       broadcastUnreadCount(response.unreadCount)
+      void sync(isOpenRef.current)
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : '通知同步失败')
     }
-  }, [applyUnreadCount])
+  }, [applyUnreadCount, sync])
 
   const loadMore = useCallback(async () => {
     const cursor = nextCursorRef.current
@@ -212,6 +229,7 @@ export function NotificationProvider(props: { children: ReactNode }) {
     const channel = new BroadcastChannel(BROADCAST_CHANNEL_NAME)
     const onMessage = (event: MessageEvent<NotificationBroadcast>) => {
       if (event.data?.type !== 'unread-count') return
+      if (syncRef.current) syncInvalidatedRef.current = true
       void sync(isOpenRef.current)
     }
     channel.addEventListener('message', onMessage)
@@ -219,12 +237,13 @@ export function NotificationProvider(props: { children: ReactNode }) {
       channel.removeEventListener('message', onMessage)
       channel.close()
     }
-  }, [applyUnreadCount, sync])
+  }, [sync])
 
   const acknowledgeClick = useCallback(
     async (notificationId: string, target: string, port?: MessagePort): Promise<boolean> => {
       try {
         const item = items.find((candidate) => candidate.id === notificationId)
+        mutationRevisionRef.current += 1
         await markNotificationRead(notificationId)
         const response = await getNotificationUnreadCount()
         applyUnreadCount(response.unreadCount)
@@ -236,6 +255,7 @@ export function NotificationProvider(props: { children: ReactNode }) {
           ),
         )
         broadcastUnreadCount(response.unreadCount, notificationId)
+        void sync(isOpenRef.current)
         port?.postMessage({ type: CLICK_ACK, ok: true })
         if (item || notificationId) navigateToNotification(target)
         return true
@@ -244,7 +264,7 @@ export function NotificationProvider(props: { children: ReactNode }) {
         return false
       }
     },
-    [applyUnreadCount, items],
+    [applyUnreadCount, items, sync],
   )
 
   useEffect(() => {

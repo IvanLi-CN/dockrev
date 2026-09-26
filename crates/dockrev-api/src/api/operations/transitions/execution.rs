@@ -1461,8 +1461,8 @@ pub(crate) async fn run_update_job(
         }
     }
 
-    if should_notify {
-        if let Err(error) = notify::notify_job_updated(
+    if should_notify
+        && let Err(error) = notify::notify_job_updated(
             state.as_ref(),
             &job_id,
             &final_status,
@@ -1470,19 +1470,18 @@ pub(crate) async fn run_update_job(
             &notify_summary,
         )
         .await
-        {
-            let _ = state
-                .db
-                .insert_job_log(
-                    &job_id,
-                    &JobLogLine {
-                        ts: finished_at.clone(),
-                        level: "warn".to_string(),
-                        msg: format!("notification delivery failed: {error}"),
-                    },
-                )
-                .await;
-        }
+    {
+        let _ = state
+            .db
+            .insert_job_log(
+                &job_id,
+                &JobLogLine {
+                    ts: finished_at.clone(),
+                    level: "warn".to_string(),
+                    msg: format!("notification delivery failed: {error}"),
+                },
+            )
+            .await;
     }
 
     state.update_stop_hub.remove(&job_id);
