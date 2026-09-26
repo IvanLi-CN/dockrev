@@ -161,3 +161,4 @@
 | 5xeat | Dockrev：任务历史保留期与游标分页 | active | `5xeat-job-history-retention-pagination/SPEC.md` | 2026-07-25 | fast-track（101 SQLite 增长治理 + Docker stats 部分成功 + jobs cursor） |
 | puwpx | Dockrev：服务树上下文快捷操作 | active | `puwpx-service-tree-context-actions/SPEC.md` | 2026-08-01 | fast-track（Stack/Service ContextMenu + stack lifecycle queue + Storybook/ui_demo evidence） |
 | ci-duration-optimization | Dockrev CI 时长优化与同 SHA 发布门禁 | superseded | `ci-duration-optimization/SPEC.md` | 2026-09-01 | successor: ADR 0008; old readiness contract retained as history |
+| notification-inbox-pwa-badge | Dockrev：通知收件箱与 PWA Badge | active | `notification-inbox-pwa-badge/SPEC.md` | 2026-09-26 | 需求已对齐；服务端未读数、Push 可选、前台同步与关闭 PWA 边界已冻结 |

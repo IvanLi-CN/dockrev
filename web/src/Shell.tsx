@@ -103,6 +103,7 @@ export function AppShell(props: {
   title?: string;
   pageSubtitle?: string;
   topActions?: ReactNode;
+  notificationCenter?: ReactNode;
   topbarContent?: ReactNode;
   contextNavigation?: ReactNode;
   contextNavigationTitle?: string;
@@ -318,6 +319,9 @@ export function AppShell(props: {
               <div className="topbarRight">
                 {mobileMenuMediaMatches && active === "settings" ? (
                   <ThemePreferenceControl variant="icon" />
+                ) : null}
+                {props.notificationCenter ? (
+                  <div className="topbarNotificationCenter">{props.notificationCenter}</div>
                 ) : null}
                 {props.topActions ? (
                   <div className="topActions">{props.topActions}</div>

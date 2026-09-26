@@ -358,6 +358,19 @@ pub fn router(state: Arc<AppState>) -> Router {
             "/api/notifications",
             get(get_notifications).put(put_notifications),
         )
+        .route("/api/notifications/inbox", get(get_notification_inbox))
+        .route(
+            "/api/notifications/unread-count",
+            get(get_notification_unread_count),
+        )
+        .route(
+            "/api/notifications/{notification_id}/read",
+            post(mark_notification_read),
+        )
+        .route(
+            "/api/notifications/read-all",
+            post(mark_all_notifications_read),
+        )
         .route("/api/notifications/test", post(test_notifications))
         .route(
             "/api/github-packages/settings",

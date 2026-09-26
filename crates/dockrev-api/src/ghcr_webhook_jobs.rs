@@ -596,17 +596,23 @@ async fn run_claimed_job(state: Arc<AppState>, job: JobListItem) -> anyhow::Resu
         ParsedGhcrWebhookJobKind::Legacy(GhcrWebhookOp::AuditAll)
     ) && job.created_by == "schedule"
         && job.reason == "schedule";
-    let anomaly_total = counters.missing + counters.conflict + counters.error;
-    if scheduled_audit && anomaly_total > 0 {
+    if scheduled_audit {
         match state.db.list_github_packages_repos().await {
             Ok(rows) => {
-                let anomaly_repos = rows
+                let selected_rows = rows
                     .into_iter()
                     .filter(|row| row.selected)
+                    .collect::<Vec<_>>();
+                let scope_keys = selected_rows
+                    .iter()
+                    .map(|row| format!("{}/{}", row.owner, row.repo))
+                    .collect::<Vec<_>>();
+                let observations = selected_rows
+                    .into_iter()
                     .filter(|row| {
                         matches!(row.webhook_state.as_str(), "missing" | "conflict" | "error")
                     })
-                    .map(|row| notify::GhcrWebhookAnomalyRepo {
+                    .map(|row| crate::db::NotificationAnomalyObservation {
                         owner: row.owner,
                         repo: row.repo,
                         state: row.webhook_state,
@@ -614,27 +620,62 @@ async fn run_claimed_job(state: Arc<AppState>, job: JobListItem) -> anyhow::Resu
                     })
                     .collect::<Vec<_>>();
 
-                let notify_state = state.clone();
-                let notify_job_id = job_id.clone();
-                let notify_finished_at = finished_at.clone();
-                tokio::spawn(async move {
-                    let event = notify::GhcrWebhookAnomalyEvent {
-                        job_id: &notify_job_id,
-                        status: final_status,
-                        counts: notify::GhcrWebhookAnomalyCounts {
-                            missing: counters.missing,
-                            conflict: counters.conflict,
-                            error: counters.error,
-                        },
-                        repos: &anomaly_repos,
-                    };
-                    let _ = notify::notify_ghcr_webhook_anomaly(
-                        notify_state.as_ref(),
-                        &notify_finished_at,
-                        event,
-                    )
-                    .await;
-                });
+                match state
+                    .db
+                    .reconcile_notification_anomaly_states(&scope_keys, &observations, &finished_at)
+                    .await
+                {
+                    Ok(newly_active) if newly_active.is_empty() => {}
+                    Ok(newly_active) => {
+                        let anomaly_repos = newly_active
+                            .into_iter()
+                            .map(|row| notify::GhcrWebhookAnomalyRepo {
+                                owner: row.owner,
+                                repo: row.repo,
+                                state: row.state,
+                                last_error: row.last_error,
+                            })
+                            .collect::<Vec<_>>();
+                        let notify_state = state.clone();
+                        let notify_job_id = job_id.clone();
+                        let notify_finished_at = finished_at.clone();
+                        let notify_counts = notify::GhcrWebhookAnomalyCounts {
+                            missing: anomaly_repos
+                                .iter()
+                                .filter(|repo| repo.state == "missing")
+                                .count() as u32,
+                            conflict: anomaly_repos
+                                .iter()
+                                .filter(|repo| repo.state == "conflict")
+                                .count() as u32,
+                            error: anomaly_repos
+                                .iter()
+                                .filter(|repo| repo.state == "error")
+                                .count() as u32,
+                        };
+                        tokio::spawn(async move {
+                            let event = notify::GhcrWebhookAnomalyEvent {
+                                job_id: &notify_job_id,
+                                status: final_status,
+                                counts: notify_counts,
+                                repos: &anomaly_repos,
+                            };
+                            let _ = notify::notify_ghcr_webhook_anomaly(
+                                notify_state.as_ref(),
+                                &notify_finished_at,
+                                event,
+                            )
+                            .await;
+                        });
+                    }
+                    Err(err) => {
+                        tracing::warn!(
+                            job_id = %job_id,
+                            error = %err,
+                            "ghcr webhook anomaly notify: failed to reconcile anomaly states"
+                        );
+                    }
+                }
             }
             Err(err) => {
                 tracing::warn!(

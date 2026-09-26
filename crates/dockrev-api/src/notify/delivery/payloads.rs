@@ -742,9 +742,10 @@ pub(crate) fn to_ghcr_webhook_anomaly_value(
     serde_json::to_value(payload).context("serialize ghcr webhook anomaly payload v2")
 }
 
-pub(crate) fn to_web_push_job_value(
+pub(crate) fn to_web_push_job_value_with_badge(
     payload: &JobNotificationPayloadV2,
     error_excerpt: Option<&str>,
+    badge: Option<(&str, u64)>,
 ) -> anyhow::Result<Value> {
     let mut value = to_job_value(payload)?;
     if let Value::Object(map) = &mut value {
@@ -763,12 +764,20 @@ pub(crate) fn to_web_push_job_value(
             "url".to_string(),
             Value::String(payload.links.primary_url.clone()),
         );
+        insert_notification_badge(map, badge);
     }
     Ok(value)
 }
 
 pub(crate) fn to_web_push_new_version_value(
     payload: &NewVersionNotificationPayloadV2,
+) -> anyhow::Result<Value> {
+    to_web_push_new_version_value_with_badge(payload, None)
+}
+
+pub(crate) fn to_web_push_new_version_value_with_badge(
+    payload: &NewVersionNotificationPayloadV2,
+    badge: Option<(&str, u64)>,
 ) -> anyhow::Result<Value> {
     let mut value = to_new_version_value(payload)?;
     if let Value::Object(map) = &mut value {
@@ -784,12 +793,20 @@ pub(crate) fn to_web_push_new_version_value(
             "url".to_string(),
             Value::String(payload.links.primary_url.clone()),
         );
+        insert_notification_badge(map, badge);
     }
     Ok(value)
 }
 
 pub(crate) fn to_web_push_ghcr_webhook_anomaly_value(
     payload: &GhcrWebhookAnomalyPayloadV2,
+) -> anyhow::Result<Value> {
+    to_web_push_ghcr_webhook_anomaly_value_with_badge(payload, None)
+}
+
+pub(crate) fn to_web_push_ghcr_webhook_anomaly_value_with_badge(
+    payload: &GhcrWebhookAnomalyPayloadV2,
+    badge: Option<(&str, u64)>,
 ) -> anyhow::Result<Value> {
     let mut value = to_ghcr_webhook_anomaly_value(payload)?;
     if let Value::Object(map) = &mut value {
@@ -805,6 +822,21 @@ pub(crate) fn to_web_push_ghcr_webhook_anomaly_value(
             "url".to_string(),
             Value::String(payload.links.primary_url.clone()),
         );
+        insert_notification_badge(map, badge);
     }
     Ok(value)
+}
+
+fn insert_notification_badge(map: &mut serde_json::Map<String, Value>, badge: Option<(&str, u64)>) {
+    let Some((notification_id, unread_count)) = badge else {
+        return;
+    };
+    map.insert(
+        "notificationId".to_string(),
+        Value::String(notification_id.to_string()),
+    );
+    map.insert(
+        "unreadCount".to_string(),
+        Value::Number(serde_json::Number::from(unread_count)),
+    );
 }

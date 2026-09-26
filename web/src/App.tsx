@@ -54,6 +54,7 @@ import {
 } from "./deployCheck";
 import { TopbarUserIdentity } from "./components/TopbarUserIdentity";
 import { GitHubReleaseDrawer } from "./components/GitHubReleaseDrawer";
+import { NotificationCenter, NotificationProvider } from "./NotificationCenter";
 import {
   CLOSED_GITHUB_RELEASE_DRAWER_STATE,
   RELEASE_DRAWER_LOCATION_EVENT,
@@ -528,17 +529,19 @@ export default function App() {
   }
 
   return (
-    <>
-      <AppShell
-        route={route}
-        title={resolvedHead.title}
-        pageSubtitle={resolvedHead.pageSubtitle}
-        topActions={topActions}
-        topbarContent={topbarContent}
-        contextNavigation={contextNavigation}
-        contextNavigationTitle={route.name === "services" || route.name === "stack" || route.name === "service" ? "服务导航" : "页面内导航"}
-        authIdentity={authIdentity}
-      >
+    <NotificationProvider>
+      <>
+        <AppShell
+          route={route}
+          title={resolvedHead.title}
+          pageSubtitle={resolvedHead.pageSubtitle}
+          topActions={topActions}
+          notificationCenter={<NotificationCenter />}
+          topbarContent={topbarContent}
+          contextNavigation={contextNavigation}
+          contextNavigationTitle={route.name === "services" || route.name === "stack" || route.name === "service" ? "服务导航" : "页面内导航"}
+          authIdentity={authIdentity}
+        >
         <ManagementEventsStatusBanner />
         {route.name === "overview" ? (
           <OverviewPage
@@ -605,16 +608,17 @@ export default function App() {
             onTopbarContent={setTopbarContent}
           />
         ) : null}
-      </AppShell>
-      <GitHubReleaseDrawer
-        open={releaseDrawerState.open}
-        serviceId={releaseDrawerState.serviceId}
-        version={releaseDrawerState.version}
-        onOpenChange={(open) => {
-          if (open) return;
-          closeGitHubReleaseDrawer("replace");
-        }}
-      />
-    </>
+        </AppShell>
+        <GitHubReleaseDrawer
+          open={releaseDrawerState.open}
+          serviceId={releaseDrawerState.serviceId}
+          version={releaseDrawerState.version}
+          onOpenChange={(open) => {
+            if (open) return;
+            closeGitHubReleaseDrawer("replace");
+          }}
+        />
+      </>
+    </NotificationProvider>
   );
 }

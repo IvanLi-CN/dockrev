@@ -1,11 +1,12 @@
 use super::*;
 
-pub(crate) async fn send_new_versions(
+pub(crate) async fn send_new_versions_with_badge(
     state: &AppState,
     check_job_id: &str,
     now_rfc3339: &str,
     services_checked: u32,
     discovered_services: &[NewVersionDiscoveredService],
+    badge: Option<(&str, u64)>,
 ) -> anyhow::Result<Value> {
     let settings = state.db.get_notification_settings().await?;
     if !is_event_enabled(&settings, NotificationEventKind::NewVersionDiscovered) {
@@ -96,7 +97,7 @@ pub(crate) async fn send_new_versions(
                 discovered_services,
             )
             .await?;
-            let web_push_payload = to_web_push_new_version_value(&payload)?;
+            let web_push_payload = to_web_push_new_version_value_with_badge(&payload, badge)?;
             send_web_push(
                 state,
                 settings.webpush_vapid_private_key.as_deref(),
@@ -113,10 +114,11 @@ pub(crate) async fn send_new_versions(
     Ok(Value::Object(results))
 }
 
-pub(crate) async fn send_ghcr_webhook_anomaly(
+pub(crate) async fn send_ghcr_webhook_anomaly_with_badge(
     state: &AppState,
     now_rfc3339: &str,
     event: GhcrWebhookAnomalyEvent<'_>,
+    badge: Option<(&str, u64)>,
 ) -> anyhow::Result<Value> {
     let settings = state.db.get_notification_settings().await?;
     if !is_event_enabled(&settings, NotificationEventKind::GhcrWebhookAnomaly) {
@@ -199,7 +201,8 @@ pub(crate) async fn send_ghcr_webhook_anomaly(
                 event,
             )
             .await?;
-            let web_push_payload = to_web_push_ghcr_webhook_anomaly_value(&payload)?;
+            let web_push_payload =
+                to_web_push_ghcr_webhook_anomaly_value_with_badge(&payload, badge)?;
             send_web_push(
                 state,
                 settings.webpush_vapid_private_key.as_deref(),
@@ -222,6 +225,17 @@ pub(crate) async fn send_all(
     now_rfc3339: &str,
     payload: Option<&Value>,
     mode: NotifySendMode,
+) -> anyhow::Result<Value> {
+    send_all_with_badge(state, job_id, now_rfc3339, payload, mode, None).await
+}
+
+pub(crate) async fn send_all_with_badge(
+    state: &AppState,
+    job_id: Option<&str>,
+    now_rfc3339: &str,
+    payload: Option<&Value>,
+    mode: NotifySendMode,
+    badge: Option<(&str, u64)>,
 ) -> anyhow::Result<Value> {
     let settings = state.db.get_notification_settings().await?;
     if matches!(mode, NotifySendMode::Default)
@@ -419,8 +433,11 @@ pub(crate) async fn send_all(
                     summary,
                 )
                 .await?;
-                let web_push_payload =
-                    to_web_push_job_value(&job_payload, error_excerpt.as_deref())?;
+                let web_push_payload = to_web_push_job_value_with_badge(
+                    &job_payload,
+                    error_excerpt.as_deref(),
+                    badge,
+                )?;
                 send_web_push(
                     state,
                     settings.webpush_vapid_private_key.as_deref(),

@@ -1422,6 +1422,18 @@ fn web_push_payload_contains_url_for_new_notifications() {
 }
 
 #[test]
+fn real_web_push_payload_carries_absolute_badge_state() {
+    let payload = sample_new_version_payload();
+    let value = to_web_push_new_version_value_with_badge(&payload, Some(("ntf_123", 3))).unwrap();
+    assert_eq!(value["notificationId"].as_str(), Some("ntf_123"));
+    assert_eq!(value["unreadCount"].as_u64(), Some(3));
+
+    let legacy = to_web_push_new_version_value(&payload).unwrap();
+    assert!(legacy.get("notificationId").is_none());
+    assert!(legacy.get("unreadCount").is_none());
+}
+
+#[test]
 fn event_toggle_flags_are_checked_per_type() {
     let settings = NotificationSettings {
         email_enabled: false,
