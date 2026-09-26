@@ -100,6 +100,36 @@ pub async fn prepare_job_notification_item(
     }))
 }
 
+pub async fn prepare_job_notification_item_for_finish(
+    state: &AppState,
+    should_notify: bool,
+    job_id: &str,
+    status: &str,
+    now_rfc3339: &str,
+    summary: &Value,
+) -> Option<crate::db::NotificationItemDraft> {
+    if !should_notify {
+        return None;
+    }
+    match prepare_job_notification_item(state, job_id, status, now_rfc3339, summary).await {
+        Ok(notification) => notification,
+        Err(error) => {
+            let _ = state
+                .db
+                .insert_job_log(
+                    job_id,
+                    &JobLogLine {
+                        ts: now_rfc3339.to_string(),
+                        level: "warn".to_string(),
+                        msg: format!("notification persistence preparation failed: {error}"),
+                    },
+                )
+                .await;
+            None
+        }
+    }
+}
+
 pub async fn notify_new_versions_discovered(
     state: &AppState,
     check_job_id: &str,

@@ -384,7 +384,6 @@ WHERE id = ?1 AND status = 'queued'
         }
         result
     }
-
     pub async fn finish_job(
         &self,
         job_id: &str,
@@ -433,7 +432,6 @@ WHERE id = ?1 AND status = 'queued'
         )
         .await
     }
-
     #[allow(clippy::too_many_arguments)]
     pub async fn finish_job_with_archive_and_settlement_and_notification(
         &self,
@@ -465,11 +463,9 @@ WHERE id = ?1
                         |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)),
                     )
                     .optional()?;
-
                 if !summary_json.is_object() {
                     summary_json = serde_json::json!({ "result": summary_json });
                 }
-
                 if let Some((_, previous_summary_raw)) = previous.as_ref() {
                     let previous_summary: serde_json::Value =
                         serde_json::from_str(previous_summary_raw)
