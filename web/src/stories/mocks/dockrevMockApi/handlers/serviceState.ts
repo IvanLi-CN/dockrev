@@ -9,6 +9,7 @@ import { imageRepoFromImageRef } from '../../../../imageRepo'
 import type { MockRouteContext } from '../context'
 import { handleJobStateRoutes } from './jobState'
 import { handleLifecycleEventsRoute, projectLifecycleSnapshot } from './lifecycleEvents'
+import { handleVersionUpdateRoutes } from './versionUpdates'
 import {
   buildMockReleaseNotesItems,
   buildMockReleaseNotesExternalLinks,
@@ -90,6 +91,8 @@ export async function handleServiceStateRoutes(ctx: MockRouteContext): Promise<R
   if (jobStateResponse) return jobStateResponse
   const lifecycleEventsResponse = handleLifecycleEventsRoute(ctx)
   if (lifecycleEventsResponse) return lifecycleEventsResponse
+  const versionUpdateResponse = handleVersionUpdateRoutes(ctx)
+  if (versionUpdateResponse) return versionUpdateResponse
 
   if (method === 'GET' && (urlPathWithQuery === '/api/discovery/projects' || urlPathWithQuery.startsWith('/api/discovery/projects?'))) {
     const query = url?.search

@@ -289,7 +289,8 @@ ON CONFLICT(service_id, candidate_digest) DO UPDATE SET
             .map(serde_json::to_string)
             .transpose()?;
         self.call(move |conn| {
-            let changed = conn.execute(
+            let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
+            let changed = tx.execute(
                 r#"
 UPDATE auto_update_candidates
 SET status = ?3,
@@ -353,12 +354,36 @@ WHERE service_id = ?1 AND candidate_digest = ?2
             if changed == 0 {
                 return Ok(None);
             }
-            Ok(conn.query_row(
+            if let Some(version) = input.resolved_version.as_deref() {
+                let candidate_identity = tx
+                    .query_row(
+                        "SELECT image_ref, raw_tag FROM auto_update_candidates WHERE service_id = ?1 AND candidate_digest = ?2",
+                        params![input.service_id, input.candidate_digest],
+                        |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)),
+                    )
+                    .optional()?;
+                if let Some((image_ref, configured_tag)) = candidate_identity
+                    && let Some(image_repo) =
+                        crate::snapshot_worker::image_repo_from_image_ref(&image_ref)
+                {
+                    super::version_update_observations::bind_version_tx(
+                        &tx,
+                        &input.service_id,
+                        &image_repo,
+                        &configured_tag,
+                        &input.candidate_digest,
+                        version,
+                    )?;
+                }
+            }
+            let row = tx.query_row(
                 &format!("SELECT {AUTO_UPDATE_CANDIDATE_COLUMNS} FROM auto_update_candidates WHERE service_id = ?1 AND candidate_digest = ?2"),
                 params![input.service_id, input.candidate_digest],
                 map_auto_update_candidate_row,
             )
-            .optional()?)
+            .optional()?;
+            tx.commit()?;
+            Ok(row)
         })
         .await
         .context("settle auto update candidate")

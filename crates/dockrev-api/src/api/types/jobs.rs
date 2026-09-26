@@ -130,8 +130,14 @@ pub struct UpdateServiceTarget {
     pub pull_tags: Option<Vec<String>>,
     #[serde(default)]
     pub skip_tag_followups: bool,
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub(crate) skip_target_tag_pull: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub auto_policy_context: Option<AutoUpdateJobContext>,
+}
+
+fn is_false(value: &bool) -> bool {
+    !value
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -172,9 +178,10 @@ impl UpdateMode {
     }
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum BackupMode {
+    #[default]
     Inherit,
     Skip,
     Force,

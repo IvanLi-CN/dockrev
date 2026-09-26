@@ -106,9 +106,7 @@ export function ServiceDetailPage(props: {
     dockrevSelfUpgradeAction, dotClass, draftRepoUrl, error, lastSuccessfulRefreshAt,
     lifecycleSettledJobId, newRuleKind, newRuleNote, newRuleValue, notice, operationProgress,
     backupTargets, applyActiveJob, applySubmitting, repoInferBusy,
-    requestRefresh,
-    refreshTrigger,
-    requestApplyUpdate,
+    requestRefresh, refreshTrigger, requestApplyUpdate, requestApplyVersion,
     requestRollback,
     rollbackTarget,
     rollbackActiveJobId,
@@ -512,6 +510,7 @@ export function ServiceDetailPage(props: {
           dockrevSelfUpgradeAction={dockrevSelfUpgradeAction}
           jobs={versionOperationJobs}
           onApplyUpdate={requestApplyUpdate}
+          onApplyVersion={requestApplyVersion}
           onRollback={requestRollback}
           rollbackActiveJobId={rollbackActiveJobId}
           rollbackActiveJobStatus={rollbackActiveJobStatus}

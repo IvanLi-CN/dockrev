@@ -967,6 +967,7 @@ fn build_auto_update_target(
         target_digest: candidate.digest.clone(),
         pull_tags: Some(pull_tags),
         skip_tag_followups: false,
+        skip_target_tag_pull: false,
         auto_policy_context: None,
     })
 }

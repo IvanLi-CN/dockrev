@@ -1,4 +1,5 @@
 export * from './api/types'
+export * from './api/versionUpdates'
 
 import type {
   StackListItem,
@@ -171,7 +172,7 @@ function dispatchAuthRecovered() {
   window.dispatchEvent(new CustomEvent(AUTH_RECOVERED_EVENT))
 }
 
-async function apiFetch(path: string, init?: RequestInit) {
+export async function apiFetch(path: string, init?: RequestInit) {
   const resp = await fetch(`${API_BASE}${path}`, {
     ...init,
     headers: {

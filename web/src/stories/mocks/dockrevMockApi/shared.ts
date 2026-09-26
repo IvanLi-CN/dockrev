@@ -57,6 +57,7 @@ export type DockrevApiScenario =
   | 'service-detail-rollback-active'
   | 'service-detail-rollback-confirm-open'
   | 'service-detail-history-rollback-action'
+  | 'service-selected-version-updates'
   | 'service-detail-rollback-stale-after-update'
   | 'service-detail-lifecycle-running'
   | 'service-detail-lifecycle-stopped'

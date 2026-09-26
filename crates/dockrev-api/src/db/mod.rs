@@ -23,6 +23,7 @@ mod new_version_notifications;
 mod repo_links;
 mod resource_usage;
 mod schema;
+mod schema_path;
 mod service_operations;
 mod settings;
 mod snapshots;
@@ -31,6 +32,7 @@ mod stacks_accepted_state;
 mod stacks_backup_targets;
 mod tag_history;
 mod update_stops;
+mod version_update_observations;
 
 pub(super) fn canonical_digest_sql(column: &str) -> String {
     format!(
@@ -992,7 +994,7 @@ impl ArchivedFilter {
 
 impl Db {
     pub async fn open(path: &Path) -> anyhow::Result<Self> {
-        let path = schema::ensure_parent_dir(path)?;
+        let path = schema_path::ensure_parent_dir(path)?;
         let conn = Connection::open(path).await?;
 
         let db = Self {

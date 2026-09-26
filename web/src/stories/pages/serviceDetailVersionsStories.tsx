@@ -145,6 +145,16 @@ export const VersionsSection: ServiceDetailStory = {
   parameters: {
     viewport: { defaultViewport: "dockrevWide" },
     dockrevApiScenario: "service-detail-history-rollback-action",
+    serviceOverridesById: {
+      "svc-prod-api": {
+        image: {
+          ref: "ghcr.io/acme/api:latest",
+          tag: "latest",
+          resolvedTag: "5.2.1",
+          digest: dockrevDigest("a", "b1"),
+        },
+      },
+    },
     dockrevGitHubReleasesByServiceId: {
       "svc-prod-api": {
         authMode: "anonymous",
@@ -184,8 +194,13 @@ export const VersionsSection: ServiceDetailStory = {
     const currentCard = findVersionCard(canvasElement, "5.2.1");
     const candidateCard = findVersionCard(canvasElement, "5.2.3");
     const rollbackCard = findVersionCard(canvasElement, "5.2.0");
+    await waitForCondition(
+      () =>
+        normalizeText(findVersionAction(canvasElement, "update", "5.2.3")?.textContent) === "更新" &&
+        normalizeText(findVersionAction(canvasElement, "update", "5.4.4")?.textContent) === "强制更新",
+    );
     const updateCandidate = findVersionAction(canvasElement, "update", "5.2.3");
-    const updateDisabled = findVersionAction(canvasElement, "update", "5.4.4");
+    const forceUpdate = findVersionAction(canvasElement, "update", "5.4.4");
     const rollbackTarget = findVersionAction(canvasElement, "rollback", "5.2.0");
     const rollbackHint = findVersionAction(canvasElement, "rollback", "5.2.2");
     const githubLink = canvasElement.querySelector<HTMLAnchorElement>(
@@ -290,7 +305,9 @@ export const VersionsSection: ServiceDetailStory = {
     expectNearlyEqual(asideWidths[0] ?? 0, asideWidths[1] ?? 0, 1.5, "desktop placeholder and action rails should keep equal width");
     expectNearlyEqual(asideWidths[1] ?? 0, asideWidths[2] ?? 0, 1.5, "desktop action rails should keep equal width");
     expectStory(updateCandidate && !updateCandidate.disabled, "candidate version should expose an enabled update action");
-    expectStory(Boolean(updateDisabled?.disabled), "newer non-candidate release should render a disabled update action");
+    expectStory(normalizeText(updateCandidate?.textContent) === "更新", "observed historical release should use the normal update action");
+    expectStory(forceUpdate && !forceUpdate.disabled, "newer unobserved release should expose an enabled forced update action");
+    expectStory(normalizeText(forceUpdate?.textContent) === "强制更新", "unobserved release should use the forced update action");
     expectStory(Boolean(rollbackTarget && !rollbackTarget.disabled), "rollback target version should expose an enabled rollback action");
     expectStory(
       normalizeText(findVersionCard(canvasElement, "5.2.0")?.textContent).includes("来源备份") &&
@@ -306,6 +323,28 @@ export const VersionsSection: ServiceDetailStory = {
       findVersionCard(canvasElement, "5.2.0")?.getAttribute("data-version-card-older") === "true",
       "older comparable releases should render the de-emphasized state",
     );
+
+    updateCandidate?.click();
+    await waitForCondition(() => Boolean(document.querySelector('[role="alertdialog"], [role="dialog"]')));
+    let updateDialog = document.querySelector<HTMLElement>('[role="alertdialog"], [role="dialog"]');
+    expectStory(normalizeText(updateDialog?.textContent).includes("自动更新策略仍会按原计划运行"), "normal update confirmation should disclose the preserved automatic update policy");
+    findButton(updateDialog ?? canvasElement, "取消")?.click();
+    await waitForCondition(() => !document.querySelector('[role="alertdialog"], [role="dialog"]'));
+
+    forceUpdate?.click();
+    await waitForCondition(() => Boolean(document.querySelector('[role="alertdialog"], [role="dialog"]')));
+    updateDialog = document.querySelector<HTMLElement>('[role="alertdialog"], [role="dialog"]');
+    expectStory(normalizeText(updateDialog?.textContent).includes("届时配置标签指向的摘要"), "forced update confirmation should disclose that automatic checks may advance to the configured tag");
+    findButton(updateDialog ?? canvasElement, "继续强制更新")?.click();
+    await waitForCondition(() => {
+      const dialog = document.querySelector<HTMLElement>('[role="alertdialog"], [role="dialog"]');
+      return Boolean(dialog?.textContent?.includes("再次确认强制更新"));
+    });
+    updateDialog = document.querySelector<HTMLElement>('[role="alertdialog"], [role="dialog"]');
+    expectStory(normalizeText(updateDialog?.textContent).includes("强制更新将使用同一镜像仓库中原始 Release tag"), "second forced confirmation should explain the exact release-tag resolution");
+    expectStory(normalizeText(updateDialog?.textContent).includes("后续合格检查可能再次把服务更新"), "second forced confirmation should repeat the automatic update warning");
+    findButton(updateDialog ?? canvasElement, "返回")?.click();
+    await waitForCondition(() => !document.querySelector('[role="alertdialog"], [role="dialog"]'));
 
     findButton(canvasElement, "原文")?.click();
     await waitForCondition(
@@ -734,7 +773,17 @@ export const DockrevVersionsSelfUpgradeOffline: ServiceDetailStory = {
 export const MobileVersionsSection: ServiceDetailStory = {
   parameters: {
     dockrevApiScenario: "service-detail-history-rollback-action",
-    viewport: { defaultViewport: "mobile1" },
+    viewport: { defaultViewport: "dockrevMobile" },
+    serviceOverridesById: {
+      "svc-prod-api": {
+        image: {
+          ref: "ghcr.io/acme/api:latest",
+          tag: "latest",
+          resolvedTag: "5.2.1",
+          digest: dockrevDigest("a", "b1"),
+        },
+      },
+    },
     dockrevGitHubReleasesByServiceId: {
       "svc-prod-api": {
         authMode: "anonymous",
@@ -753,6 +802,12 @@ export const MobileVersionsSection: ServiceDetailStory = {
     const card = findVersionCard(canvasElement, "5.2.1");
     const factsGrid = card?.querySelector<HTMLElement>(".serviceVersionFacts");
     const primaryButton = findVersionAction(canvasElement, "update", "5.2.3");
+    const forceButton = findVersionAction(canvasElement, "update", "5.4.4");
+    await waitForCondition(
+      () =>
+        normalizeText(primaryButton?.textContent) === "更新" &&
+        normalizeText(forceButton?.textContent) === "强制更新",
+    );
     await waitForCondition(() => visibleVersionCards(canvasElement).length >= 2);
     const [firstVisibleCard, secondVisibleCard] = visibleVersionCards(canvasElement).sort(
       (left, right) => left.getBoundingClientRect().top - right.getBoundingClientRect().top,
@@ -770,6 +825,7 @@ export const MobileVersionsSection: ServiceDetailStory = {
     expectStory(gridColumns.length === 1, "mobile versions cards should collapse into a single-column layout");
     expectStory(factsColumns.length === 2, "mobile versions metadata should stay in a compact two-column facts grid");
     expectStory(Boolean(primaryButton), "mobile versions card should keep the action region");
+    expectStory(Boolean(forceButton && !forceButton.disabled), "mobile versions should expose the forced action for an unobserved newer release");
     expectStory(
       surface?.scrollWidth != null &&
         surface.clientWidth > 0 &&
