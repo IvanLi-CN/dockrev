@@ -661,6 +661,7 @@ pub(super) fn migrate(conn: &mut rusqlite::Connection) -> anyhow::Result<()> {
     apply_migration_0026_reject_invalid_auto_update_digest_identity(conn)?;
     apply_migration_0027_add_notification_items(conn)?;
     apply_migration_0028_add_notification_anomaly_states(conn)?;
+    apply_migration_0029_add_notification_anomaly_pending(conn)?;
     schema_lifecycle_events::apply(conn)?;
     schema_job_history_retention::apply(conn)?;
     schema_backup_cleanup_state::apply(conn)?;
@@ -692,6 +693,24 @@ CREATE TABLE IF NOT EXISTS notification_anomaly_states (
 CREATE INDEX IF NOT EXISTS idx_notification_anomaly_states_active
   ON notification_anomaly_states (active, last_seen_at);
 "#,
+    )?;
+    record_migration_tx(&tx, id)?;
+    tx.commit()?;
+    Ok(())
+}
+
+fn apply_migration_0029_add_notification_anomaly_pending(
+    conn: &mut rusqlite::Connection,
+) -> anyhow::Result<()> {
+    let id = "0029_add_notification_anomaly_pending";
+    if migration_applied(conn, id)? {
+        return Ok(());
+    }
+
+    let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
+    tx.execute(
+        "ALTER TABLE notification_anomaly_states ADD COLUMN notification_pending INTEGER NOT NULL DEFAULT 0",
+        [],
     )?;
     record_migration_tx(&tx, id)?;
     tx.commit()?;

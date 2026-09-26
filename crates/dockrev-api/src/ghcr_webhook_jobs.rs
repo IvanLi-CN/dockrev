@@ -617,6 +617,7 @@ async fn run_claimed_job(state: Arc<AppState>, job: JobListItem) -> anyhow::Resu
                         repo: row.repo,
                         state: row.webhook_state,
                         last_error: row.last_error,
+                        occurrence_count: 0,
                     })
                     .collect::<Vec<_>>();
 
@@ -634,11 +635,9 @@ async fn run_claimed_job(state: Arc<AppState>, job: JobListItem) -> anyhow::Resu
                                 repo: row.repo,
                                 state: row.state,
                                 last_error: row.last_error,
+                                occurrence_count: row.occurrence_count,
                             })
                             .collect::<Vec<_>>();
-                        let notify_state = state.clone();
-                        let notify_job_id = job_id.clone();
-                        let notify_finished_at = finished_at.clone();
                         let notify_counts = notify::GhcrWebhookAnomalyCounts {
                             missing: anomaly_repos
                                 .iter()
@@ -653,20 +652,21 @@ async fn run_claimed_job(state: Arc<AppState>, job: JobListItem) -> anyhow::Resu
                                 .filter(|repo| repo.state == "error")
                                 .count() as u32,
                         };
-                        tokio::spawn(async move {
-                            let event = notify::GhcrWebhookAnomalyEvent {
-                                job_id: &notify_job_id,
-                                status: final_status,
-                                counts: notify_counts,
-                                repos: &anomaly_repos,
-                            };
-                            let _ = notify::notify_ghcr_webhook_anomaly(
-                                notify_state.as_ref(),
-                                &notify_finished_at,
-                                event,
-                            )
-                            .await;
-                        });
+                        let event = notify::GhcrWebhookAnomalyEvent {
+                            job_id: &job_id,
+                            status: final_status,
+                            counts: notify_counts,
+                            repos: &anomaly_repos,
+                        };
+                        if let Err(err) =
+                            notify::notify_ghcr_webhook_anomaly(&state, &finished_at, event).await
+                        {
+                            tracing::warn!(
+                                job_id = %job_id,
+                                error = %err,
+                                "ghcr webhook anomaly notify: failed to persist or deliver notification"
+                            );
+                        }
                     }
                     Err(err) => {
                         tracing::warn!(

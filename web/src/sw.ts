@@ -138,7 +138,14 @@ self.addEventListener('notificationclick', (event) => {
         event.notification && event.notification.data && typeof event.notification.data === 'object'
           ? (event.notification.data as { notificationId?: string }).notificationId
           : undefined
-      const targetUrl = url ? new URL(url, self.registration.scope).href : null
+      let targetUrl: string | null = null
+      if (url) {
+        try {
+          targetUrl = new URL(url, self.registration.scope).href
+        } catch {
+          // A malformed legacy payload must still fall back to the app shell.
+        }
+      }
 
       if (targetUrl && notificationId) {
         for (const client of clients) {

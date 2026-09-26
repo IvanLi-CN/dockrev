@@ -176,8 +176,7 @@ export function NotificationProvider(props: { children: ReactNode }) {
     const channel = new BroadcastChannel(BROADCAST_CHANNEL_NAME)
     const onMessage = (event: MessageEvent<NotificationBroadcast>) => {
       if (event.data?.type !== 'unread-count') return
-      applyUnreadCount(event.data.unreadCount)
-      if (isOpenRef.current) void sync(true)
+      void sync(isOpenRef.current)
     }
     channel.addEventListener('message', onMessage)
     return () => {

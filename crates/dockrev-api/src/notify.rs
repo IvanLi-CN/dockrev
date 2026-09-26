@@ -214,6 +214,7 @@ pub async fn notify_new_versions_discovered(
         .iter()
         .map(|item| item.service.clone())
         .collect::<Vec<_>>();
+    let identity_key = new_version_notification_identity(&reserved_services);
     let target_url = notification_target_url(state, &format!("queue/{check_job_id}")).await?;
     let item = state
         .db
@@ -221,7 +222,7 @@ pub async fn notify_new_versions_discovered(
             &crate::db::NotificationItemDraft {
                 id: crate::ids::new_notification_id(),
                 kind: crate::db::NOTIFICATION_KIND_NEW_VERSION.to_string(),
-                identity_key: format!("new_version_discovered:{check_job_id}"),
+                identity_key,
                 title: format!("发现 {} 个新版本", reserved_services.len()),
                 body: new_version_notification_body(&reserved_services),
                 target_url,
@@ -298,7 +299,7 @@ pub async fn notify_ghcr_webhook_anomaly(
             &crate::db::NotificationItemDraft {
                 id: crate::ids::new_notification_id(),
                 kind: crate::db::NOTIFICATION_KIND_GHCR_ANOMALY.to_string(),
-                identity_key: format!("ghcr_webhook_anomaly:{}", event.job_id),
+                identity_key: ghcr_anomaly_notification_identity(event.repos),
                 title: format!("GHCR Webhook 发现 {} 个异常", event.counts.total()),
                 body: ghcr_anomaly_notification_body(event.repos),
                 target_url,
@@ -307,6 +308,22 @@ pub async fn notify_ghcr_webhook_anomaly(
             },
             now_rfc3339,
         )
+        .await?;
+    let anomaly_state_keys = event
+        .repos
+        .iter()
+        .map(|repo| {
+            (
+                repo.owner.clone(),
+                repo.repo.clone(),
+                repo.state.clone(),
+                repo.occurrence_count,
+            )
+        })
+        .collect::<Vec<_>>();
+    state
+        .db
+        .mark_notification_anomaly_states_notified(&anomaly_state_keys)
         .await?;
     send_ghcr_webhook_anomaly_with_badge(
         state,
@@ -491,6 +508,7 @@ pub struct GhcrWebhookAnomalyRepo {
     pub repo: String,
     pub state: String,
     pub last_error: Option<String>,
+    pub occurrence_count: i64,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -541,6 +559,33 @@ fn should_send_channel(
 struct ReservedNewVersionNotification {
     record_id: String,
     service: NewVersionDiscoveredService,
+}
+
+fn new_version_notification_identity(items: &[NewVersionDiscoveredService]) -> String {
+    let keys = items
+        .iter()
+        .map(|item| format!("{}:{}", item.service_id, item.candidate_digest))
+        .collect::<std::collections::BTreeSet<_>>();
+    format!(
+        "new_version_discovered:{}",
+        keys.into_iter().collect::<Vec<_>>().join("|")
+    )
+}
+
+fn ghcr_anomaly_notification_identity(items: &[GhcrWebhookAnomalyRepo]) -> String {
+    let keys = items
+        .iter()
+        .map(|item| {
+            format!(
+                "{}/{}:{}:{}",
+                item.owner, item.repo, item.state, item.occurrence_count
+            )
+        })
+        .collect::<std::collections::BTreeSet<_>>();
+    format!(
+        "ghcr_webhook_anomaly:{}",
+        keys.into_iter().collect::<Vec<_>>().join("|")
+    )
 }
 
 fn new_version_candidate_matches_current_state(
