@@ -1421,15 +1421,45 @@ pub(crate) async fn run_update_job(
     } else {
         None
     };
+    let notification = if should_notify {
+        match notify::prepare_job_notification_item(
+            state.as_ref(),
+            &job_id,
+            &final_status,
+            &finished_at,
+            &notify_summary,
+        )
+        .await
+        {
+            Ok(notification) => notification,
+            Err(error) => {
+                let _ = state
+                    .db
+                    .insert_job_log(
+                        &job_id,
+                        &JobLogLine {
+                            ts: finished_at.clone(),
+                            level: "warn".to_string(),
+                            msg: format!("notification persistence preparation failed: {error}"),
+                        },
+                    )
+                    .await;
+                None
+            }
+        }
+    } else {
+        None
+    };
     state
         .db
-        .finish_job_with_archive_and_settlement(
+        .finish_job_with_archive_and_settlement_and_notification(
             &job_id,
             &final_status,
             &finished_at,
             &final_summary,
             archive.clone(),
             (!settlements.is_empty()).then_some(settlements.as_slice()),
+            notification.as_ref(),
         )
         .await?;
     if archive.is_some()

@@ -14,7 +14,7 @@
 - `REQ-NPB-007` and `REQ-NPB-009`: 真实 Push 使用 `notificationId` 和绝对 `unreadCount`；Service Worker 支持 Badge、受控页点击确认和冷启动交接，不依赖 Periodic Background Sync。
 - `REQ-NPB-008` and `REQ-NPB-011`: AppShell 在认证分支接入启动、恢复、焦点、联网、可见轮询、BroadcastChannel 和 Badging API 能力检测。
 - `REQ-NPB-010`: Topbar Bell、桌面/移动抽屉、显式单条已读、全部已读和点击后导航已实现。
-- `REQ-NPB-012`: 收件箱项先于外部投递写入；DB identity key、GHCR 状态账本和绝对读响应测试已覆盖核心并发/重试边界。
+- `REQ-NPB-012`: 任务终态与 `job_finished` 收件箱项在同一 SQLite 事务提交；其他收件箱项先于外部投递写入。DB identity key、GHCR 状态账本、失败重试渠道继承和绝对读响应测试已覆盖核心并发/重试边界。
 
 ## Existing Foundations
 
@@ -35,6 +35,7 @@
 - 服务端未读项是唯一计数真相；Push 关闭时的前台 REST 同步是必需兜底。
 - 不引入 Service Worker 常驻定时器，不把 Periodic Background Sync 作为正确性依赖。
 - Badge 能力缺失只影响图标表现，不影响收件箱和服务端未读状态。
+- Web Push 多订阅发送对临时失败订阅做一次即时重试，持久失败返回失败结果；带 `notificationId` 的系统通知使用稳定 tag，重试不会在浏览器中重复堆叠通知。
 
 ## Remaining Gaps
 

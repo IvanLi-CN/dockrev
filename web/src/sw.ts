@@ -89,6 +89,10 @@ self.addEventListener('push', (event) => {
       }
       await self.registration.showNotification(title, {
         body: data.body || '',
+        tag:
+          typeof data.notificationId === 'string' && data.notificationId.trim().length > 0
+            ? `dockrev-${data.notificationId}`
+            : undefined,
         data,
       })
     })(),

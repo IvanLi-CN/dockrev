@@ -236,6 +236,31 @@ LIMIT ?3
     }
 }
 
+pub(super) fn insert_notification_item_tx(
+    tx: &rusqlite::Transaction<'_>,
+    draft: &NotificationItemDraft,
+) -> rusqlite::Result<()> {
+    tx.execute(
+        r#"
+INSERT INTO notification_items (
+  id, kind, identity_key, title, body, target_url, source_job_id, created_at
+) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
+ON CONFLICT(identity_key) DO NOTHING
+"#,
+        params![
+            draft.id,
+            draft.kind,
+            draft.identity_key,
+            draft.title,
+            draft.body,
+            draft.target_url,
+            draft.source_job_id,
+            draft.created_at,
+        ],
+    )?;
+    Ok(())
+}
+
 fn row_to_item(row: &rusqlite::Row<'_>) -> rusqlite::Result<NotificationItemRow> {
     Ok(NotificationItemRow {
         id: row.get(0)?,

@@ -698,37 +698,52 @@ async fn send_web_push(
     let client = HyperWebPushClient::new();
     let content = serde_json::to_vec(payload)?;
 
+    let mut pending = subs;
     let mut sent = 0u32;
     let mut first_error = None;
-    for (endpoint, p256dh, auth) in subs {
-        let subscription = SubscriptionInfo::new(endpoint, p256dh, auth);
-        let mut sig_builder =
-            VapidSignatureBuilder::from_base64(private_key, &subscription).context("vapid key")?;
-        sig_builder.add_claim("sub", subject);
-        let signature = sig_builder.build().context("build vapid signature")?;
+    for attempt in 0..2 {
+        let mut retry = Vec::new();
+        for (endpoint, p256dh, auth) in pending {
+            let retry_subscription = (endpoint.clone(), p256dh.clone(), auth.clone());
+            let subscription = SubscriptionInfo::new(endpoint, p256dh, auth);
+            let mut sig_builder = VapidSignatureBuilder::from_base64(private_key, &subscription)
+                .context("vapid key")?;
+            sig_builder.add_claim("sub", subject);
+            let signature = sig_builder.build().context("build vapid signature")?;
 
-        let mut builder = WebPushMessageBuilder::new(&subscription);
-        builder.set_payload(ContentEncoding::Aes128Gcm, &content);
-        builder.set_urgency(Urgency::Normal);
-        builder.set_ttl(60);
-        builder.set_vapid_signature(signature);
+            let mut builder = WebPushMessageBuilder::new(&subscription);
+            builder.set_payload(ContentEncoding::Aes128Gcm, &content);
+            builder.set_urgency(Urgency::Normal);
+            builder.set_ttl(60);
+            builder.set_vapid_signature(signature);
 
-        match client.send(builder.build()?).await {
-            Ok(()) => sent += 1,
-            Err(WebPushError::EndpointNotValid(_)) | Err(WebPushError::EndpointNotFound(_)) => {
-                let _ = state
-                    .db
-                    .delete_web_push_subscription(&subscription.endpoint)
-                    .await;
-            }
-            Err(e) => {
-                if first_error.is_none() {
-                    first_error = Some(anyhow::anyhow!("web push send failed: {}", e));
+            match client.send(builder.build()?).await {
+                Ok(()) => sent += 1,
+                Err(WebPushError::EndpointNotValid(_)) | Err(WebPushError::EndpointNotFound(_)) => {
+                    let _ = state
+                        .db
+                        .delete_web_push_subscription(&subscription.endpoint)
+                        .await;
+                }
+                Err(e) => {
+                    if first_error.is_none() {
+                        first_error = Some(anyhow::anyhow!("web push send failed: {}", e));
+                    }
+                    if attempt == 0 {
+                        retry.push(retry_subscription);
+                    }
                 }
             }
         }
+        pending = retry;
+        if pending.is_empty() {
+            break;
+        }
     }
 
+    if !pending.is_empty() {
+        return Err(first_error.unwrap_or_else(|| anyhow::anyhow!("web push: no successful sends")));
+    }
     if sent == 0 {
         return Err(first_error.unwrap_or_else(|| anyhow::anyhow!("web push: no successful sends")));
     }

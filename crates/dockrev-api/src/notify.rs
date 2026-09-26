@@ -48,11 +48,11 @@ pub async fn notify_job_updated(
     now_rfc3339: &str,
     summary: &Value,
 ) -> anyhow::Result<()> {
-    let settings = state.db.get_notification_settings().await?;
-    if !is_event_enabled(&settings, NotificationEventKind::Update) {
+    let Some(draft) =
+        prepare_job_notification_item(state, job_id, status, now_rfc3339, summary).await?
+    else {
         return Ok(());
-    }
-    let target_url = notification_target_url(state, &format!("queue/{job_id}")).await?;
+    };
 
     let payload = json!({
         "jobId": job_id,
@@ -62,19 +62,7 @@ pub async fn notify_job_updated(
     });
     let item = state
         .db
-        .ensure_notification_item(
-            &crate::db::NotificationItemDraft {
-                id: crate::ids::new_notification_id(),
-                kind: crate::db::NOTIFICATION_KIND_JOB_FINISHED.to_string(),
-                identity_key: format!("job_finished:{job_id}"),
-                title: format!("任务已{}", status_label(status)),
-                body: job_notification_body(status, summary),
-                target_url,
-                source_job_id: Some(job_id.to_string()),
-                created_at: now_rfc3339.to_string(),
-            },
-            now_rfc3339,
-        )
+        .ensure_notification_item(&draft, now_rfc3339)
         .await?;
     send_all_with_badge(
         state,
@@ -86,6 +74,30 @@ pub async fn notify_job_updated(
     )
     .await?;
     Ok(())
+}
+
+pub async fn prepare_job_notification_item(
+    state: &AppState,
+    job_id: &str,
+    status: &str,
+    now_rfc3339: &str,
+    summary: &Value,
+) -> anyhow::Result<Option<crate::db::NotificationItemDraft>> {
+    let settings = state.db.get_notification_settings().await?;
+    if !is_event_enabled(&settings, NotificationEventKind::Update) {
+        return Ok(None);
+    }
+    let target_url = notification_target_url(state, &format!("queue/{job_id}")).await?;
+    Ok(Some(crate::db::NotificationItemDraft {
+        id: crate::ids::new_notification_id(),
+        kind: crate::db::NOTIFICATION_KIND_JOB_FINISHED.to_string(),
+        identity_key: format!("job_finished:{job_id}"),
+        title: format!("任务已{}", status_label(status)),
+        body: job_notification_body(status, summary),
+        target_url,
+        source_job_id: Some(job_id.to_string()),
+        created_at: now_rfc3339.to_string(),
+    }))
 }
 
 pub async fn notify_new_versions_discovered(

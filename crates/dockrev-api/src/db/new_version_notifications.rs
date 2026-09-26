@@ -238,6 +238,27 @@ impl Db {
             let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
             let candidate_digest = normalize_candidate_digest(Some(&pending.candidate_digest))
                 .ok_or_else(|| rusqlite::Error::InvalidParameterName("candidate_digest".into()))?;
+            let sent_channels_json = tx
+                .query_row(
+                    r#"
+SELECT sent_channels_json
+FROM new_version_notifications
+WHERE service_id = ?1
+  AND candidate_digest = ?2
+  AND status = ?3
+ORDER BY created_at DESC, id DESC
+LIMIT 1
+"#,
+                    params![pending.service_id, candidate_digest, STATUS_FAILED],
+                    |row| row.get::<_, String>(0),
+                )
+                .optional()?
+                .map(|raw| {
+                    serde_json::from_str::<Vec<String>>(&raw).unwrap_or_default()
+                })
+                .map(|channels| serde_json::to_string(&channels))
+                .transpose()?
+                .unwrap_or_else(|| "[]".to_string());
             let insert = tx.execute(
                 r#"
 INSERT INTO new_version_notifications (
@@ -270,7 +291,7 @@ INSERT INTO new_version_notifications (
                     pending.candidate_display_tag,
                     candidate_digest,
                     STATUS_PENDING,
-                    "[]",
+                    sent_channels_json,
                     pending.created_at,
                 ],
             );
@@ -766,6 +787,14 @@ mod tests {
         assert_eq!(
             retried,
             NewVersionNotificationReserveResult::Reserved("nvn_2".to_string())
+        );
+        let sent_channels = db
+            .list_new_version_notification_sent_channels(&["nvn_2".to_string()])
+            .await
+            .unwrap();
+        assert_eq!(
+            sent_channels.get("nvn_2"),
+            Some(&vec!["webhook".to_string()])
         );
     }
 
