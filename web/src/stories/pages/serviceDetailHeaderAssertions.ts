@@ -34,6 +34,11 @@ export function expectTopbarMonitorSummary({
     !MONITOR_METRIC_LABELS.some((label) => monitorSummaryText.includes(label)),
     "topbar monitor summary should hide the metric labels from visible text",
   );
+  const summaryRect = monitorSummary?.getBoundingClientRect();
+  expectStory(
+    (summaryRect?.width ?? 0) > 0 && (summaryRect?.height ?? 0) > 0,
+    "topbar monitor summary should occupy visible layout space",
+  );
   expectStory(!monitorSummary?.querySelector('[data-monitor-state="sample-time"]'), "topbar monitor summary should remove the sample-time chip");
   expectStory(!monitorSummaryText.includes("服务监控摘要"), "topbar monitor summary should remove the redundant subtitle");
 }
