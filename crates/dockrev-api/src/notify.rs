@@ -215,7 +215,13 @@ pub async fn notify_new_versions_discovered(
         .map(|item| item.service.clone())
         .collect::<Vec<_>>();
     let identity_key = new_version_notification_identity(&reserved_services);
-    let target_url = notification_target_url(state, &format!("queue/{check_job_id}")).await?;
+    let target_path = if reserved_services.len() == 1 {
+        let service = &reserved_services[0];
+        format!("services/{}/{}", service.stack_id, service.service_id)
+    } else {
+        format!("queue/{check_job_id}")
+    };
+    let target_url = notification_target_url(state, &target_path).await?;
     let item = state
         .db
         .ensure_notification_item(
@@ -289,7 +295,23 @@ pub async fn notify_ghcr_webhook_anomaly(
         return Ok(());
     }
     let settings = state.db.get_notification_settings().await?;
+    let anomaly_state_keys = event
+        .repos
+        .iter()
+        .map(|repo| {
+            (
+                repo.owner.clone(),
+                repo.repo.clone(),
+                repo.state.clone(),
+                repo.occurrence_count,
+            )
+        })
+        .collect::<Vec<_>>();
     if !is_event_enabled(&settings, NotificationEventKind::GhcrWebhookAnomaly) {
+        state
+            .db
+            .mark_notification_anomaly_states_notified(&anomaly_state_keys)
+            .await?;
         return Ok(());
     }
     let target_url = notification_target_url(state, &format!("queue/{}", event.job_id)).await?;
@@ -309,18 +331,6 @@ pub async fn notify_ghcr_webhook_anomaly(
             now_rfc3339,
         )
         .await?;
-    let anomaly_state_keys = event
-        .repos
-        .iter()
-        .map(|repo| {
-            (
-                repo.owner.clone(),
-                repo.repo.clone(),
-                repo.state.clone(),
-                repo.occurrence_count,
-            )
-        })
-        .collect::<Vec<_>>();
     let results = send_ghcr_webhook_anomaly_with_badge(
         state,
         now_rfc3339,

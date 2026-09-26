@@ -355,7 +355,7 @@ WHERE n.id = ?1
                 (STATUS_SUPERSEDED, existing_superseded_at)
             } else if still_current {
                 (
-                    if sent_channels.is_empty() {
+                    if sent_channels.is_empty() || last_error.is_some() {
                         STATUS_FAILED
                     } else {
                         STATUS_SENT
@@ -694,6 +694,36 @@ mod tests {
                 "nvn_1",
                 &[],
                 Some("webhook failed"),
+                "2026-03-09T00:01:00Z",
+            )
+            .await
+            .unwrap();
+        assert!(finalized);
+
+        let retried = db.reserve_new_version_notification(&second).await.unwrap();
+        assert_eq!(
+            retried,
+            NewVersionNotificationReserveResult::Reserved("nvn_2".to_string())
+        );
+    }
+
+    #[tokio::test]
+    async fn partial_delivery_failure_does_not_hold_active_slot() {
+        let db = Db::open(Path::new(":memory:")).await.unwrap();
+        seed_service(&db, "svc_1", Some("sha256:new")).await;
+        let first = pending("nvn_1", "svc_1", "sha256:new");
+        let second = pending("nvn_2", "svc_1", "sha256:new");
+
+        let reserved = db.reserve_new_version_notification(&first).await.unwrap();
+        assert_eq!(
+            reserved,
+            NewVersionNotificationReserveResult::Reserved("nvn_1".to_string())
+        );
+        let finalized = db
+            .finalize_new_version_notification(
+                "nvn_1",
+                &["webhook".to_string()],
+                Some("telegram failed"),
                 "2026-03-09T00:01:00Z",
             )
             .await

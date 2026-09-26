@@ -204,6 +204,33 @@
   overflow-y: auto;
 }
 
+.notificationLoadMore {
+  display: block;
+  width: 100%;
+  padding: 12px 16px;
+  border: 0;
+  border-top: 1px solid color-mix(in srgb, var(--borderColor) 62%, transparent);
+  background: transparent;
+  color: var(--color-primary);
+  font-size: 12px;
+  text-align: center;
+  cursor: pointer;
+}
+
+.notificationLoadMore:hover {
+  background: color-mix(in srgb, var(--color-primary) 7%, var(--panel2) 93%);
+}
+
+.notificationLoadMore:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
+.notificationLoadMore:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--color-primary) 70%, transparent);
+  outline-offset: -2px;
+}
+
 .notificationItem {
   display: grid;
   grid-template-columns: 8px minmax(0, 1fr);

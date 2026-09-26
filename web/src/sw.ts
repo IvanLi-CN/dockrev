@@ -135,10 +135,14 @@ self.addEventListener('notificationclick', (event) => {
           ? (event.notification.data as { url?: string })
           : {}
       const url = typeof data.url === 'string' && data.url.trim().length > 0 ? data.url : null
-      const notificationId =
+      const rawNotificationId =
         event.notification && event.notification.data && typeof event.notification.data === 'object'
           ? (event.notification.data as { notificationId?: string }).notificationId
-          : undefined
+          : null
+      const notificationId =
+        typeof rawNotificationId === 'string' && rawNotificationId.trim().length > 0
+          ? rawNotificationId
+          : null
       let targetUrl: string | null = null
       if (url) {
         try {

@@ -45,6 +45,8 @@ type NotificationContextValue = {
   open: () => void
   close: () => void
   refresh: (withItems?: boolean) => Promise<void>
+  nextCursor: string | null
+  loadMore: () => Promise<void>
   read: (item: NotificationItem) => Promise<void>
   readAll: () => Promise<void>
 }
@@ -75,6 +77,8 @@ export function NotificationProvider(props: { children: ReactNode }) {
   const syncRef = useRef<Promise<void> | null>(null)
   const isOpenRef = useRef(false)
   const itemsLoadedRef = useRef(false)
+  const nextCursorRef = useRef<string | null>(null)
+  const [nextCursor, setNextCursor] = useState<string | null>(null)
 
   const applyUnreadCount = useCallback((value: number) => {
     setUnreadCount(clampUnreadCount(value))
@@ -91,6 +95,8 @@ export function NotificationProvider(props: { children: ReactNode }) {
             const response = await getNotificationInbox({ limit: 50 })
             setItems(response.items)
             itemsLoadedRef.current = true
+            nextCursorRef.current = response.nextCursor ?? null
+            setNextCursor(response.nextCursor ?? null)
             applyUnreadCount(response.unreadCount)
           } else {
             const response = await getNotificationUnreadCount()
@@ -144,10 +150,32 @@ export function NotificationProvider(props: { children: ReactNode }) {
   )
 
   const readAll = useCallback(async () => {
-    const response = await markAllNotificationsRead()
-    setItems((current) => current.map((item) => ({ ...item, readAt: response.readAt })))
-    applyUnreadCount(response.unreadCount)
-    broadcastUnreadCount(response.unreadCount)
+    try {
+      const response = await markAllNotificationsRead()
+      setItems((current) => current.map((item) => ({ ...item, readAt: response.readAt })))
+      applyUnreadCount(response.unreadCount)
+      broadcastUnreadCount(response.unreadCount)
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : '通知同步失败')
+    }
+  }, [applyUnreadCount])
+
+  const loadMore = useCallback(async () => {
+    const cursor = nextCursorRef.current
+    if (!cursor || syncRef.current) return
+    setLoading(true)
+    setError(null)
+    try {
+      const response = await getNotificationInbox({ limit: 50, cursor })
+      setItems((current) => [...current, ...response.items])
+      nextCursorRef.current = response.nextCursor ?? null
+      setNextCursor(response.nextCursor ?? null)
+      applyUnreadCount(response.unreadCount)
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : '通知同步失败')
+    } finally {
+      setLoading(false)
+    }
   }, [applyUnreadCount])
 
   useEffect(() => {
@@ -253,10 +281,12 @@ export function NotificationProvider(props: { children: ReactNode }) {
       open,
       close,
       refresh: sync,
+      nextCursor,
+      loadMore,
       read,
       readAll,
     }),
-    [close, error, isOpen, items, loading, open, read, readAll, sync, unreadCount],
+    [close, error, isOpen, items, loadMore, loading, nextCursor, open, read, readAll, sync, unreadCount],
   )
 
   return <NotificationContext.Provider value={value}>{props.children}</NotificationContext.Provider>
@@ -275,7 +305,7 @@ function formatNotificationTime(value: string): string {
 }
 
 export function NotificationCenter() {
-  const { unreadCount, items, isOpen, loading, error, open, close, read, readAll } = useNotifications()
+  const { unreadCount, items, isOpen, loading, error, nextCursor, open, close, loadMore, read, readAll } = useNotifications()
 
   const onItemClick = async (item: NotificationItem) => {
     try {
@@ -352,6 +382,16 @@ export function NotificationCenter() {
                     </span>
                   </button>
                 ))}
+                {nextCursor ? (
+                  <button
+                    type="button"
+                    className="notificationLoadMore"
+                    onClick={() => void loadMore()}
+                    disabled={loading}
+                  >
+                    {loading ? '加载中…' : '加载更多'}
+                  </button>
+                ) : null}
               </div>
             )}
           </aside>

@@ -1462,21 +1462,27 @@ pub(crate) async fn run_update_job(
     }
 
     if should_notify {
-        let notify_state = state.clone();
-        let notify_job_id = job_id.clone();
-        let notify_status = final_status.clone();
-        let notify_now = finished_at.clone();
-        let notify_summary = notify_summary.clone();
-        tokio::spawn(async move {
-            let _ = notify::notify_job_updated(
-                notify_state.as_ref(),
-                &notify_job_id,
-                &notify_status,
-                &notify_now,
-                &notify_summary,
-            )
-            .await;
-        });
+        if let Err(error) = notify::notify_job_updated(
+            state.as_ref(),
+            &job_id,
+            &final_status,
+            &finished_at,
+            &notify_summary,
+        )
+        .await
+        {
+            let _ = state
+                .db
+                .insert_job_log(
+                    &job_id,
+                    &JobLogLine {
+                        ts: finished_at.clone(),
+                        level: "warn".to_string(),
+                        msg: format!("notification delivery failed: {error}"),
+                    },
+                )
+                .await;
+        }
     }
 
     state.update_stop_hub.remove(&job_id);
