@@ -13,9 +13,9 @@ export function setNotificationBadge(count: number): void {
   const safeCount = normalizeNotificationBadgeCount(count)
   try {
     if (safeCount === 0) {
-      void target.clearAppBadge?.()
+      Promise.resolve(target.clearAppBadge?.()).catch(() => undefined)
     } else {
-      void target.setAppBadge?.(safeCount)
+      Promise.resolve(target.setAppBadge?.(safeCount)).catch(() => undefined)
     }
   } catch {
     // Badging is an optional platform enhancement; the inbox remains authoritative.

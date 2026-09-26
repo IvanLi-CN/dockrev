@@ -14,6 +14,8 @@ mod schema_job_history_retention;
 mod schema_jobs;
 #[path = "schema_lifecycle_events.rs"]
 mod schema_lifecycle_events;
+#[path = "../db/schema_notification_inbox.rs"]
+mod schema_notification_inbox;
 mod schema_resource_latest;
 mod schema_settings_release_notes;
 include!("schema_auto_update.rs");
@@ -637,7 +639,7 @@ pub(super) fn migrate(conn: &mut rusqlite::Connection) -> anyhow::Result<()> {
     ensure_github_packages_repos_webhook_columns(conn)?;
     ensure_github_packages_deliveries_columns(conn)?;
     ensure_github_packages_delivery_events_schema(conn)?;
-    ensure_service_resource_latest_samples_schema(conn)?;
+    schema_resource_latest::ensure_service_resource_latest_samples_schema(conn)?;
     ensure_schema_migrations_table(conn)?;
     apply_migration_0007_remove_manual_stacks(conn)?;
     apply_migration_0008_drop_version_inference_snapshots(conn)?;
@@ -659,94 +661,11 @@ pub(super) fn migrate(conn: &mut rusqlite::Connection) -> anyhow::Result<()> {
     apply_migration_0024_normalize_auto_update_digest_identity(conn)?;
     apply_migration_0025_normalize_new_version_notification_digest_identity(conn)?;
     apply_migration_0026_reject_invalid_auto_update_digest_identity(conn)?;
-    apply_migration_0027_add_notification_items(conn)?;
-    apply_migration_0028_add_notification_anomaly_states(conn)?;
-    apply_migration_0029_add_notification_anomaly_pending(conn)?;
+    schema_notification_inbox::apply_migrations(conn)?;
     schema_lifecycle_events::apply(conn)?;
     schema_job_history_retention::apply(conn)?;
     schema_backup_cleanup_state::apply(conn)?;
     schema_accepted_state_generation::apply(conn)?;
-    Ok(())
-}
-
-fn apply_migration_0028_add_notification_anomaly_states(
-    conn: &mut rusqlite::Connection,
-) -> anyhow::Result<()> {
-    let id = "0028_add_notification_anomaly_states";
-    if migration_applied(conn, id)? {
-        return Ok(());
-    }
-
-    let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
-    tx.execute_batch(
-        r#"
-CREATE TABLE IF NOT EXISTS notification_anomaly_states (
-  owner TEXT NOT NULL,
-  repo TEXT NOT NULL,
-  state TEXT NOT NULL,
-  active INTEGER NOT NULL DEFAULT 1,
-  occurrence_count INTEGER NOT NULL DEFAULT 1,
-  last_error TEXT,
-  last_seen_at TEXT NOT NULL,
-  PRIMARY KEY (owner, repo)
-);
-CREATE INDEX IF NOT EXISTS idx_notification_anomaly_states_active
-  ON notification_anomaly_states (active, last_seen_at);
-"#,
-    )?;
-    record_migration_tx(&tx, id)?;
-    tx.commit()?;
-    Ok(())
-}
-
-fn apply_migration_0029_add_notification_anomaly_pending(
-    conn: &mut rusqlite::Connection,
-) -> anyhow::Result<()> {
-    let id = "0029_add_notification_anomaly_pending";
-    if migration_applied(conn, id)? {
-        return Ok(());
-    }
-
-    let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
-    tx.execute(
-        "ALTER TABLE notification_anomaly_states ADD COLUMN notification_pending INTEGER NOT NULL DEFAULT 0",
-        [],
-    )?;
-    record_migration_tx(&tx, id)?;
-    tx.commit()?;
-    Ok(())
-}
-
-fn apply_migration_0027_add_notification_items(
-    conn: &mut rusqlite::Connection,
-) -> anyhow::Result<()> {
-    let id = "0027_add_notification_items";
-    if migration_applied(conn, id)? {
-        return Ok(());
-    }
-
-    let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
-    tx.execute_batch(
-        r#"
-CREATE TABLE IF NOT EXISTS notification_items (
-  id TEXT PRIMARY KEY NOT NULL,
-  kind TEXT NOT NULL,
-  identity_key TEXT NOT NULL UNIQUE,
-  title TEXT NOT NULL,
-  body TEXT NOT NULL,
-  target_url TEXT NOT NULL,
-  source_job_id TEXT,
-  created_at TEXT NOT NULL,
-  read_at TEXT
-);
-CREATE INDEX IF NOT EXISTS idx_notification_items_created
-  ON notification_items(created_at DESC, id DESC);
-CREATE INDEX IF NOT EXISTS idx_notification_items_unread
-  ON notification_items(read_at, created_at DESC, id DESC);
-"#,
-    )?;
-    record_migration_tx(&tx, id)?;
-    tx.commit()?;
     Ok(())
 }
 
@@ -777,14 +696,6 @@ CREATE INDEX IF NOT EXISTS idx_update_job_stop_controls_recovery
     )?;
     record_migration_tx(&tx, id)?;
     tx.commit()?;
-    Ok(())
-}
-
-fn ensure_service_resource_latest_samples_schema(
-    conn: &rusqlite::Connection,
-) -> anyhow::Result<()> {
-    conn.execute_batch(schema_resource_latest::CREATE_SERVICE_RESOURCE_LATEST_SAMPLES_TABLE_SQL)?;
-    conn.execute_batch(schema_resource_latest::BACKFILL_SERVICE_RESOURCE_LATEST_SAMPLES_SQL)?;
     Ok(())
 }
 

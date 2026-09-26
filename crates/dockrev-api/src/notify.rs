@@ -321,17 +321,19 @@ pub async fn notify_ghcr_webhook_anomaly(
             )
         })
         .collect::<Vec<_>>();
-    state
-        .db
-        .mark_notification_anomaly_states_notified(&anomaly_state_keys)
-        .await?;
-    send_ghcr_webhook_anomaly_with_badge(
+    let results = send_ghcr_webhook_anomaly_with_badge(
         state,
         now_rfc3339,
         event,
         Some((&item.item.id, item.unread_count)),
     )
     .await?;
+    if failed_delivery_error(&results).is_none() {
+        state
+            .db
+            .mark_notification_anomaly_states_notified(&anomaly_state_keys)
+            .await?;
+    }
     Ok(())
 }
 

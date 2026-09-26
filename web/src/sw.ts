@@ -58,7 +58,8 @@ self.addEventListener('message', (event) => {
 self.addEventListener('push', (event) => {
   let data: { title?: string; body?: string; url?: string; notificationId?: string; unreadCount?: number } = {}
   try {
-    data = event.data ? (event.data.json() as typeof data) : {}
+    const parsed = event.data?.json() as unknown
+    data = parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? (parsed as typeof data) : {}
   } catch {
     data = { title: 'Dockrev', body: event.data ? event.data.text() : '' }
   }

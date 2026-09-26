@@ -281,7 +281,20 @@ INSERT INTO new_version_notifications (
                     Ok(NewVersionNotificationReserveResult::Reserved(pending.id))
                 }
                 Err(err) if is_active_notification_conflict(&err) => {
-                    Ok(NewVersionNotificationReserveResult::SkippedDuplicate)
+                    let existing = tx
+                        .query_row(
+                            "SELECT id, status FROM new_version_notifications WHERE service_id = ?1 AND candidate_digest = ?2 AND status IN (?3, ?4)",
+                            params![pending.service_id, candidate_digest, STATUS_PENDING, STATUS_SENT],
+                            |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)),
+                        )
+                        .optional()?;
+                    tx.commit()?;
+                    match existing {
+                        Some((id, status)) if status == STATUS_PENDING => {
+                            Ok(NewVersionNotificationReserveResult::Reserved(id))
+                        }
+                        _ => Ok(NewVersionNotificationReserveResult::SkippedDuplicate),
+                    }
                 }
                 Err(err) => Err(err.into()),
             }
@@ -587,8 +600,9 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn reserve_skips_duplicate_active_digest() {
+    async fn reserve_reuses_pending_active_digest() {
         let db = Db::open(Path::new(":memory:")).await.unwrap();
+        seed_service(&db, "svc_1", Some("sha256:new")).await;
         let first = pending("nvn_1", "svc_1", "sha256:new");
         let second = pending("nvn_2", "svc_1", "sha256:new");
 
@@ -601,6 +615,19 @@ mod tests {
         );
         assert_eq!(
             second_result,
+            NewVersionNotificationReserveResult::Reserved("nvn_1".to_string())
+        );
+
+        db.finalize_new_version_notification(
+            "nvn_1",
+            &["webhook".to_string()],
+            None,
+            "2026-03-09T00:01:00Z",
+        )
+        .await
+        .unwrap();
+        assert_eq!(
+            db.reserve_new_version_notification(&second).await.unwrap(),
             NewVersionNotificationReserveResult::SkippedDuplicate
         );
     }
@@ -617,7 +644,7 @@ mod tests {
         );
         assert_eq!(
             db.reserve_new_version_notification(&second).await.unwrap(),
-            NewVersionNotificationReserveResult::SkippedDuplicate
+            NewVersionNotificationReserveResult::Reserved("nvn_1".to_string())
         );
 
         let rows = db
@@ -643,11 +670,11 @@ mod tests {
 
         let first_result = first_result.unwrap();
         let second_result = second_result.unwrap();
-        let winners = [first_result, second_result]
-            .into_iter()
-            .filter(|result| matches!(result, NewVersionNotificationReserveResult::Reserved(_)))
-            .count();
-        assert_eq!(winners, 1);
+        assert_eq!(first_result, second_result);
+        assert!(matches!(
+            first_result,
+            NewVersionNotificationReserveResult::Reserved(_)
+        ));
     }
 
     #[tokio::test]

@@ -74,6 +74,7 @@ export function NotificationProvider(props: { children: ReactNode }) {
   const [error, setError] = useState<string | null>(null)
   const syncRef = useRef<Promise<void> | null>(null)
   const isOpenRef = useRef(false)
+  const itemsLoadedRef = useRef(false)
 
   const applyUnreadCount = useCallback((value: number) => {
     setUnreadCount(clampUnreadCount(value))
@@ -89,6 +90,7 @@ export function NotificationProvider(props: { children: ReactNode }) {
           if (withItems || isOpenRef.current) {
             const response = await getNotificationInbox({ limit: 50 })
             setItems(response.items)
+            itemsLoadedRef.current = true
             applyUnreadCount(response.unreadCount)
           } else {
             const response = await getNotificationUnreadCount()
@@ -113,7 +115,13 @@ export function NotificationProvider(props: { children: ReactNode }) {
   const open = useCallback(() => {
     isOpenRef.current = true
     setIsOpen(true)
-    void sync(true)
+    const inFlight = syncRef.current
+    void sync(true).then(() => {
+      if (!inFlight || itemsLoadedRef.current || !isOpenRef.current) return
+      window.setTimeout(() => {
+        if (!itemsLoadedRef.current && isOpenRef.current) void sync(true)
+      }, 0)
+    })
   }, [sync])
 
   const close = useCallback(() => {
@@ -186,7 +194,7 @@ export function NotificationProvider(props: { children: ReactNode }) {
   }, [applyUnreadCount, sync])
 
   const acknowledgeClick = useCallback(
-    async (notificationId: string, target: string, port?: MessagePort) => {
+    async (notificationId: string, target: string, port?: MessagePort): Promise<boolean> => {
       try {
         const item = items.find((candidate) => candidate.id === notificationId)
         await markNotificationRead(notificationId)
@@ -202,8 +210,10 @@ export function NotificationProvider(props: { children: ReactNode }) {
         broadcastUnreadCount(response.unreadCount, notificationId)
         port?.postMessage({ type: CLICK_ACK, ok: true })
         if (item || notificationId) navigateToNotification(target)
+        return true
       } catch {
         port?.postMessage({ type: CLICK_ACK, ok: false })
+        return false
       }
     },
     [applyUnreadCount, items],
@@ -224,7 +234,8 @@ export function NotificationProvider(props: { children: ReactNode }) {
     const notificationId = params.get(COLD_START_ID)
     const target = params.get(COLD_START_TARGET)
     if (!notificationId || !target) return
-    void acknowledgeClick(notificationId, target).finally(() => {
+    void acknowledgeClick(notificationId, target).then((acknowledged) => {
+      if (!acknowledged) return
       params.delete(COLD_START_ID)
       params.delete(COLD_START_TARGET)
       const query = params.toString()
