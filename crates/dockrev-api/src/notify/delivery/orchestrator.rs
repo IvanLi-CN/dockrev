@@ -1,11 +1,13 @@
 use super::*;
 
-pub(crate) async fn send_new_versions(
+pub(crate) async fn send_new_versions_with_badge(
     state: &AppState,
     check_job_id: &str,
     now_rfc3339: &str,
     services_checked: u32,
     discovered_services: &[NewVersionDiscoveredService],
+    badge: Option<(&str, u64)>,
+    skip_channels: &std::collections::BTreeSet<String>,
 ) -> anyhow::Result<Value> {
     let settings = state.db.get_notification_settings().await?;
     if !is_event_enabled(&settings, NotificationEventKind::NewVersionDiscovered) {
@@ -20,7 +22,7 @@ pub(crate) async fn send_new_versions(
 
     let mut results = serde_json::Map::new();
 
-    if settings.webhook_enabled {
+    if settings.webhook_enabled && !skip_channels.contains("webhook") {
         let r = async {
             let payload = build_new_version_payload_v2(
                 state,
@@ -40,7 +42,7 @@ pub(crate) async fn send_new_versions(
         results.insert("webhook".to_string(), result_value(r));
     }
 
-    if settings.telegram_enabled {
+    if settings.telegram_enabled && !skip_channels.contains("telegram") {
         let r = async {
             let payload = build_new_version_payload_v2(
                 state,
@@ -65,7 +67,7 @@ pub(crate) async fn send_new_versions(
         results.insert("telegram".to_string(), telegram_result_value(r));
     }
 
-    if settings.email_enabled {
+    if settings.email_enabled && !skip_channels.contains("email") {
         let r = async {
             let payload = build_new_version_payload_v2(
                 state,
@@ -84,7 +86,7 @@ pub(crate) async fn send_new_versions(
         results.insert("email".to_string(), result_value(r));
     }
 
-    if settings.webpush_enabled {
+    if settings.webpush_enabled && !skip_channels.contains("webPush") {
         let r = async {
             let payload = build_new_version_payload_v2(
                 state,
@@ -96,7 +98,7 @@ pub(crate) async fn send_new_versions(
                 discovered_services,
             )
             .await?;
-            let web_push_payload = to_web_push_new_version_value(&payload)?;
+            let web_push_payload = to_web_push_new_version_value_with_badge(&payload, badge)?;
             send_web_push(
                 state,
                 settings.webpush_vapid_private_key.as_deref(),
@@ -113,10 +115,11 @@ pub(crate) async fn send_new_versions(
     Ok(Value::Object(results))
 }
 
-pub(crate) async fn send_ghcr_webhook_anomaly(
+pub(crate) async fn send_ghcr_webhook_anomaly_with_badge(
     state: &AppState,
     now_rfc3339: &str,
     event: GhcrWebhookAnomalyEvent<'_>,
+    badge: Option<(&str, u64)>,
 ) -> anyhow::Result<Value> {
     let settings = state.db.get_notification_settings().await?;
     if !is_event_enabled(&settings, NotificationEventKind::GhcrWebhookAnomaly) {
@@ -199,7 +202,8 @@ pub(crate) async fn send_ghcr_webhook_anomaly(
                 event,
             )
             .await?;
-            let web_push_payload = to_web_push_ghcr_webhook_anomaly_value(&payload)?;
+            let web_push_payload =
+                to_web_push_ghcr_webhook_anomaly_value_with_badge(&payload, badge)?;
             send_web_push(
                 state,
                 settings.webpush_vapid_private_key.as_deref(),
@@ -222,6 +226,17 @@ pub(crate) async fn send_all(
     now_rfc3339: &str,
     payload: Option<&Value>,
     mode: NotifySendMode,
+) -> anyhow::Result<Value> {
+    send_all_with_badge(state, job_id, now_rfc3339, payload, mode, None).await
+}
+
+pub(crate) async fn send_all_with_badge(
+    state: &AppState,
+    job_id: Option<&str>,
+    now_rfc3339: &str,
+    payload: Option<&Value>,
+    mode: NotifySendMode,
+    badge: Option<(&str, u64)>,
 ) -> anyhow::Result<Value> {
     let settings = state.db.get_notification_settings().await?;
     if matches!(mode, NotifySendMode::Default)
@@ -419,8 +434,11 @@ pub(crate) async fn send_all(
                     summary,
                 )
                 .await?;
-                let web_push_payload =
-                    to_web_push_job_value(&job_payload, error_excerpt.as_deref())?;
+                let web_push_payload = to_web_push_job_value_with_badge(
+                    &job_payload,
+                    error_excerpt.as_deref(),
+                    badge,
+                )?;
                 send_web_push(
                     state,
                     settings.webpush_vapid_private_key.as_deref(),
@@ -680,36 +698,54 @@ async fn send_web_push(
     let client = HyperWebPushClient::new();
     let content = serde_json::to_vec(payload)?;
 
+    let mut pending = subs;
     let mut sent = 0u32;
-    for (endpoint, p256dh, auth) in subs {
-        let subscription = SubscriptionInfo::new(endpoint, p256dh, auth);
-        let mut sig_builder =
-            VapidSignatureBuilder::from_base64(private_key, &subscription).context("vapid key")?;
-        sig_builder.add_claim("sub", subject);
-        let signature = sig_builder.build().context("build vapid signature")?;
+    let mut first_error = None;
+    for attempt in 0..2 {
+        let mut retry = Vec::new();
+        for (endpoint, p256dh, auth) in pending {
+            let retry_subscription = (endpoint.clone(), p256dh.clone(), auth.clone());
+            let subscription = SubscriptionInfo::new(endpoint, p256dh, auth);
+            let mut sig_builder = VapidSignatureBuilder::from_base64(private_key, &subscription)
+                .context("vapid key")?;
+            sig_builder.add_claim("sub", subject);
+            let signature = sig_builder.build().context("build vapid signature")?;
 
-        let mut builder = WebPushMessageBuilder::new(&subscription);
-        builder.set_payload(ContentEncoding::Aes128Gcm, &content);
-        builder.set_urgency(Urgency::Normal);
-        builder.set_ttl(60);
-        builder.set_vapid_signature(signature);
+            let mut builder = WebPushMessageBuilder::new(&subscription);
+            builder.set_payload(ContentEncoding::Aes128Gcm, &content);
+            builder.set_urgency(Urgency::Normal);
+            builder.set_ttl(60);
+            builder.set_vapid_signature(signature);
 
-        match client.send(builder.build()?).await {
-            Ok(()) => sent += 1,
-            Err(WebPushError::EndpointNotValid(_)) | Err(WebPushError::EndpointNotFound(_)) => {
-                let _ = state
-                    .db
-                    .delete_web_push_subscription(&subscription.endpoint)
-                    .await;
+            match client.send(builder.build()?).await {
+                Ok(()) => sent += 1,
+                Err(WebPushError::EndpointNotValid(_)) | Err(WebPushError::EndpointNotFound(_)) => {
+                    let _ = state
+                        .db
+                        .delete_web_push_subscription(&subscription.endpoint)
+                        .await;
+                }
+                Err(e) => {
+                    if first_error.is_none() {
+                        first_error = Some(anyhow::anyhow!("web push send failed: {}", e));
+                    }
+                    if attempt == 0 {
+                        retry.push(retry_subscription);
+                    }
+                }
             }
-            Err(e) => {
-                return Err(anyhow::anyhow!("web push send failed: {}", e));
-            }
+        }
+        pending = retry;
+        if pending.is_empty() {
+            break;
         }
     }
 
+    if !pending.is_empty() {
+        return Err(first_error.unwrap_or_else(|| anyhow::anyhow!("web push: no successful sends")));
+    }
     if sent == 0 {
-        return Err(anyhow::anyhow!("web push: no successful sends"));
+        return Err(first_error.unwrap_or_else(|| anyhow::anyhow!("web push: no successful sends")));
     }
 
     Ok(())

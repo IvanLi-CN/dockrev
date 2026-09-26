@@ -155,6 +155,94 @@ fn is_active_notification_conflict(err: &rusqlite::Error) -> bool {
     }
 }
 
+fn reserve_new_version_notification_tx(
+    tx: &rusqlite::Transaction<'_>,
+    pending: &NewVersionNotificationPending,
+) -> anyhow::Result<NewVersionNotificationReserveResult> {
+    let candidate_digest = normalize_candidate_digest(Some(&pending.candidate_digest))
+        .ok_or_else(|| rusqlite::Error::InvalidParameterName("candidate_digest".into()))?;
+    let previous = tx
+        .query_row(
+            r#"
+SELECT job_id, sent_channels_json
+FROM new_version_notifications
+WHERE service_id = ?1
+  AND candidate_digest = ?2
+  AND status = ?3
+ORDER BY created_at DESC, id DESC
+LIMIT 1
+"#,
+            params![pending.service_id, candidate_digest, STATUS_FAILED],
+            |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)),
+        )
+        .optional()?;
+    let (job_id, sent_channels_json) = match previous {
+        Some((job_id, raw)) => (
+            job_id,
+            serde_json::to_string(&serde_json::from_str::<Vec<String>>(&raw).unwrap_or_default())?,
+        ),
+        None => (pending.job_id.clone(), "[]".to_string()),
+    };
+    let insert = tx.execute(
+        r#"
+INSERT INTO new_version_notifications (
+  id,
+  service_id,
+  job_id,
+  reason,
+  image_ref,
+  image_tag,
+  current_tag,
+  current_display_tag,
+  candidate_tag,
+  candidate_display_tag,
+  candidate_digest,
+  status,
+  sent_channels_json,
+  created_at
+) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)
+"#,
+        params![
+            pending.id,
+            pending.service_id,
+            job_id,
+            pending.reason,
+            pending.image_ref,
+            pending.image_tag,
+            pending.current_tag,
+            pending.current_display_tag,
+            pending.candidate_tag,
+            pending.candidate_display_tag,
+            candidate_digest,
+            STATUS_PENDING,
+            sent_channels_json,
+            pending.created_at,
+        ],
+    );
+
+    match insert {
+        Ok(_) => Ok(NewVersionNotificationReserveResult::Reserved(
+            pending.id.clone(),
+        )),
+        Err(err) if is_active_notification_conflict(&err) => {
+            let existing = tx
+                .query_row(
+                    "SELECT id, status FROM new_version_notifications WHERE service_id = ?1 AND candidate_digest = ?2 AND status IN (?3, ?4)",
+                    params![pending.service_id, candidate_digest, STATUS_PENDING, STATUS_SENT],
+                    |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)),
+                )
+                .optional()?;
+            match existing {
+                Some((id, status)) if status == STATUS_PENDING => {
+                    Ok(NewVersionNotificationReserveResult::AlreadyPending(id))
+                }
+                _ => Ok(NewVersionNotificationReserveResult::SkippedDuplicate),
+            }
+        }
+        Err(err) => Err(err.into()),
+    }
+}
+
 fn normalize_candidate_digest(candidate_digest: Option<&str>) -> Option<String> {
     candidate_digest.and_then(crate::snapshot_worker::normalize_digest)
 }
@@ -229,6 +317,7 @@ impl Db {
         .context("list stable candidate display tags for notification targets")
     }
 
+    #[allow(dead_code)]
     pub async fn reserve_new_version_notification(
         &self,
         pending: &NewVersionNotificationPending,
@@ -236,58 +325,114 @@ impl Db {
         let pending = pending.clone();
         self.call(move |conn| {
             let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
-            let candidate_digest = normalize_candidate_digest(Some(&pending.candidate_digest))
-                .ok_or_else(|| rusqlite::Error::InvalidParameterName("candidate_digest".into()))?;
-            let insert = tx.execute(
-                r#"
-INSERT INTO new_version_notifications (
-  id,
-  service_id,
-  job_id,
-  reason,
-  image_ref,
-  image_tag,
-  current_tag,
-  current_display_tag,
-  candidate_tag,
-  candidate_display_tag,
-  candidate_digest,
-  status,
-  sent_channels_json,
-  created_at
-) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)
-"#,
-                params![
-                    pending.id,
-                    pending.service_id,
-                    pending.job_id,
-                    pending.reason,
-                    pending.image_ref,
-                    pending.image_tag,
-                    pending.current_tag,
-                    pending.current_display_tag,
-                    pending.candidate_tag,
-                    pending.candidate_display_tag,
-                    candidate_digest,
-                    STATUS_PENDING,
-                    "[]",
-                    pending.created_at,
-                ],
-            );
-
-            match insert {
-                Ok(_) => {
-                    tx.commit()?;
-                    Ok(NewVersionNotificationReserveResult::Reserved(pending.id))
-                }
-                Err(err) if is_active_notification_conflict(&err) => {
-                    Ok(NewVersionNotificationReserveResult::SkippedDuplicate)
-                }
-                Err(err) => Err(err.into()),
-            }
+            let result = reserve_new_version_notification_tx(&tx, &pending)?;
+            tx.commit()?;
+            Ok(result)
         })
         .await
         .context("reserve new version notification")
+    }
+
+    pub async fn reserve_new_version_notifications_with_item(
+        &self,
+        pendings: &[NewVersionNotificationPending],
+        draft: &super::NotificationItemDraft,
+    ) -> anyhow::Result<Option<(Vec<(String, String)>, String, u64)>> {
+        let pendings = pendings.to_vec();
+        let draft = draft.clone();
+        self.call(move |conn| {
+            let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
+            let mut reservations = Vec::new();
+            for pending in &pendings {
+                match reserve_new_version_notification_tx(&tx, pending)? {
+                    NewVersionNotificationReserveResult::Reserved(id)
+                    | NewVersionNotificationReserveResult::AlreadyPending(id) => {
+                        reservations.push((id, pending.id.clone()));
+                    }
+                    NewVersionNotificationReserveResult::SkippedDuplicate => {}
+                }
+            }
+            if reservations.is_empty() {
+                tx.commit()?;
+                return Ok(None);
+            }
+
+            tx.execute(
+                r#"
+INSERT INTO notification_items (
+  id, kind, identity_key, title, body, target_url, source_job_id, created_at
+) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
+ON CONFLICT(identity_key) DO NOTHING
+"#,
+                params![
+                    draft.id,
+                    draft.kind,
+                    draft.identity_key,
+                    draft.title,
+                    draft.body,
+                    draft.target_url,
+                    draft.source_job_id,
+                    draft.created_at,
+                ],
+            )?;
+            let item_id = tx.query_row(
+                "SELECT id FROM notification_items WHERE identity_key = ?1",
+                params![draft.identity_key],
+                |row| row.get::<_, String>(0),
+            )?;
+            let unread_count = tx.query_row(
+                "SELECT COUNT(*) FROM notification_items WHERE read_at IS NULL",
+                [],
+                |row| row.get::<_, u64>(0),
+            )?;
+            let reserved_ids = reservations
+                .iter()
+                .map(|(record_id, _)| record_id.clone())
+                .collect::<Vec<_>>();
+            let placeholders = std::iter::repeat_n("?", reserved_ids.len())
+                .collect::<Vec<_>>()
+                .join(",");
+            tx.execute(
+                &format!(
+                    "UPDATE new_version_notifications SET notification_item_id = ?1 WHERE id IN ({placeholders})"
+                ),
+                rusqlite::params_from_iter(
+                    std::iter::once(&item_id).chain(reserved_ids.iter()),
+                ),
+            )?;
+            tx.commit()?;
+            Ok(Some((reservations, item_id, unread_count)))
+        })
+        .await
+        .context("reserve new version notifications with item")
+    }
+
+    pub async fn find_new_version_notification_batch_job_id(
+        &self,
+        candidates: &[(String, String)],
+    ) -> anyhow::Result<Option<String>> {
+        let candidates = candidates.to_vec();
+        self.call(move |conn| {
+            let mut stmt = conn.prepare(
+                "SELECT job_id FROM new_version_notifications WHERE service_id = ?1 AND candidate_digest = ?2 AND status IN (?3, ?4) ORDER BY created_at ASC, id ASC LIMIT 1",
+            )?;
+            for (service_id, candidate_digest) in candidates {
+                let digest = normalize_candidate_digest(Some(&candidate_digest))
+                    .ok_or_else(|| rusqlite::Error::InvalidParameterName("candidate_digest".into()))?;
+                if let Some(job_id) = stmt
+                    .query_row(
+                        params![service_id, digest, STATUS_PENDING, STATUS_FAILED],
+                        |row| row.get::<_, String>(0),
+                    )
+                    .optional()?
+                {
+                    return Ok(Some(job_id));
+                }
+            }
+            Ok(None)
+        })
+        .await
+        .context("find new version notification batch job id")
     }
 
     pub async fn finalize_new_version_notification(
@@ -342,7 +487,7 @@ WHERE n.id = ?1
                 (STATUS_SUPERSEDED, existing_superseded_at)
             } else if still_current {
                 (
-                    if sent_channels.is_empty() {
+                    if sent_channels.is_empty() || last_error.is_some() {
                         STATUS_FAILED
                     } else {
                         STATUS_SENT
@@ -383,6 +528,64 @@ WHERE id = ?1 AND status IN (?7, ?8)
         })
         .await
         .context("finalize new version notification")
+    }
+
+    pub async fn list_new_version_notification_sent_channels(
+        &self,
+        notification_ids: &[String],
+    ) -> anyhow::Result<std::collections::HashMap<String, Vec<String>>> {
+        let notification_ids = notification_ids.to_vec();
+        self.call(move |conn| {
+            if notification_ids.is_empty() {
+                return Ok(std::collections::HashMap::new());
+            }
+            let placeholders = std::iter::repeat_n("?", notification_ids.len())
+                .collect::<Vec<_>>()
+                .join(",");
+            let mut stmt = conn.prepare(&format!(
+                "SELECT id, sent_channels_json FROM new_version_notifications WHERE id IN ({placeholders})"
+            ))?;
+            let rows = stmt.query_map(
+                rusqlite::params_from_iter(notification_ids.iter()),
+                |row| {
+                    let sent_channels_json: String = row.get(1)?;
+                    Ok((
+                        row.get::<_, String>(0)?,
+                        serde_json::from_str::<Vec<String>>(&sent_channels_json)
+                            .unwrap_or_default(),
+                    ))
+                },
+            )?;
+            Ok(rows.collect::<rusqlite::Result<std::collections::HashMap<_, _>>>()?)
+        })
+        .await
+        .context("list new version notification sent channels")
+    }
+
+    #[allow(dead_code)]
+    pub async fn list_new_version_notification_job_ids(
+        &self,
+        notification_ids: &[String],
+    ) -> anyhow::Result<std::collections::HashMap<String, String>> {
+        let notification_ids = notification_ids.to_vec();
+        self.call(move |conn| {
+            if notification_ids.is_empty() {
+                return Ok(std::collections::HashMap::new());
+            }
+            let placeholders = std::iter::repeat_n("?", notification_ids.len())
+                .collect::<Vec<_>>()
+                .join(",");
+            let mut stmt = conn.prepare(&format!(
+                "SELECT id, job_id FROM new_version_notifications WHERE id IN ({placeholders})"
+            ))?;
+            let rows = stmt
+                .query_map(rusqlite::params_from_iter(notification_ids.iter()), |row| {
+                    Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+                })?;
+            Ok(rows.collect::<rusqlite::Result<std::collections::HashMap<_, _>>>()?)
+        })
+        .await
+        .context("list new version notification job ids")
     }
 
     #[allow(dead_code)]
@@ -587,10 +790,12 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn reserve_skips_duplicate_active_digest() {
+    async fn reserve_reuses_pending_active_digest() {
         let db = Db::open(Path::new(":memory:")).await.unwrap();
+        seed_service(&db, "svc_1", Some("sha256:new")).await;
         let first = pending("nvn_1", "svc_1", "sha256:new");
-        let second = pending("nvn_2", "svc_1", "sha256:new");
+        let mut second = pending("nvn_2", "svc_1", "sha256:new");
+        second.job_id = "chk_2".to_string();
 
         let first_result = db.reserve_new_version_notification(&first).await.unwrap();
         let second_result = db.reserve_new_version_notification(&second).await.unwrap();
@@ -601,6 +806,19 @@ mod tests {
         );
         assert_eq!(
             second_result,
+            NewVersionNotificationReserveResult::AlreadyPending("nvn_1".to_string())
+        );
+
+        db.finalize_new_version_notification(
+            "nvn_1",
+            &["webhook".to_string()],
+            None,
+            "2026-03-09T00:01:00Z",
+        )
+        .await
+        .unwrap();
+        assert_eq!(
+            db.reserve_new_version_notification(&second).await.unwrap(),
             NewVersionNotificationReserveResult::SkippedDuplicate
         );
     }
@@ -617,7 +835,7 @@ mod tests {
         );
         assert_eq!(
             db.reserve_new_version_notification(&second).await.unwrap(),
-            NewVersionNotificationReserveResult::SkippedDuplicate
+            NewVersionNotificationReserveResult::AlreadyPending("nvn_1".to_string())
         );
 
         let rows = db
@@ -643,11 +861,59 @@ mod tests {
 
         let first_result = first_result.unwrap();
         let second_result = second_result.unwrap();
-        let winners = [first_result, second_result]
-            .into_iter()
-            .filter(|result| matches!(result, NewVersionNotificationReserveResult::Reserved(_)))
-            .count();
-        assert_eq!(winners, 1);
+        let results = [first_result, second_result];
+        assert_eq!(
+            results
+                .iter()
+                .filter(|result| matches!(result, NewVersionNotificationReserveResult::Reserved(_)))
+                .count(),
+            1
+        );
+        assert_eq!(
+            results
+                .iter()
+                .filter(|result| matches!(
+                    result,
+                    NewVersionNotificationReserveResult::AlreadyPending(_)
+                ))
+                .count(),
+            1
+        );
+    }
+
+    #[tokio::test]
+    async fn pending_reservation_with_item_is_retried_after_delivery_crash() {
+        let db = Db::open(Path::new(":memory:")).await.unwrap();
+        let first = pending("nvn_1", "svc_1", "sha256:new");
+        let second = pending("nvn_2", "svc_1", "sha256:new");
+        let draft = crate::db::NotificationItemDraft {
+            id: "item_1".to_string(),
+            kind: "new_version_discovered".to_string(),
+            identity_key: "new_version_discovered:chk_1".to_string(),
+            title: "发现新版本".to_string(),
+            body: "body".to_string(),
+            target_url: "/queue/chk_1".to_string(),
+            source_job_id: Some("chk_1".to_string()),
+            created_at: "2026-03-09T00:00:00Z".to_string(),
+        };
+
+        let first_result = db
+            .reserve_new_version_notifications_with_item(&[first], &draft)
+            .await
+            .unwrap()
+            .unwrap();
+        let retry_result = db
+            .reserve_new_version_notifications_with_item(&[second], &draft)
+            .await
+            .unwrap()
+            .unwrap();
+
+        assert_eq!(first_result.0.len(), 1);
+        assert_eq!(
+            retry_result.0,
+            vec![("nvn_1".to_string(), "nvn_2".to_string())]
+        );
+        assert_eq!(first_result.1, retry_result.1);
     }
 
     #[tokio::test]
@@ -655,7 +921,8 @@ mod tests {
         let db = Db::open(Path::new(":memory:")).await.unwrap();
         seed_service(&db, "svc_1", Some("sha256:new")).await;
         let first = pending("nvn_1", "svc_1", "sha256:new");
-        let second = pending("nvn_2", "svc_1", "sha256:new");
+        let mut second = pending("nvn_2", "svc_1", "sha256:new");
+        second.job_id = "chk_2".to_string();
 
         let reserved = db.reserve_new_version_notification(&first).await.unwrap();
         assert_eq!(
@@ -678,6 +945,50 @@ mod tests {
             retried,
             NewVersionNotificationReserveResult::Reserved("nvn_2".to_string())
         );
+    }
+
+    #[tokio::test]
+    async fn partial_delivery_failure_does_not_hold_active_slot() {
+        let db = Db::open(Path::new(":memory:")).await.unwrap();
+        seed_service(&db, "svc_1", Some("sha256:new")).await;
+        let first = pending("nvn_1", "svc_1", "sha256:new");
+        let mut second = pending("nvn_2", "svc_1", "sha256:new");
+        second.job_id = "chk_2".to_string();
+
+        let reserved = db.reserve_new_version_notification(&first).await.unwrap();
+        assert_eq!(
+            reserved,
+            NewVersionNotificationReserveResult::Reserved("nvn_1".to_string())
+        );
+        let finalized = db
+            .finalize_new_version_notification(
+                "nvn_1",
+                &["webhook".to_string()],
+                Some("telegram failed"),
+                "2026-03-09T00:01:00Z",
+            )
+            .await
+            .unwrap();
+        assert!(finalized);
+
+        let retried = db.reserve_new_version_notification(&second).await.unwrap();
+        assert_eq!(
+            retried,
+            NewVersionNotificationReserveResult::Reserved("nvn_2".to_string())
+        );
+        let sent_channels = db
+            .list_new_version_notification_sent_channels(&["nvn_2".to_string()])
+            .await
+            .unwrap();
+        assert_eq!(
+            sent_channels.get("nvn_2"),
+            Some(&vec!["webhook".to_string()])
+        );
+        let job_ids = db
+            .list_new_version_notification_job_ids(&["nvn_2".to_string()])
+            .await
+            .unwrap();
+        assert_eq!(job_ids.get("nvn_2"), Some(&"chk_1".to_string()));
     }
 
     #[tokio::test]

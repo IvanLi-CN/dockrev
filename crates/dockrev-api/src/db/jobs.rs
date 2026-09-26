@@ -384,7 +384,6 @@ WHERE id = ?1 AND status = 'queued'
         }
         result
     }
-
     pub async fn finish_job(
         &self,
         job_id: &str,
@@ -422,11 +421,34 @@ WHERE id = ?1 AND status = 'queued'
         archive: Option<Vec<u8>>,
         settlements: Option<&[ServiceAcceptedStateSettlement]>,
     ) -> anyhow::Result<()> {
+        self.finish_job_with_archive_and_settlement_and_notification(
+            job_id,
+            status,
+            finished_at,
+            summary_json,
+            archive,
+            settlements,
+            None,
+        )
+        .await
+    }
+    #[allow(clippy::too_many_arguments)]
+    pub async fn finish_job_with_archive_and_settlement_and_notification(
+        &self,
+        job_id: &str,
+        status: &str,
+        finished_at: &str,
+        summary_json: &serde_json::Value,
+        archive: Option<Vec<u8>>,
+        settlements: Option<&[ServiceAcceptedStateSettlement]>,
+        notification: Option<&NotificationItemDraft>,
+    ) -> anyhow::Result<()> {
         let job_id = job_id.to_string();
         let status = status.to_string();
         let finished_at = finished_at.to_string();
         let mut summary_json = summary_json.clone();
         let settlements = settlements.map(|items| items.to_vec());
+        let notification = notification.cloned();
         let projection_finished_at = finished_at.clone();
         let completed = self
             .call(move |conn| {
@@ -441,11 +463,9 @@ WHERE id = ?1
                         |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)),
                     )
                     .optional()?;
-
                 if !summary_json.is_object() {
                     summary_json = serde_json::json!({ "result": summary_json });
                 }
-
                 if let Some((_, previous_summary_raw)) = previous.as_ref() {
                     let previous_summary: serde_json::Value =
                         serde_json::from_str(previous_summary_raw)
@@ -552,6 +572,9 @@ WHERE id IN (
                         &finished_at,
                         &summary_json,
                     )?;
+                }
+                if let Some(notification) = notification.as_ref() {
+                    super::notification_items::insert_notification_item_tx(&tx, notification)?;
                 }
                 tx.commit()?;
                 Ok(Some((

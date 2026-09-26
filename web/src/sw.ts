@@ -56,21 +56,97 @@ self.addEventListener('message', (event) => {
 })
 
 self.addEventListener('push', (event) => {
-  let data: { title?: string; body?: string; url?: string } = {}
+  let data: { title?: string; body?: string; url?: string; notificationId?: string; unreadCount?: number } = {}
   try {
-    data = event.data ? (event.data.json() as typeof data) : {}
+    const parsed = event.data?.json() as unknown
+    data = parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? (parsed as typeof data) : {}
   } catch {
     data = { title: 'Dockrev', body: event.data ? event.data.text() : '' }
   }
 
   const title = data.title || 'Dockrev'
+  const badgeNavigator = navigator as WorkerNavigator & {
+    setAppBadge?: (count?: number) => Promise<void>
+    clearAppBadge?: () => Promise<void>
+  }
   event.waitUntil(
-    self.registration.showNotification(title, {
-      body: data.body || '',
-      data,
-    }),
+    (async () => {
+      if (
+        typeof data.unreadCount === 'number' &&
+        Number.isFinite(data.unreadCount) &&
+        data.unreadCount >= 0
+      ) {
+        const unreadCount = Math.max(0, Math.floor(data.unreadCount))
+        try {
+          if (unreadCount === 0) {
+            await badgeNavigator.clearAppBadge?.()
+          } else {
+            await badgeNavigator.setAppBadge?.(unreadCount)
+          }
+        } catch {
+          // Badging is optional and must not prevent the notification from showing.
+        }
+      }
+      await self.registration.showNotification(title, {
+        body: data.body || '',
+        tag:
+          typeof data.notificationId === 'string' && data.notificationId.trim().length > 0
+            ? `dockrev-${data.notificationId}`
+            : undefined,
+        data,
+      })
+    })(),
   )
 })
+
+function notificationLaunchUrl(url: string | null, notificationId: string | null): string {
+  const launch = new URL(appBasePath || '/', self.registration.scope)
+  if (notificationId) launch.searchParams.set('dockrevNotificationId', notificationId)
+  if (url) launch.searchParams.set('dockrevNotificationTarget', url)
+  return launch.href
+}
+
+function resolveNotificationTarget(url: string): string | null {
+  try {
+    const target = new URL(url, self.registration.scope)
+    const scope = new URL(self.registration.scope)
+    if (
+      target.origin === scope.origin &&
+      appBasePath &&
+      !target.pathname.startsWith(`${appBasePath}/`) &&
+      target.pathname !== appBasePath
+    ) {
+      target.pathname = `${appBasePath}${target.pathname}`.replace(/\/+/g, '/')
+    }
+    return target.href
+  } catch {
+    return null
+  }
+}
+
+async function waitForNotificationClickAck(client: WindowClient, notificationId: string, url: string): Promise<boolean> {
+  if (typeof MessageChannel === 'undefined') return false
+  const channel = new MessageChannel()
+  const acknowledgement = new Promise<boolean>((resolve) => {
+    const timeout = setTimeout(() => resolve(false), 2500)
+    channel.port1.onmessage = (message) => {
+      clearTimeout(timeout)
+      resolve(message.data?.type === 'DOCKREV_NOTIFICATION_CLICK_ACK' && message.data?.ok === true)
+    }
+  })
+  try {
+    client.postMessage(
+      { type: 'DOCKREV_NOTIFICATION_CLICK', notificationId, url },
+      [channel.port2],
+    )
+  } catch {
+    channel.port1.close()
+    return false
+  }
+  const confirmed = await acknowledgement
+  channel.port1.close()
+  return confirmed
+}
 
 self.addEventListener('notificationclick', (event) => {
   event.notification.close()
@@ -81,21 +157,36 @@ self.addEventListener('notificationclick', (event) => {
           ? (event.notification.data as { url?: string })
           : {}
       const url = typeof data.url === 'string' && data.url.trim().length > 0 ? data.url : null
-
+      const rawNotificationId =
+        event.notification && event.notification.data && typeof event.notification.data === 'object'
+          ? (event.notification.data as { notificationId?: string }).notificationId
+          : null
+      const notificationId =
+        typeof rawNotificationId === 'string' && rawNotificationId.trim().length > 0
+          ? rawNotificationId
+          : null
+      let targetUrl: string | null = null
       if (url) {
+        targetUrl = resolveNotificationTarget(url)
+      }
+
+      if (targetUrl && notificationId) {
         for (const client of clients) {
-          if (client && typeof client.focus === 'function' && typeof client.navigate === 'function') {
+          if (client && typeof client.focus === 'function') {
             try {
-              const navigatedClient = await client.navigate(url)
-              if (navigatedClient && typeof navigatedClient.focus === 'function') {
-                return navigatedClient.focus()
+              if (await waitForNotificationClickAck(client, notificationId, targetUrl)) {
+                return client.focus()
               }
             } catch {
-              // Fall through to openWindow.
+              // Fall through to the cold-start handshake.
             }
           }
         }
-        if (self.clients.openWindow) return self.clients.openWindow(url)
+        if (self.clients.openWindow) {
+          return self.clients.openWindow(notificationLaunchUrl(targetUrl, notificationId))
+        }
+      } else if (targetUrl && self.clients.openWindow) {
+        return self.clients.openWindow(targetUrl)
       }
 
       for (const client of clients) {

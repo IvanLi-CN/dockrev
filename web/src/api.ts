@@ -171,7 +171,7 @@ function dispatchAuthRecovered() {
   window.dispatchEvent(new CustomEvent(AUTH_RECOVERED_EVENT))
 }
 
-async function apiFetch(path: string, init?: RequestInit) {
+export async function apiFetch(path: string, init?: RequestInit) {
   const resp = await fetch(`${API_BASE}${path}`, {
     ...init,
     headers: {
@@ -955,6 +955,13 @@ export async function putNotifications(input: NotificationConfig) {
   })
   return (await resp.json()) as { ok: boolean }
 }
+
+export {
+  getNotificationInbox,
+  getNotificationUnreadCount,
+  markNotificationRead,
+  markAllNotificationsRead,
+} from './notificationApi'
 
 export async function getGitHubPackagesSettings(): Promise<GitHubPackagesSettingsResponse> {
   const resp = await apiFetch('/api/github-packages/settings')

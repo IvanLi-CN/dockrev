@@ -241,6 +241,50 @@ CREATE TABLE jobs (
     let _ = tokio::fs::remove_dir_all(root).await;
 }
 
+#[tokio::test]
+async fn finishing_a_job_can_persist_its_notification_in_the_same_transaction() {
+    let db = Db::open(Path::new(":memory:")).await.unwrap();
+    db.insert_job(job(
+        "job-notification",
+        JobType::Update,
+        "running",
+        "2026-09-27T00:00:00Z",
+    ))
+    .await
+    .unwrap();
+
+    db.finish_job_with_archive_and_settlement_and_notification(
+        "job-notification",
+        "success",
+        "2026-09-27T00:01:00Z",
+        &serde_json::json!({"message": "done"}),
+        None,
+        None,
+        Some(&NotificationItemDraft {
+            id: "notification-job-notification".to_string(),
+            kind: NOTIFICATION_KIND_JOB_FINISHED.to_string(),
+            identity_key: "job_finished:job-notification".to_string(),
+            title: "任务已成功".to_string(),
+            body: "任务成功：done".to_string(),
+            target_url: "/queue/job-notification".to_string(),
+            source_job_id: Some("job-notification".to_string()),
+            created_at: "2026-09-27T00:01:00Z".to_string(),
+        }),
+    )
+    .await
+    .unwrap();
+
+    let page = db
+        .list_notification_items(50, None, "2026-09-27T00:02:00Z")
+        .await
+        .unwrap();
+    assert_eq!(page.unread_count, 1);
+    assert_eq!(
+        page.items[0].source_job_id.as_deref(),
+        Some("job-notification")
+    );
+}
+
 #[test]
 fn slow_job_claim_warning_is_thresholded_and_rate_limited_by_type() {
     let warned_at_by_type = Mutex::new(BTreeMap::new());

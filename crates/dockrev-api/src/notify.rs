@@ -18,7 +18,10 @@ mod delivery;
 
 #[cfg(test)]
 use delivery::*;
-use delivery::{send_all, send_ghcr_webhook_anomaly, send_new_versions};
+use delivery::{
+    best_effort_url, send_all, send_all_with_badge, send_ghcr_webhook_anomaly_with_badge,
+    send_new_versions_with_badge,
+};
 
 use crate::{
     api::types::{
@@ -45,21 +48,147 @@ pub async fn notify_job_updated(
     now_rfc3339: &str,
     summary: &Value,
 ) -> anyhow::Result<()> {
+    let Some(draft) =
+        prepare_job_notification_item(state, job_id, status, now_rfc3339, summary).await?
+    else {
+        return Ok(());
+    };
+
     let payload = json!({
         "jobId": job_id,
         "status": status,
         "ts": now_rfc3339,
         "summary": summary,
     });
-    send_all(
+    let item = state
+        .db
+        .ensure_notification_item(&draft, now_rfc3339)
+        .await?;
+    send_all_with_badge(
         state,
         Some(job_id),
         now_rfc3339,
         Some(&payload),
         NotifySendMode::Default,
+        Some((&item.item.id, item.unread_count)),
     )
     .await?;
     Ok(())
+}
+
+pub async fn prepare_job_notification_item(
+    state: &AppState,
+    job_id: &str,
+    status: &str,
+    now_rfc3339: &str,
+    summary: &Value,
+) -> anyhow::Result<Option<crate::db::NotificationItemDraft>> {
+    let settings = state.db.get_notification_settings().await?;
+    if !is_event_enabled(&settings, NotificationEventKind::Update) {
+        return Ok(None);
+    }
+    let target_url = notification_target_url(state, &format!("queue/{job_id}")).await?;
+    Ok(Some(crate::db::NotificationItemDraft {
+        id: crate::ids::new_notification_id(),
+        kind: crate::db::NOTIFICATION_KIND_JOB_FINISHED.to_string(),
+        identity_key: format!("job_finished:{job_id}"),
+        title: format!("任务已{}", status_label(status)),
+        body: job_notification_body(status, summary),
+        target_url,
+        source_job_id: Some(job_id.to_string()),
+        created_at: now_rfc3339.to_string(),
+    }))
+}
+
+pub async fn prepare_job_notification_item_for_finish(
+    state: &AppState,
+    should_notify: bool,
+    job_id: &str,
+    status: &str,
+    now_rfc3339: &str,
+    summary: &Value,
+) -> anyhow::Result<Option<crate::db::NotificationItemDraft>> {
+    if !should_notify {
+        return Ok(None);
+    }
+    prepare_job_notification_item(state, job_id, status, now_rfc3339, summary).await
+}
+
+pub async fn prepare_job_notification_item_for_finish_best_effort(
+    state: &AppState,
+    should_notify: bool,
+    job_id: &str,
+    status: &str,
+    now_rfc3339: &str,
+    summary: &Value,
+) -> Option<crate::db::NotificationItemDraft> {
+    match prepare_job_notification_item_for_finish(
+        state,
+        should_notify,
+        job_id,
+        status,
+        now_rfc3339,
+        summary,
+    )
+    .await
+    {
+        Ok(notification) => notification,
+        Err(error) => {
+            tracing::warn!(job_id = %job_id, error = %error, "failed to prepare job notification before finishing job");
+            None
+        }
+    }
+}
+
+pub async fn prepare_new_version_notification_item_for_finish(
+    state: &AppState,
+    check_job_id: &str,
+    now_rfc3339: &str,
+    discovered_services: &[NewVersionDiscoveredService],
+) -> anyhow::Result<Option<crate::db::NotificationItemDraft>> {
+    if discovered_services.is_empty() {
+        return Ok(None);
+    }
+    let settings = state.db.get_notification_settings().await?;
+    if !is_event_enabled(&settings, NotificationEventKind::NewVersionDiscovered) {
+        return Ok(None);
+    }
+    let discovered_services =
+        revalidate_new_version_discovered_services(state, discovered_services).await?;
+    if discovered_services.is_empty() {
+        return Ok(None);
+    }
+    let discovered_services =
+        settle_new_version_discovered_services(state, &discovered_services).await?;
+    let dispatch_now_rfc3339 = notification_now_rfc3339(now_rfc3339);
+    let batch_job_id = state
+        .db
+        .find_new_version_notification_batch_job_id(
+            &discovered_services
+                .iter()
+                .map(|item| (item.service_id.clone(), item.candidate_digest.clone()))
+                .collect::<Vec<_>>(),
+        )
+        .await?
+        .unwrap_or_else(|| check_job_id.to_string());
+    let identity_key =
+        new_version_notification_identity(&std::collections::BTreeSet::from([batch_job_id]));
+    let target_path = if discovered_services.len() == 1 {
+        let service = &discovered_services[0];
+        format!("services/{}/{}", service.stack_id, service.service_id)
+    } else {
+        format!("queue/{check_job_id}")
+    };
+    Ok(Some(crate::db::NotificationItemDraft {
+        id: crate::ids::new_notification_id(),
+        kind: crate::db::NOTIFICATION_KIND_NEW_VERSION.to_string(),
+        identity_key,
+        title: format!("发现 {} 个新版本", discovered_services.len()),
+        body: new_version_notification_body(&discovered_services),
+        target_url: notification_target_url(state, &target_path).await?,
+        source_job_id: Some(check_job_id.to_string()),
+        created_at: dispatch_now_rfc3339,
+    }))
 }
 
 pub async fn notify_new_versions_discovered(
@@ -75,11 +204,10 @@ pub async fn notify_new_versions_discovered(
     }
 
     let settings = state.db.get_notification_settings().await?;
-    if !is_event_enabled(&settings, NotificationEventKind::NewVersionDiscovered)
-        || !has_enabled_delivery_channel(&settings)
-    {
+    if !is_event_enabled(&settings, NotificationEventKind::NewVersionDiscovered) {
         return Ok(());
     }
+    let has_external_delivery = has_enabled_delivery_channel(&settings);
 
     let discovered_total = discovered_services.len();
     let discovered_services =
@@ -101,13 +229,24 @@ pub async fn notify_new_versions_discovered(
     let discovered_services =
         settle_new_version_discovered_services(state, &discovered_services).await?;
     let dispatch_now_rfc3339 = notification_now_rfc3339(now_rfc3339);
+    let batch_job_id = state
+        .db
+        .find_new_version_notification_batch_job_id(
+            &discovered_services
+                .iter()
+                .map(|item| (item.service_id.clone(), item.candidate_digest.clone()))
+                .collect::<Vec<_>>(),
+        )
+        .await?
+        .unwrap_or_else(|| check_job_id.to_string());
 
-    let mut reserved = Vec::<ReservedNewVersionNotification>::new();
+    let mut pendings = Vec::with_capacity(discovered_services.len());
+    let mut services_by_pending_id = std::collections::HashMap::new();
     for item in &discovered_services {
         let pending = crate::db::NewVersionNotificationPending {
             id: crate::ids::new_notification_id(),
             service_id: item.service_id.clone(),
-            job_id: check_job_id.to_string(),
+            job_id: batch_job_id.clone(),
             reason: reason.to_string(),
             image_ref: item.image_ref.clone(),
             image_tag: item.current_tag.clone(),
@@ -118,18 +257,38 @@ pub async fn notify_new_versions_discovered(
             candidate_digest: item.candidate_digest.clone(),
             created_at: dispatch_now_rfc3339.clone(),
         };
-        match state.db.reserve_new_version_notification(&pending).await? {
-            crate::db::NewVersionNotificationReserveResult::Reserved(record_id) => {
-                reserved.push(ReservedNewVersionNotification {
-                    record_id,
-                    service: item.clone(),
-                });
-            }
-            crate::db::NewVersionNotificationReserveResult::SkippedDuplicate => {}
-        }
+        services_by_pending_id.insert(pending.id.clone(), item.clone());
+        pendings.push(pending);
     }
 
-    if reserved.is_empty() {
+    let identity_key =
+        new_version_notification_identity(&std::collections::BTreeSet::from(
+            [batch_job_id.clone()],
+        ));
+    let target_path = if discovered_services.len() == 1 {
+        let service = &discovered_services[0];
+        format!("services/{}/{}", service.stack_id, service.service_id)
+    } else {
+        format!("queue/{check_job_id}")
+    };
+    let target_url = notification_target_url(state, &target_path).await?;
+    let Some((reservations, notification_item_id, notification_unread_count)) = state
+        .db
+        .reserve_new_version_notifications_with_item(
+            &pendings,
+            &crate::db::NotificationItemDraft {
+                id: crate::ids::new_notification_id(),
+                kind: crate::db::NOTIFICATION_KIND_NEW_VERSION.to_string(),
+                identity_key,
+                title: format!("发现 {} 个新版本", discovered_services.len()),
+                body: new_version_notification_body(&discovered_services),
+                target_url,
+                source_job_id: Some(check_job_id.to_string()),
+                created_at: dispatch_now_rfc3339.clone(),
+            },
+        )
+        .await?
+    else {
         log_new_version_notification_skip(
             state,
             check_job_id,
@@ -141,7 +300,16 @@ pub async fn notify_new_versions_discovered(
         )
         .await;
         return Ok(());
-    }
+    };
+
+    let reserved = reservations
+        .into_iter()
+        .filter_map(|(record_id, pending_id)| {
+            services_by_pending_id
+                .remove(&pending_id)
+                .map(|service| ReservedNewVersionNotification { record_id, service })
+        })
+        .collect::<Vec<_>>();
 
     let revalidated_reserved_services = reserved
         .iter()
@@ -189,12 +357,44 @@ pub async fn notify_new_versions_discovered(
         .iter()
         .map(|item| item.service.clone())
         .collect::<Vec<_>>();
-    let send_result = send_new_versions(
+    let sent_channel_records = state
+        .db
+        .list_new_version_notification_sent_channels(
+            &sendable_reserved
+                .iter()
+                .map(|item| item.record_id.clone())
+                .collect::<Vec<_>>(),
+        )
+        .await?;
+    let previously_sent_channels = sendable_reserved
+        .iter()
+        .fold(
+            None,
+            |shared: Option<std::collections::BTreeSet<String>>, item| {
+                let channels = sent_channel_records
+                    .get(&item.record_id)
+                    .into_iter()
+                    .flatten()
+                    .cloned()
+                    .collect::<std::collections::BTreeSet<_>>();
+                Some(match shared {
+                    None => channels,
+                    Some(mut shared) => {
+                        shared.retain(|channel| channels.contains(channel));
+                        shared
+                    }
+                })
+            },
+        )
+        .unwrap_or_default();
+    let send_result = send_new_versions_with_badge(
         state,
         check_job_id,
         &dispatch_now_rfc3339,
         services_checked,
         &reserved_services,
+        Some((&notification_item_id, notification_unread_count)),
+        &previously_sent_channels,
     )
     .await;
 
@@ -203,11 +403,15 @@ pub async fn notify_new_versions_discovered(
         Err(err) => {
             let err_text = err.to_string();
             for item in &sendable_reserved {
+                let sent_channels = sent_channel_records
+                    .get(&item.record_id)
+                    .cloned()
+                    .unwrap_or_default();
                 let _ = state
                     .db
                     .finalize_new_version_notification(
                         &item.record_id,
-                        &[],
+                        &sent_channels,
                         Some(err_text.as_str()),
                         &dispatch_now_rfc3339,
                     )
@@ -217,9 +421,22 @@ pub async fn notify_new_versions_discovered(
         }
     };
 
-    let sent_channels = successful_delivery_channels(&results);
+    let successful_channels = successful_delivery_channels(&results)
+        .into_iter()
+        .collect::<std::collections::BTreeSet<_>>();
     let last_error = failed_delivery_error(&results);
     for item in &sendable_reserved {
+        let mut sent_channels = sent_channel_records
+            .get(&item.record_id)
+            .into_iter()
+            .flatten()
+            .cloned()
+            .collect::<std::collections::BTreeSet<_>>();
+        sent_channels.extend(successful_channels.iter().cloned());
+        if !has_external_delivery {
+            sent_channels.insert("inbox".to_string());
+        }
+        let sent_channels = sent_channels.into_iter().collect::<Vec<_>>();
         let _ = state
             .db
             .finalize_new_version_notification(
@@ -241,8 +458,123 @@ pub async fn notify_ghcr_webhook_anomaly(
     if event.counts.total() == 0 {
         return Ok(());
     }
-    send_ghcr_webhook_anomaly(state, now_rfc3339, event).await?;
+    let settings = state.db.get_notification_settings().await?;
+    let anomaly_state_keys = event
+        .repos
+        .iter()
+        .map(|repo| {
+            (
+                repo.owner.clone(),
+                repo.repo.clone(),
+                repo.state.clone(),
+                repo.occurrence_count,
+            )
+        })
+        .collect::<Vec<_>>();
+    let anomaly_batch_ids = state
+        .db
+        .list_notification_anomaly_batch_ids(&anomaly_state_keys)
+        .await?;
+    if !is_event_enabled(&settings, NotificationEventKind::GhcrWebhookAnomaly) {
+        state
+            .db
+            .mark_notification_anomaly_states_notified(&anomaly_state_keys)
+            .await?;
+        return Ok(());
+    }
+    let target_url = notification_target_url(state, &format!("queue/{}", event.job_id)).await?;
+    let item = state
+        .db
+        .ensure_notification_item(
+            &crate::db::NotificationItemDraft {
+                id: crate::ids::new_notification_id(),
+                kind: crate::db::NOTIFICATION_KIND_GHCR_ANOMALY.to_string(),
+                identity_key: ghcr_anomaly_notification_identity(event.repos, &anomaly_batch_ids),
+                title: format!("GHCR Webhook 发现 {} 个异常", event.counts.total()),
+                body: ghcr_anomaly_notification_body(event.repos),
+                target_url,
+                source_job_id: Some(event.job_id.to_string()),
+                created_at: now_rfc3339.to_string(),
+            },
+            now_rfc3339,
+        )
+        .await?;
+    let results = send_ghcr_webhook_anomaly_with_badge(
+        state,
+        now_rfc3339,
+        event,
+        Some((&item.item.id, item.unread_count)),
+    )
+    .await?;
+    if failed_delivery_error(&results).is_none() {
+        state
+            .db
+            .mark_notification_anomaly_states_notified(&anomaly_state_keys)
+            .await?;
+    }
     Ok(())
+}
+
+async fn notification_target_url(
+    state: &AppState,
+    path_no_leading_slash: &str,
+) -> anyhow::Result<String> {
+    let public_base_url = state.db.get_instance_public_base_url().await?;
+    Ok(best_effort_url(
+        public_base_url.as_deref(),
+        path_no_leading_slash,
+    ))
+}
+
+fn status_label(status: &str) -> &str {
+    match status {
+        "success" | "succeeded" => "成功",
+        "failed" | "error" => "失败",
+        "cancelled" | "canceled" => "取消",
+        "stopped" => "停止",
+        _ => "完成",
+    }
+}
+
+fn job_notification_body(status: &str, summary: &Value) -> String {
+    let detail = summary
+        .get("message")
+        .or_else(|| summary.get("summary"))
+        .and_then(Value::as_str)
+        .map(str::to_string)
+        .unwrap_or_else(|| summary.to_string());
+    format!("任务{}：{}", status_label(status), detail)
+}
+
+fn new_version_notification_body(items: &[NewVersionDiscoveredService]) -> String {
+    let names = items
+        .iter()
+        .take(5)
+        .map(|item| {
+            format!(
+                "{}: {} -> {}",
+                item.service_id, item.current_display_tag, item.candidate_display_tag
+            )
+        })
+        .collect::<Vec<_>>();
+    if names.len() < items.len() {
+        format!(
+            "{}；另有 {} 项",
+            names.join("；"),
+            items.len() - names.len()
+        )
+    } else {
+        names.join("；")
+    }
+}
+
+fn ghcr_anomaly_notification_body(items: &[GhcrWebhookAnomalyRepo]) -> String {
+    items
+        .iter()
+        .take(8)
+        .map(|item| format!("{}/{} [{}]", item.owner, item.repo, item.state))
+        .collect::<Vec<_>>()
+        .join("、")
 }
 
 pub async fn send_test(
@@ -356,6 +688,7 @@ pub struct GhcrWebhookAnomalyRepo {
     pub repo: String,
     pub state: String,
     pub last_error: Option<String>,
+    pub occurrence_count: i64,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -406,6 +739,37 @@ fn should_send_channel(
 struct ReservedNewVersionNotification {
     record_id: String,
     service: NewVersionDiscoveredService,
+}
+
+fn new_version_notification_identity(check_job_ids: &std::collections::BTreeSet<String>) -> String {
+    format!(
+        "new_version_discovered:{}",
+        check_job_ids.iter().cloned().collect::<Vec<_>>().join("|")
+    )
+}
+
+fn ghcr_anomaly_notification_identity(
+    items: &[GhcrWebhookAnomalyRepo],
+    batch_ids: &std::collections::HashMap<String, String>,
+) -> String {
+    let keys = items
+        .iter()
+        .map(|item| {
+            batch_ids
+                .get(&format!("{}/{}", item.owner, item.repo))
+                .cloned()
+                .unwrap_or_else(|| {
+                    format!(
+                        "{}/{}:{}:{}",
+                        item.owner, item.repo, item.state, item.occurrence_count
+                    )
+                })
+        })
+        .collect::<std::collections::BTreeSet<_>>();
+    format!(
+        "ghcr_webhook_anomaly:{}",
+        keys.into_iter().collect::<Vec<_>>().join("|")
+    )
 }
 
 fn new_version_candidate_matches_current_state(

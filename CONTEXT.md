@@ -121,6 +121,48 @@ _Avoid_: version inference, update execution
 An accepted automatic update operation that changes the service to the candidate digest through the normal update path. It is a deployment action, not publication of an image to a registry.
 _Avoid_: image publication, version discovery
 
+## Notifications and PWA Badge
+
+**notification event**:
+A user-relevant operational occurrence that Dockrev exposes for operator attention, such as a completed update or rollback, an aggregated new-version discovery, or an aggregated GHCR webhook anomaly. It is distinct from delivery through any particular notification channel.
+_Avoid_: channel delivery, push receipt, message count
+
+**notification item**:
+One user-facing aggregate representation of a notification event and the unit counted by the PWA badge. Multiple services or repositories included in the same event remain one notification item.
+_Avoid_: service notification, repository notification, delivery record
+
+**unread notification**:
+A notification item that the operator has not explicitly acknowledged. Opening Dockrev, displaying a notification, or reading the same event in an external channel does not acknowledge it.
+_Avoid_: pending event, undelivered notification
+
+**notification acknowledgement**:
+The explicit operator action that changes a notification item from unread to read, either by opening that item or by marking it read. Acknowledgement is idempotent and is shared across the operator's installed Dockrev clients.
+_Avoid_: notification delivery, notification dismissal
+
+**badge unread count**:
+The number of unread notification items represented on an installed Dockrev PWA icon. It counts notification items rather than push attempts, delivery channels, services, or repositories.
+_Avoid_: push count, message count, notification channel count
+
+**notification item identity**:
+The stable event-specific key used to ensure that retries and repeated observations of the same event do not create another notification item. Job completion uses the job identity; candidate discovery continues to use the candidate notification identity.
+_Avoid_: delivery attempt, notification timestamp
+
+**anomaly identity**:
+The stable GHCR webhook anomaly represented by an owner, repository, and anomaly state. A changed error message alone does not create a new anomaly identity.
+_Avoid_: audit run, error text
+
+**notification history retention**:
+The period for keeping acknowledged notification items available as history. Acknowledged items are retained for 90 days, while unread items remain until the operator acknowledges them.
+_Avoid_: badge expiration, delivery timeout
+
+**foreground notification synchronization**:
+The authenticated page-owned read of the server notification count and inbox triggered at bootstrap, foreground resume, focus, online recovery, and every 60 seconds while visible. It repairs local Badge state; it is not a background wake mechanism.
+_Avoid_: Service Worker timer, Push delivery, local delta
+
+**background badge update**:
+An update to the installed PWA icon while the page is closed. Dockrev can provide this through Web Push when subscribed, but cannot promise it when Push is disabled; Periodic Background Sync is only a future best-effort enhancement.
+_Avoid_: foreground synchronization, server event creation, notification acknowledgement
+
 ## Update Rollback Diagnostics
 
 **candidate container**:

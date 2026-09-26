@@ -64,6 +64,248 @@
   gap: 16px;
 }
 
+.topbarNotificationCenter {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+}
+
+.notificationBellButton,
+.notificationIconButton {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  height: 34px;
+  padding: 0;
+  border: 1px solid color-mix(in srgb, var(--borderColor) 82%, transparent);
+  border-radius: 9px;
+  background: color-mix(in srgb, var(--panel2) 90%, transparent);
+  color: var(--muted);
+  cursor: pointer;
+}
+
+.notificationBellButton:hover,
+.notificationBellButton[aria-expanded="true"],
+.notificationIconButton:hover:not(:disabled) {
+  border-color: color-mix(in srgb, var(--color-primary) 46%, var(--borderColor) 54%);
+  color: var(--text);
+  background: color-mix(in srgb, var(--color-primary) 10%, var(--panel2) 90%);
+}
+
+.notificationBellButton:focus-visible,
+.notificationIconButton:focus-visible,
+.notificationItem:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--color-primary) 70%, transparent);
+  outline-offset: 2px;
+}
+
+.notificationBellBadge {
+  position: absolute;
+  top: -5px;
+  right: -7px;
+  min-width: 18px;
+  max-width: 38px;
+  height: 18px;
+  padding: 0 4px;
+  overflow: hidden;
+  border: 2px solid var(--panel2);
+  border-radius: 999px;
+  background: var(--color-danger, #e05252);
+  color: #fff;
+  font-size: 10px;
+  font-weight: 760;
+  line-height: 14px;
+  text-align: center;
+  white-space: nowrap;
+}
+
+.notificationDrawerBackdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 29;
+  border: 0;
+  background: rgba(1, 8, 20, 0.22);
+  cursor: default;
+}
+
+.notificationDrawer {
+  position: fixed;
+  top: 68px;
+  right: 20px;
+  z-index: 30;
+  display: flex;
+  width: min(410px, calc(100vw - 32px));
+  max-height: min(620px, calc(100dvh - 88px));
+  flex-direction: column;
+  overflow: hidden;
+  border: 1px solid color-mix(in srgb, var(--borderColor) 86%, transparent);
+  border-radius: 12px;
+  background: var(--panel2);
+  box-shadow: 0 22px 70px rgba(1, 8, 20, 0.38);
+}
+
+.notificationDrawerHeader {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 16px 16px 13px;
+  border-bottom: 1px solid color-mix(in srgb, var(--borderColor) 78%, transparent);
+}
+
+.notificationDrawerHeader h2 {
+  margin: 0;
+  color: var(--text);
+  font-size: 16px;
+  line-height: 1.2;
+}
+
+.notificationDrawerHeader span {
+  display: block;
+  margin-top: 4px;
+  color: var(--muted2);
+  font-size: 12px;
+}
+
+.notificationDrawerActions {
+  display: inline-flex;
+  gap: 6px;
+}
+
+.notificationIconButton:disabled {
+  cursor: not-allowed;
+  opacity: 0.38;
+}
+
+.notificationState {
+  display: flex;
+  min-height: 112px;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 24px;
+  color: var(--muted2);
+  font-size: 13px;
+  text-align: center;
+}
+
+.notificationStateError {
+  min-height: 0;
+  justify-content: flex-start;
+  border-bottom: 1px solid color-mix(in srgb, var(--borderColor) 70%, transparent);
+  color: var(--color-danger, #e05252);
+  text-align: left;
+}
+
+.notificationList {
+  min-height: 0;
+  overflow-y: auto;
+}
+
+.notificationLoadMore {
+  display: block;
+  width: 100%;
+  padding: 12px 16px;
+  border: 0;
+  border-top: 1px solid color-mix(in srgb, var(--borderColor) 62%, transparent);
+  background: transparent;
+  color: var(--color-primary);
+  font-size: 12px;
+  text-align: center;
+  cursor: pointer;
+}
+
+.notificationLoadMore:hover {
+  background: color-mix(in srgb, var(--color-primary) 7%, var(--panel2) 93%);
+}
+
+.notificationLoadMore:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
+.notificationLoadMore:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--color-primary) 70%, transparent);
+  outline-offset: -2px;
+}
+
+.notificationItem {
+  display: grid;
+  grid-template-columns: 8px minmax(0, 1fr);
+  width: 100%;
+  gap: 10px;
+  padding: 14px 16px;
+  border: 0;
+  border-bottom: 1px solid color-mix(in srgb, var(--borderColor) 62%, transparent);
+  background: transparent;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.notificationItem:hover {
+  background: color-mix(in srgb, var(--color-primary) 7%, var(--panel2) 93%);
+}
+
+.notificationItemRead {
+  opacity: 0.66;
+}
+
+.notificationItemDot {
+  width: 7px;
+  height: 7px;
+  margin-top: 5px;
+  border-radius: 50%;
+  background: var(--color-primary);
+}
+
+.notificationItemRead .notificationItemDot {
+  background: var(--muted2);
+}
+
+.notificationItemContent {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.notificationItemContent strong {
+  overflow: hidden;
+  color: var(--text);
+  font-size: 13px;
+  font-weight: 700;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.notificationItemContent > span {
+  display: -webkit-box;
+  overflow: hidden;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.45;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+
+.notificationItemContent time {
+  color: var(--muted2);
+  font-size: 11px;
+}
+
+.spin {
+  animation: notificationSpin 900ms linear infinite;
+}
+
+@keyframes notificationSpin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
 .srOnly {
   position: absolute;
   width: 1px;
@@ -1821,6 +2063,13 @@ html[data-theme="light"] .brandLogoForLight {
 
   .mobileMenuEmbeddedContent .pageContextLink {
     min-height: 42px;
+  }
+
+  .notificationDrawer {
+    top: 60px;
+    right: 12px;
+    width: calc(100vw - 24px);
+    max-height: calc(100dvh - 72px);
   }
 }
 

@@ -1,5 +1,6 @@
 import type { ServiceResourceOverviewItem, ServiceResourceOverviewResponse } from './serviceResourceTypes'
 import type { VersionInferenceState } from './autoUpdateTypes'
+export * from './notificationTypes'
 export type {
   AutoUpdateProjection,
   CandidateHydrationDiagnostic,
@@ -969,7 +970,6 @@ export type NotificationConfig = {
     ghcrWebhookAnomaly: boolean
   }
 }
-
 export type NotificationTestChannel = 'email' | 'webhook' | 'telegram' | 'webPush'
 
 export type NotificationChannelTestResult = {

@@ -1393,7 +1393,6 @@ pub(crate) async fn run_update_job(
             )
             .await;
     }
-
     let archive = if let Some(evidence) = evidence.as_ref() {
         let mut evidence_summary = evidence.finalize().await;
         let mut archive = None;
@@ -1421,15 +1420,25 @@ pub(crate) async fn run_update_job(
     } else {
         None
     };
+    let notification = notify::prepare_job_notification_item_for_finish_best_effort(
+        state.as_ref(),
+        should_notify,
+        &job_id,
+        &final_status,
+        &finished_at,
+        &notify_summary,
+    )
+    .await;
     state
         .db
-        .finish_job_with_archive_and_settlement(
+        .finish_job_with_archive_and_settlement_and_notification(
             &job_id,
             &final_status,
             &finished_at,
             &final_summary,
             archive.clone(),
             (!settlements.is_empty()).then_some(settlements.as_slice()),
+            notification.as_ref(),
         )
         .await?;
     if archive.is_some()
@@ -1437,11 +1446,9 @@ pub(crate) async fn run_update_job(
     {
         evidence.cleanup_after_commit().await;
     }
-
     if should_record_update_tag_history(&req, &final_status) {
         record_update_tag_history(state.as_ref(), &req, &finished_at).await;
     }
-
     if final_status == "success"
         && let Ok(now_dt) = time::OffsetDateTime::parse(
             &finished_at,
@@ -1460,33 +1467,34 @@ pub(crate) async fn run_update_job(
             }
         }
     }
-
-    if should_notify {
-        let notify_state = state.clone();
-        let notify_job_id = job_id.clone();
-        let notify_status = final_status.clone();
-        let notify_now = finished_at.clone();
-        let notify_summary = notify_summary.clone();
-        tokio::spawn(async move {
-            let _ = notify::notify_job_updated(
-                notify_state.as_ref(),
-                &notify_job_id,
-                &notify_status,
-                &notify_now,
-                &notify_summary,
+    if should_notify
+        && let Err(error) = notify::notify_job_updated(
+            state.as_ref(),
+            &job_id,
+            &final_status,
+            &finished_at,
+            &notify_summary,
+        )
+        .await
+    {
+        let _ = state
+            .db
+            .insert_job_log(
+                &job_id,
+                &JobLogLine {
+                    ts: finished_at.clone(),
+                    level: "warn".to_string(),
+                    msg: format!("notification delivery failed: {error}"),
+                },
             )
             .await;
-        });
     }
-
     state.update_stop_hub.remove(&job_id);
     Ok(())
 }
-
 fn should_record_update_tag_history(req: &TriggerUpdateRequest, final_status: &str) -> bool {
     final_status == "success" && matches!(&req.mode, UpdateMode::Apply)
 }
-
 #[cfg(test)]
 #[path = "execution_tests.rs"]
 mod tests;

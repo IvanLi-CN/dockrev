@@ -20,6 +20,8 @@ mod jobs;
 mod lifecycle_events;
 mod new_version_discoveries;
 mod new_version_notifications;
+mod notification_anomalies;
+mod notification_items;
 mod repo_links;
 mod resource_usage;
 mod schema;
@@ -100,6 +102,11 @@ pub(crate) use new_version_discoveries::{
 pub(crate) use new_version_notifications::{
     NotificationTargetKey, StableCandidateDisplayTagsByNotificationTarget,
     list_stable_candidate_display_tags_for_notification_targets_conn,
+};
+pub(crate) use notification_anomalies::NotificationAnomalyObservation;
+pub(crate) use notification_items::{
+    NOTIFICATION_KIND_GHCR_ANOMALY, NOTIFICATION_KIND_JOB_FINISHED, NOTIFICATION_KIND_NEW_VERSION,
+    NotificationInboxPage, NotificationItemDraft, NotificationItemRow,
 };
 
 use crate::{
@@ -621,6 +628,7 @@ pub struct NewVersionNotificationPending {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum NewVersionNotificationReserveResult {
     Reserved(String),
+    AlreadyPending(String),
     SkippedDuplicate,
 }
 
