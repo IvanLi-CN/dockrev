@@ -14,7 +14,7 @@
 - `REQ-NPB-007` and `REQ-NPB-009`: 真实 Push 使用 `notificationId` 和绝对 `unreadCount`；Service Worker 支持 Badge、受控页点击确认和冷启动交接，不依赖 Periodic Background Sync。
 - `REQ-NPB-008` and `REQ-NPB-011`: AppShell 在认证分支接入启动、恢复、焦点、联网、可见轮询、BroadcastChannel 和 Badging API 能力检测。
 - `REQ-NPB-010`: Topbar Bell、桌面/移动抽屉、显式单条已读、全部已读和点击后导航已实现。
-- `REQ-NPB-012`: 任务终态与 `job_finished` 收件箱项在同一 SQLite 事务提交；其他收件箱项先于外部投递写入。DB identity key、GHCR 状态账本、失败重试渠道继承和绝对读响应测试已覆盖核心并发/重试边界。
+- `REQ-NPB-012`: 任务终态与 `job_finished` 收件箱项在同一 SQLite 事务提交；候选记录与对应收件箱项也在同一事务中预留并关联，其他收件箱项先于外部投递写入。候选通知按 `service + candidate digest` 保持活动去重，并保留 canonical check-job identity，使失败重试和候选子集观察复用同一收件箱项；GHCR pending 异常保留稳定批次身份，使追加异常和恢复重试不复制已有项。DB identity key、状态账本、失败重试渠道继承和绝对读响应测试已覆盖核心并发/重试边界。
 
 ## Existing Foundations
 
@@ -28,7 +28,7 @@
 - `python3 bin/spec_contract_check.py --path docs/specs/notification-inbox-pwa-badge/SPEC.md`（若当前 checkout 提供该检查器）
 - 后端：通知项迁移、事件幂等、API 读状态、Push payload 与 retention 测试。
 - 前端：AppShell 收件箱交互、Service Worker payload、Badge 能力检测、前台轮询和跨标签页同步测试。
-- 已执行：`cargo fmt --all -- --check`、`cargo test -p dockrev-api`、`bun test`、`bun run lint`、`bun run build`、`bun run build-storybook`、`bun run test-storybook`、PWA asset contract。
+- 已执行：`cargo fmt --all -- --check`、`cargo clippy --workspace --all-targets --all-features -- -D warnings`、`cargo test -p dockrev-api`、`bun test`、`bun run lint`、`bun run build`、`bun run build-storybook`、`bun run test-storybook`、PWA asset contract。
 
 ## Rollout Facts
 

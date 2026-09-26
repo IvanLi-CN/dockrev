@@ -5,6 +5,8 @@ pub(super) fn apply_migrations(conn: &mut rusqlite::Connection) -> anyhow::Resul
     apply_migration_0027_add_notification_items(conn)?;
     apply_migration_0028_add_notification_anomaly_states(conn)?;
     apply_migration_0029_add_notification_anomaly_pending(conn)?;
+    apply_migration_0030_add_notification_anomaly_batch(conn)?;
+    apply_migration_0031_add_new_version_notification_item(conn)?;
     Ok(())
 }
 
@@ -82,6 +84,42 @@ pub(super) fn apply_migration_0029_add_notification_anomaly_pending(
     let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
     tx.execute(
         "ALTER TABLE notification_anomaly_states ADD COLUMN notification_pending INTEGER NOT NULL DEFAULT 0",
+        [],
+    )?;
+    record_migration_tx(&tx, id)?;
+    tx.commit()?;
+    Ok(())
+}
+
+pub(super) fn apply_migration_0030_add_notification_anomaly_batch(
+    conn: &mut rusqlite::Connection,
+) -> anyhow::Result<()> {
+    let id = "0030_add_notification_anomaly_batch";
+    if migration_applied(conn, id)? {
+        return Ok(());
+    }
+
+    let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
+    tx.execute(
+        "ALTER TABLE notification_anomaly_states ADD COLUMN notification_batch_id TEXT",
+        [],
+    )?;
+    record_migration_tx(&tx, id)?;
+    tx.commit()?;
+    Ok(())
+}
+
+pub(super) fn apply_migration_0031_add_new_version_notification_item(
+    conn: &mut rusqlite::Connection,
+) -> anyhow::Result<()> {
+    let id = "0031_add_new_version_notification_item";
+    if migration_applied(conn, id)? {
+        return Ok(());
+    }
+
+    let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
+    tx.execute(
+        "ALTER TABLE new_version_notifications ADD COLUMN notification_item_id TEXT",
         [],
     )?;
     record_migration_tx(&tx, id)?;

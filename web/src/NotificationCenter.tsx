@@ -22,6 +22,7 @@ import {
   markNotificationRead,
 } from './api'
 import type { NotificationItem } from './api/types'
+import { appBasePath, withAppBasePath } from './appBase'
 import { setNotificationBadge } from './notificationBadge'
 
 const BROADCAST_CHANNEL_NAME = 'dockrev:notifications'
@@ -65,7 +66,16 @@ function broadcastUnreadCount(unreadCount: number, notificationId?: string): voi
 }
 
 function navigateToNotification(target: string): void {
-  window.location.assign(target)
+  const destination = new URL(target, window.location.href)
+  const basePath = appBasePath()
+  if (
+    destination.origin === window.location.origin &&
+    basePath !== '/' &&
+    !destination.pathname.startsWith(basePath)
+  ) {
+    destination.pathname = withAppBasePath(basePath, destination.pathname)
+  }
+  window.location.assign(destination.toString())
 }
 
 export function NotificationProvider(props: { children: ReactNode }) {
@@ -180,6 +190,7 @@ export function NotificationProvider(props: { children: ReactNode }) {
   const loadMore = useCallback(async () => {
     const cursor = nextCursorRef.current
     if (!cursor || syncRef.current) return
+    const mutationRevision = mutationRevisionRef.current
     setLoading(true)
     setError(null)
     try {
@@ -187,7 +198,9 @@ export function NotificationProvider(props: { children: ReactNode }) {
       setItems((current) => [...current, ...response.items])
       nextCursorRef.current = response.nextCursor ?? null
       setNextCursor(response.nextCursor ?? null)
-      applyUnreadCount(response.unreadCount)
+      if (mutationRevision === mutationRevisionRef.current) {
+        applyUnreadCount(response.unreadCount)
+      }
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : '通知同步失败')
     } finally {

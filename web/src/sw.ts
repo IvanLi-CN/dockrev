@@ -65,7 +65,7 @@ self.addEventListener('push', (event) => {
   }
 
   const title = data.title || 'Dockrev'
-  const badgeRegistration = self.registration as ServiceWorkerRegistration & {
+  const badgeNavigator = navigator as WorkerNavigator & {
     setAppBadge?: (count?: number) => Promise<void>
     clearAppBadge?: () => Promise<void>
   }
@@ -79,9 +79,9 @@ self.addEventListener('push', (event) => {
         const unreadCount = Math.max(0, Math.floor(data.unreadCount))
         try {
           if (unreadCount === 0) {
-            await badgeRegistration.clearAppBadge?.()
+            await badgeNavigator.clearAppBadge?.()
           } else {
-            await badgeRegistration.setAppBadge?.(unreadCount)
+            await badgeNavigator.setAppBadge?.(unreadCount)
           }
         } catch {
           // Badging is optional and must not prevent the notification from showing.
@@ -104,6 +104,24 @@ function notificationLaunchUrl(url: string | null, notificationId: string | null
   if (notificationId) launch.searchParams.set('dockrevNotificationId', notificationId)
   if (url) launch.searchParams.set('dockrevNotificationTarget', url)
   return launch.href
+}
+
+function resolveNotificationTarget(url: string): string | null {
+  try {
+    const target = new URL(url, self.registration.scope)
+    const scope = new URL(self.registration.scope)
+    if (
+      target.origin === scope.origin &&
+      appBasePath &&
+      !target.pathname.startsWith(`${appBasePath}/`) &&
+      target.pathname !== appBasePath
+    ) {
+      target.pathname = `${appBasePath}${target.pathname}`.replace(/\/+/g, '/')
+    }
+    return target.href
+  } catch {
+    return null
+  }
 }
 
 async function waitForNotificationClickAck(client: WindowClient, notificationId: string, url: string): Promise<boolean> {
@@ -149,11 +167,7 @@ self.addEventListener('notificationclick', (event) => {
           : null
       let targetUrl: string | null = null
       if (url) {
-        try {
-          targetUrl = new URL(url, self.registration.scope).href
-        } catch {
-          // A malformed legacy payload must still fall back to the app shell.
-        }
+        targetUrl = resolveNotificationTarget(url)
       }
 
       if (targetUrl && notificationId) {

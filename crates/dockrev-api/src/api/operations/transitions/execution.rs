@@ -1428,7 +1428,7 @@ pub(crate) async fn run_update_job(
         &finished_at,
         &notify_summary,
     )
-    .await;
+    .await?;
     state
         .db
         .finish_job_with_archive_and_settlement_and_notification(

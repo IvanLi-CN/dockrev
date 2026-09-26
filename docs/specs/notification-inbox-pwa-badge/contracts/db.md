@@ -17,8 +17,8 @@ Logical fields:
 Identity rules:
 
 - Job completion uses the terminal job identity.
-- Candidate discovery uses the existing service-and-candidate-digest identity.
-- GHCR anomaly items use owner, repository, anomaly state and an occurrence identity that changes only after recovery and recurrence.
+- Candidate discovery uses the existing service-and-candidate-digest identity to decide whether a service may enter the active notification set. The inbox identity is the sorted set of canonical check-job IDs retained by those records; failed retries retain the original job ID so a retry that observes only a subset of services reuses the original item. Candidate reservations and their inbox-item association are committed in one SQLite transaction.
+- GHCR anomaly items use owner, repository, anomaly state and a persisted batch identity that changes only after the pending batch is acknowledged, recovery and recurrence.
 - The persistence operation MUST be safe under concurrent retries. A duplicate observation returns the existing item or a no-op instead of adding a second unread item.
 
 Indexes and cleanup:

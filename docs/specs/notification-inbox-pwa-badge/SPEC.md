@@ -56,8 +56,8 @@
 
 - Notification item creation MUST be idempotent under job retry, worker retry, duplicate delivery and concurrent observations.
 - `job_finished` identity MUST use the terminal job identity.
-- `new_version_discovered` identity MUST use the existing candidate notification identity for the service and candidate digest; a changed display version alone MUST NOT create another item.
-- GHCR anomaly comparison MUST use owner, repository and anomaly state. A changed error message alone MUST NOT create another item.
+- `new_version_discovered` eligibility MUST use the existing candidate notification identity for the service and candidate digest; a changed display version alone MUST NOT create another item. The aggregated inbox identity MUST use the canonical check-job identity retained by the candidate notification records, so retries that observe only a subset of the original services reuse the existing item. Candidate reservation and inbox-item association MUST commit in one SQLite transaction.
+- GHCR anomaly comparison MUST use owner, repository and anomaly state. A changed error message alone MUST NOT create another item. Pending anomaly states MUST retain a stable batch identity so an audit that adds another pending anomaly reuses the existing item.
 - A transition to another anomaly state MUST create one new aggregated item. Recovery closes the active anomaly state without decrementing Badge; a later recurrence creates a new item.
 
 ### REQ-NPB-004

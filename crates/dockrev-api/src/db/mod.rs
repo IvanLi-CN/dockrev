@@ -628,6 +628,7 @@ pub struct NewVersionNotificationPending {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum NewVersionNotificationReserveResult {
     Reserved(String),
+    AlreadyPending(String),
     SkippedDuplicate,
 }
 

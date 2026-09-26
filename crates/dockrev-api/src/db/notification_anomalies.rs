@@ -1,5 +1,6 @@
 use anyhow::Context as _;
 use rusqlite::{OptionalExtension as _, TransactionBehavior, params};
+use std::collections::HashMap;
 
 use super::Db;
 
@@ -135,6 +136,70 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn pending_anomaly_batch_is_reused_when_audit_adds_another_repo() {
+        let db = Db::open(std::path::Path::new(":memory:")).await.unwrap();
+        let first = db
+            .reconcile_notification_anomaly_states(
+                &["acme/api".to_string(), "acme/web".to_string()],
+                &[observation("missing")],
+                "2026-09-26T00:00:00Z",
+            )
+            .await
+            .unwrap();
+        let first_keys = first
+            .iter()
+            .map(|item| {
+                (
+                    item.owner.clone(),
+                    item.repo.clone(),
+                    item.state.clone(),
+                    item.occurrence_count,
+                )
+            })
+            .collect::<Vec<_>>();
+        let first_batch = db
+            .list_notification_anomaly_batch_ids(&first_keys)
+            .await
+            .unwrap();
+
+        let second = db
+            .reconcile_notification_anomaly_states(
+                &["acme/api".to_string(), "acme/web".to_string()],
+                &[
+                    observation("missing"),
+                    NotificationAnomalyObservation {
+                        owner: "acme".to_string(),
+                        repo: "web".to_string(),
+                        state: "conflict".to_string(),
+                        last_error: None,
+                        occurrence_count: 0,
+                    },
+                ],
+                "2026-09-26T00:01:00Z",
+            )
+            .await
+            .unwrap();
+        let second_keys = second
+            .iter()
+            .map(|item| {
+                (
+                    item.owner.clone(),
+                    item.repo.clone(),
+                    item.state.clone(),
+                    item.occurrence_count,
+                )
+            })
+            .collect::<Vec<_>>();
+        let second_batch = db
+            .list_notification_anomaly_batch_ids(&second_keys)
+            .await
+            .unwrap();
+
+        assert_eq!(first_batch.get("acme/api"), second_batch.get("acme/api"));
+        assert_eq!(second_batch.get("acme/api"), second_batch.get("acme/web"));
+    }
+
+    #[tokio::test]
     async fn stale_audit_does_not_regress_a_newer_anomaly_state() {
         let db = Db::open(std::path::Path::new(":memory:")).await.unwrap();
         let scope = vec!["acme/api".to_string()];
@@ -185,11 +250,21 @@ impl Db {
         self.call(move |conn| {
             let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
             let mut newly_active = Vec::new();
+            let mut batch_id = tx
+                .query_row(
+                    "SELECT notification_batch_id FROM notification_anomaly_states WHERE notification_pending = 1 AND notification_batch_id IS NOT NULL ORDER BY last_seen_at, owner, repo LIMIT 1",
+                    [],
+                    |row| row.get::<_, String>(0),
+                )
+                .optional()?;
+            if batch_id.is_none() && !observations.is_empty() {
+                batch_id = Some(crate::ids::new_notification_id());
+            }
 
             for observation in &observations {
                 let previous = tx
                     .query_row(
-                        "SELECT state, active, occurrence_count, notification_pending, last_seen_at FROM notification_anomaly_states WHERE owner = ?1 AND repo = ?2",
+                        "SELECT state, active, occurrence_count, notification_pending, notification_batch_id, last_seen_at FROM notification_anomaly_states WHERE owner = ?1 AND repo = ?2",
                         params![observation.owner, observation.repo],
                         |row| {
                             Ok((
@@ -197,7 +272,8 @@ impl Db {
                                 row.get::<_, i64>(1)? != 0,
                                 row.get::<_, i64>(2)?,
                                 row.get::<_, i64>(3)? != 0,
-                                row.get::<_, String>(4)?,
+                                row.get::<_, Option<String>>(4)?,
+                                row.get::<_, String>(5)?,
                             ))
                         },
                     )
@@ -206,14 +282,14 @@ impl Db {
                 match previous {
                     None => {
                         tx.execute(
-                            "INSERT INTO notification_anomaly_states (owner, repo, state, active, occurrence_count, last_error, last_seen_at, notification_pending) VALUES (?1, ?2, ?3, 1, 1, ?4, ?5, 1)",
-                            params![observation.owner, observation.repo, observation.state, observation.last_error, now],
+                            "INSERT INTO notification_anomaly_states (owner, repo, state, active, occurrence_count, last_error, last_seen_at, notification_pending, notification_batch_id) VALUES (?1, ?2, ?3, 1, 1, ?4, ?5, 1, ?6)",
+                            params![observation.owner, observation.repo, observation.state, observation.last_error, now, batch_id],
                         )?;
                         let mut current = observation.clone();
                         current.occurrence_count = 1;
                         newly_active.push(current);
                     }
-                    Some((previous_state, was_active, previous_occurrence_count, pending, last_seen_at)) => {
+                    Some((previous_state, was_active, previous_occurrence_count, pending, previous_batch_id, last_seen_at)) => {
                         if last_seen_at > now {
                             continue;
                         }
@@ -224,8 +300,15 @@ impl Db {
                             previous_occurrence_count
                         };
                         let notification_pending = changed || pending;
+                        let notification_batch_id = if pending {
+                            previous_batch_id.or_else(|| batch_id.clone())
+                        } else if changed {
+                            batch_id.clone()
+                        } else {
+                            previous_batch_id
+                        };
                         tx.execute(
-                            "UPDATE notification_anomaly_states SET state = ?3, active = 1, occurrence_count = ?4, last_error = ?5, last_seen_at = ?6, notification_pending = ?7 WHERE owner = ?1 AND repo = ?2 AND last_seen_at <= ?6",
+                            "UPDATE notification_anomaly_states SET state = ?3, active = 1, occurrence_count = ?4, last_error = ?5, last_seen_at = ?6, notification_pending = ?7, notification_batch_id = ?8 WHERE owner = ?1 AND repo = ?2 AND last_seen_at <= ?6",
                             params![
                                 observation.owner,
                                 observation.repo,
@@ -234,6 +317,7 @@ impl Db {
                                 observation.last_error,
                                 now,
                                 notification_pending,
+                                notification_batch_id,
                             ],
                         )?;
                         if changed || pending {
@@ -285,5 +369,38 @@ impl Db {
         })
         .await
         .context("mark notification anomaly states notified")
+    }
+
+    pub(crate) async fn list_notification_anomaly_batch_ids(
+        &self,
+        items: &[(String, String, String, i64)],
+    ) -> anyhow::Result<HashMap<String, String>> {
+        let keys = items.to_vec();
+        self.call(move |conn| {
+            let mut result = HashMap::new();
+            let mut stmt = conn.prepare(
+                "SELECT owner, repo, notification_batch_id FROM notification_anomaly_states",
+            )?;
+            let rows = stmt.query_map([], |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, Option<String>>(2)?,
+                ))
+            })?;
+            for row in rows {
+                let (owner, repo, batch_id) = row?;
+                if keys
+                    .iter()
+                    .any(|(key_owner, key_repo, _, _)| key_owner == &owner && key_repo == &repo)
+                    && let Some(batch_id) = batch_id
+                {
+                    result.insert(format!("{owner}/{repo}"), batch_id);
+                }
+            }
+            Ok(result)
+        })
+        .await
+        .context("list notification anomaly batch ids")
     }
 }
