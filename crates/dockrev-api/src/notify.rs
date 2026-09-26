@@ -471,10 +471,6 @@ pub async fn notify_ghcr_webhook_anomaly(
             )
         })
         .collect::<Vec<_>>();
-    let anomaly_batch_ids = state
-        .db
-        .list_notification_anomaly_batch_ids(&anomaly_state_keys)
-        .await?;
     if !is_event_enabled(&settings, NotificationEventKind::GhcrWebhookAnomaly) {
         state
             .db
@@ -482,6 +478,10 @@ pub async fn notify_ghcr_webhook_anomaly(
             .await?;
         return Ok(());
     }
+    let anomaly_batch_ids = state
+        .db
+        .list_notification_anomaly_batch_ids(&anomaly_state_keys)
+        .await?;
     let target_url = notification_target_url(state, &format!("queue/{}", event.job_id)).await?;
     let item = state
         .db
@@ -499,19 +499,47 @@ pub async fn notify_ghcr_webhook_anomaly(
             now_rfc3339,
         )
         .await?;
+    let sent_channel_records = state
+        .db
+        .list_notification_anomaly_sent_channels(&anomaly_state_keys)
+        .await?;
+    let previously_sent_channels = anomaly_state_keys
+        .iter()
+        .fold(
+            None::<std::collections::BTreeSet<String>>,
+            |shared, (owner, repo, _, _)| {
+                let channels = sent_channel_records
+                    .get(&format!("{owner}/{repo}"))
+                    .into_iter()
+                    .flatten()
+                    .cloned()
+                    .collect::<std::collections::BTreeSet<_>>();
+                Some(match shared {
+                    None => channels,
+                    Some(mut shared) => {
+                        shared.retain(|channel| channels.contains(channel));
+                        shared
+                    }
+                })
+            },
+        )
+        .unwrap_or_default();
     let results = send_ghcr_webhook_anomaly_with_badge(
         state,
         now_rfc3339,
         event,
         Some((&item.item.id, item.unread_count)),
+        &previously_sent_channels,
     )
     .await?;
-    if failed_delivery_error(&results).is_none() {
-        state
-            .db
-            .mark_notification_anomaly_states_notified(&anomaly_state_keys)
-            .await?;
-    }
+    state
+        .db
+        .record_notification_anomaly_delivery(
+            &anomaly_state_keys,
+            &successful_delivery_channels(&results),
+            failed_delivery_error(&results).is_none(),
+        )
+        .await?;
     Ok(())
 }
 

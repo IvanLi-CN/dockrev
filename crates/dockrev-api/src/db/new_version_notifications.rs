@@ -414,14 +414,14 @@ ON CONFLICT(identity_key) DO NOTHING
         let candidates = candidates.to_vec();
         self.call(move |conn| {
             let mut stmt = conn.prepare(
-                "SELECT job_id FROM new_version_notifications WHERE service_id = ?1 AND candidate_digest = ?2 AND status IN (?3, ?4) ORDER BY created_at ASC, id ASC LIMIT 1",
+            "SELECT job_id FROM new_version_notifications WHERE service_id = ?1 AND candidate_digest = ?2 AND status IN (?3, ?4, ?5) ORDER BY created_at ASC, id ASC LIMIT 1",
             )?;
             for (service_id, candidate_digest) in candidates {
                 let digest = normalize_candidate_digest(Some(&candidate_digest))
                     .ok_or_else(|| rusqlite::Error::InvalidParameterName("candidate_digest".into()))?;
                 if let Some(job_id) = stmt
                     .query_row(
-                        params![service_id, digest, STATUS_PENDING, STATUS_FAILED],
+                        params![service_id, digest, STATUS_PENDING, STATUS_FAILED, STATUS_SENT],
                         |row| row.get::<_, String>(0),
                     )
                     .optional()?

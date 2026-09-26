@@ -14,7 +14,7 @@
 - `REQ-NPB-007` and `REQ-NPB-009`: 真实 Push 使用 `notificationId` 和绝对 `unreadCount`；Service Worker 支持 Badge、受控页点击确认和冷启动交接，不依赖 Periodic Background Sync。
 - `REQ-NPB-008` and `REQ-NPB-011`: AppShell 在认证分支接入启动、恢复、焦点、联网、可见轮询、BroadcastChannel 和 Badging API 能力检测。
 - `REQ-NPB-010`: Topbar Bell、桌面/移动抽屉、显式单条已读、全部已读和点击后导航已实现。
-- `REQ-NPB-012`: 任务终态与 `job_finished` 收件箱项在同一 SQLite 事务提交；检查任务的新版本收件箱项也在终态事务中预写，候选记录与对应收件箱项随后在同一预留事务中关联，其他收件箱项先于外部投递写入。候选通知按 `service + candidate digest` 保持活动去重，并保留 canonical check-job identity，使失败重试、进程崩溃后的 pending 重试和候选子集观察复用同一收件箱项；GHCR pending 异常保留稳定批次身份，恢复会结束旧批次，追加异常和恢复后的再次异常分别生成正确的通知机会。DB identity key、状态账本、失败重试渠道继承和绝对读响应测试已覆盖核心并发/重试边界。
+- `REQ-NPB-012`: 任务终态与 `job_finished` 收件箱项在同一 SQLite 事务提交；检查任务的新版本收件箱项也在终态事务中预写，候选记录与对应收件箱项随后在同一预留事务中关联，其他收件箱项先于外部投递写入。候选通知按 `service + candidate digest` 保持活动去重，并保留 canonical check-job identity，使失败重试、进程崩溃后的 pending 重试和候选子集观察复用同一收件箱项；GHCR pending 异常保留稳定批次身份，恢复会保留待投递状态并在下次审计重放，状态变化使用新的发生批次；每个异常账本还记录已成功的外部渠道，部分失败重试不会重复投递成功渠道。DB identity key、状态账本、失败重试渠道继承和绝对读响应测试已覆盖核心并发/重试边界。
 
 ## Existing Foundations
 
@@ -33,6 +33,7 @@
 ## Rollout Facts
 
 - 服务端未读项是唯一计数真相；Push 关闭时的前台 REST 同步是必需兜底。
+- 受控页面收到 Push 后触发带 single-flight 的 REST 同步；Service Worker 只有在没有可用页面客户端时才直接使用服务端查询结果更新图标 Badge，避免延迟 Push 的绝对值覆盖较新的前台状态。
 - 不引入 Service Worker 常驻定时器，不把 Periodic Background Sync 作为正确性依赖。
 - Badge 能力缺失只影响图标表现，不影响收件箱和服务端未读状态。
 - Web Push 多订阅发送对临时失败订阅做一次即时重试，持久失败返回失败结果；带 `notificationId` 的系统通知使用稳定 tag，重试不会在浏览器中重复堆叠通知。

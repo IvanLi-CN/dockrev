@@ -200,6 +200,61 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn changed_pending_anomaly_gets_a_new_occurrence_identity() {
+        let db = Db::open(std::path::Path::new(":memory:")).await.unwrap();
+        let scope = vec!["acme/api".to_string()];
+        let first = db
+            .reconcile_notification_anomaly_states(
+                &scope,
+                &[observation("missing")],
+                "2026-09-26T00:00:00Z",
+            )
+            .await
+            .unwrap();
+        let first_keys = first
+            .iter()
+            .map(|item| {
+                (
+                    item.owner.clone(),
+                    item.repo.clone(),
+                    item.state.clone(),
+                    item.occurrence_count,
+                )
+            })
+            .collect::<Vec<_>>();
+        let first_batch = db
+            .list_notification_anomaly_batch_ids(&first_keys)
+            .await
+            .unwrap();
+
+        let changed = db
+            .reconcile_notification_anomaly_states(
+                &scope,
+                &[observation("conflict")],
+                "2026-09-26T00:01:00Z",
+            )
+            .await
+            .unwrap();
+        let changed_keys = changed
+            .iter()
+            .map(|item| {
+                (
+                    item.owner.clone(),
+                    item.repo.clone(),
+                    item.state.clone(),
+                    item.occurrence_count,
+                )
+            })
+            .collect::<Vec<_>>();
+        let changed_batch = db
+            .list_notification_anomaly_batch_ids(&changed_keys)
+            .await
+            .unwrap();
+
+        assert_ne!(first_batch.get("acme/api"), changed_batch.get("acme/api"));
+    }
+
+    #[tokio::test]
     async fn recovery_ends_pending_batch_before_a_new_occurrence() {
         let db = Db::open(std::path::Path::new(":memory:")).await.unwrap();
         let scope = vec!["acme/api".to_string()];
@@ -227,9 +282,12 @@ mod tests {
             .await
             .unwrap();
 
-        db.reconcile_notification_anomaly_states(&scope, &[], "2026-09-26T00:01:00Z")
+        let recovered = db
+            .reconcile_notification_anomaly_states(&scope, &[], "2026-09-26T00:01:00Z")
             .await
             .unwrap();
+        assert_eq!(recovered, first);
+        mark_notified(&db, &recovered).await;
         let recurring = db
             .reconcile_notification_anomaly_states(
                 &scope,
@@ -255,6 +313,51 @@ mod tests {
             .unwrap();
 
         assert_ne!(first_batch.get("acme/api"), recurring_batch.get("acme/api"));
+    }
+
+    #[tokio::test]
+    async fn anomaly_delivery_ledger_skips_successful_channels_on_retry() {
+        let db = Db::open(std::path::Path::new(":memory:")).await.unwrap();
+        let scope = vec!["acme/api".to_string()];
+        let active = db
+            .reconcile_notification_anomaly_states(
+                &scope,
+                &[observation("missing")],
+                "2026-09-26T00:00:00Z",
+            )
+            .await
+            .unwrap();
+        let keys = active
+            .iter()
+            .map(|item| {
+                (
+                    item.owner.clone(),
+                    item.repo.clone(),
+                    item.state.clone(),
+                    item.occurrence_count,
+                )
+            })
+            .collect::<Vec<_>>();
+
+        db.record_notification_anomaly_delivery(&keys, &["webhook".to_string()], false)
+            .await
+            .unwrap();
+        let channels = db
+            .list_notification_anomaly_sent_channels(&keys)
+            .await
+            .unwrap();
+        assert_eq!(channels.get("acme/api"), Some(&vec!["webhook".to_string()]));
+
+        db.record_notification_anomaly_delivery(&keys, &[], true)
+            .await
+            .unwrap();
+        assert_eq!(
+            db.list_notification_anomaly_sent_channels(&keys)
+                .await
+                .unwrap()
+                .get("acme/api"),
+            Some(&Vec::new())
+        );
     }
 
     #[tokio::test]
@@ -308,16 +411,14 @@ impl Db {
         self.call(move |conn| {
             let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
             let mut newly_active = Vec::new();
-            let mut batch_id = tx
+            let batch_id = tx
                 .query_row(
                     "SELECT notification_batch_id FROM notification_anomaly_states WHERE notification_pending = 1 AND notification_batch_id IS NOT NULL ORDER BY last_seen_at, owner, repo LIMIT 1",
                     [],
                     |row| row.get::<_, String>(0),
                 )
                 .optional()?;
-            if batch_id.is_none() && !observations.is_empty() {
-                batch_id = Some(crate::ids::new_notification_id());
-            }
+            let mut changed_batch_id = None;
 
             for observation in &observations {
                 let previous = tx
@@ -358,10 +459,14 @@ impl Db {
                             previous_occurrence_count
                         };
                         let notification_pending = changed || pending;
-                        let notification_batch_id = if pending {
+                        let notification_batch_id = if changed {
+                            Some(
+                                changed_batch_id
+                                    .get_or_insert_with(crate::ids::new_notification_id)
+                                    .clone(),
+                            )
+                        } else if pending {
                             previous_batch_id.or_else(|| batch_id.clone())
-                        } else if changed {
-                            batch_id.clone()
                         } else {
                             previous_batch_id
                         };
@@ -395,8 +500,31 @@ impl Db {
                     .iter()
                     .any(|item| item.owner == owner && item.repo == repo)
                 {
+                    let pending = tx
+                        .query_row(
+                            "SELECT state, occurrence_count, last_error, notification_pending FROM notification_anomaly_states WHERE owner = ?1 AND repo = ?2",
+                            params![owner, repo],
+                            |row| {
+                                Ok((
+                                    row.get::<_, String>(0)?,
+                                    row.get::<_, i64>(1)?,
+                                    row.get::<_, Option<String>>(2)?,
+                                    row.get::<_, i64>(3)? != 0,
+                                ))
+                            },
+                        )
+                        .optional()?;
+                    if let Some((state, occurrence_count, last_error, true)) = pending {
+                        newly_active.push(NotificationAnomalyObservation {
+                            owner: owner.to_string(),
+                            repo: repo.to_string(),
+                            state,
+                            last_error,
+                            occurrence_count,
+                        });
+                    }
                     tx.execute(
-                        "UPDATE notification_anomaly_states SET active = 0, notification_pending = 0, notification_batch_id = NULL, last_seen_at = ?3 WHERE owner = ?1 AND repo = ?2 AND last_seen_at <= ?3",
+                        "UPDATE notification_anomaly_states SET active = 0, last_seen_at = ?3 WHERE owner = ?1 AND repo = ?2 AND last_seen_at <= ?3",
                         params![owner, repo, now],
                     )?;
                 }
@@ -418,7 +546,7 @@ impl Db {
             let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
             for (owner, repo, state, occurrence_count) in items {
                 tx.execute(
-                    "UPDATE notification_anomaly_states SET notification_pending = 0 WHERE owner = ?1 AND repo = ?2 AND state = ?3 AND occurrence_count = ?4",
+                    "UPDATE notification_anomaly_states SET notification_pending = 0, notification_batch_id = NULL, notification_sent_channels_json = '[]' WHERE owner = ?1 AND repo = ?2 AND state = ?3 AND occurrence_count = ?4",
                     params![owner, repo, state, occurrence_count],
                 )?;
             }
@@ -427,6 +555,83 @@ impl Db {
         })
         .await
         .context("mark notification anomaly states notified")
+    }
+
+    pub(crate) async fn list_notification_anomaly_sent_channels(
+        &self,
+        items: &[(String, String, String, i64)],
+    ) -> anyhow::Result<HashMap<String, Vec<String>>> {
+        let items = items.to_vec();
+        self.call(move |conn| {
+            let mut result = HashMap::new();
+            for (owner, repo, state, occurrence_count) in items {
+                let Some(raw) = conn
+                    .query_row(
+                        "SELECT notification_sent_channels_json FROM notification_anomaly_states WHERE owner = ?1 AND repo = ?2 AND state = ?3 AND occurrence_count = ?4",
+                        params![owner, repo, state, occurrence_count],
+                        |row| row.get::<_, String>(0),
+                    )
+                    .optional()?
+                else {
+                    continue;
+                };
+                result.insert(
+                    format!("{owner}/{repo}"),
+                    serde_json::from_str::<Vec<String>>(&raw).unwrap_or_default(),
+                );
+            }
+            Ok(result)
+        })
+        .await
+        .context("list notification anomaly sent channels")
+    }
+
+    pub(crate) async fn record_notification_anomaly_delivery(
+        &self,
+        items: &[(String, String, String, i64)],
+        successful_channels: &[String],
+        complete: bool,
+    ) -> anyhow::Result<()> {
+        let items = items.to_vec();
+        let successful_channels = successful_channels.to_vec();
+        self.call(move |conn| {
+            let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
+            for (owner, repo, state, occurrence_count) in items {
+                let existing = tx
+                    .query_row(
+                        "SELECT notification_sent_channels_json FROM notification_anomaly_states WHERE owner = ?1 AND repo = ?2 AND state = ?3 AND occurrence_count = ?4",
+                        params![owner, repo, state, occurrence_count],
+                        |row| row.get::<_, String>(0),
+                    )
+                    .optional()?;
+                let mut channels = existing
+                    .as_deref()
+                    .and_then(|raw| serde_json::from_str::<std::collections::BTreeSet<String>>(raw).ok())
+                    .unwrap_or_default();
+                channels.extend(successful_channels.iter().cloned());
+                if complete {
+                    tx.execute(
+                        "UPDATE notification_anomaly_states SET notification_pending = 0, notification_batch_id = NULL, notification_sent_channels_json = '[]' WHERE owner = ?1 AND repo = ?2 AND state = ?3 AND occurrence_count = ?4",
+                        params![owner, repo, state, occurrence_count],
+                    )?;
+                } else {
+                    tx.execute(
+                        "UPDATE notification_anomaly_states SET notification_sent_channels_json = ?5 WHERE owner = ?1 AND repo = ?2 AND state = ?3 AND occurrence_count = ?4",
+                        params![
+                            owner,
+                            repo,
+                            state,
+                            occurrence_count,
+                            serde_json::to_string(&channels)?,
+                        ],
+                    )?;
+                }
+            }
+            tx.commit()?;
+            Ok(())
+        })
+        .await
+        .context("record notification anomaly delivery")
     }
 
     pub(crate) async fn list_notification_anomaly_batch_ids(

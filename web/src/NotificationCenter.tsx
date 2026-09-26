@@ -30,6 +30,7 @@ const COLD_START_ID = 'dockrevNotificationId'
 const COLD_START_TARGET = 'dockrevNotificationTarget'
 const CLICK_MESSAGE = 'DOCKREV_NOTIFICATION_CLICK'
 const CLICK_ACK = 'DOCKREV_NOTIFICATION_CLICK_ACK'
+const PUSH_MESSAGE = 'DOCKREV_NOTIFICATION_PUSH'
 
 type NotificationBroadcast = {
   type: 'unread-count'
@@ -89,15 +90,15 @@ export function NotificationProvider(props: { children: ReactNode }) {
   const syncInvalidatedRef = useRef(false)
   const mutationRevisionRef = useRef(0)
   const listRevisionRef = useRef(0)
-  const hasAuthoritativeUnreadCountRef = useRef(false)
   const isOpenRef = useRef(false)
   const itemsLoadedRef = useRef(false)
   const nextCursorRef = useRef<string | null>(null)
   const [nextCursor, setNextCursor] = useState<string | null>(null)
 
   const applyUnreadCount = useCallback((value: number) => {
-    hasAuthoritativeUnreadCountRef.current = true
-    setUnreadCount(clampUnreadCount(value))
+    const nextCount = clampUnreadCount(value)
+    setUnreadCount(nextCount)
+    setNotificationBadge(nextCount)
   }, [])
 
   const sync = useCallback(
@@ -229,11 +230,6 @@ export function NotificationProvider(props: { children: ReactNode }) {
   }, [applyUnreadCount])
 
   useEffect(() => {
-    if (!hasAuthoritativeUnreadCountRef.current) return
-    setNotificationBadge(unreadCount)
-  }, [unreadCount])
-
-  useEffect(() => {
     void sync(false)
 
     const onVisibilityChange = () => {
@@ -302,12 +298,16 @@ export function NotificationProvider(props: { children: ReactNode }) {
   useEffect(() => {
     const onServiceWorkerMessage = (event: MessageEvent) => {
       const data = event.data
+      if (data?.type === PUSH_MESSAGE) {
+        void sync(isOpenRef.current)
+        return
+      }
       if (!data || data.type !== CLICK_MESSAGE) return
       void acknowledgeClick(data.notificationId, data.url, event.ports?.[0])
     }
     navigator.serviceWorker?.addEventListener('message', onServiceWorkerMessage)
     return () => navigator.serviceWorker?.removeEventListener('message', onServiceWorkerMessage)
-  }, [acknowledgeClick])
+  }, [acknowledgeClick, sync])
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search)

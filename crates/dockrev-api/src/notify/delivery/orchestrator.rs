@@ -120,6 +120,7 @@ pub(crate) async fn send_ghcr_webhook_anomaly_with_badge(
     now_rfc3339: &str,
     event: GhcrWebhookAnomalyEvent<'_>,
     badge: Option<(&str, u64)>,
+    skip_channels: &std::collections::BTreeSet<String>,
 ) -> anyhow::Result<Value> {
     let settings = state.db.get_notification_settings().await?;
     if !is_event_enabled(&settings, NotificationEventKind::GhcrWebhookAnomaly) {
@@ -134,7 +135,7 @@ pub(crate) async fn send_ghcr_webhook_anomaly_with_badge(
 
     let mut results = serde_json::Map::new();
 
-    if settings.webhook_enabled {
+    if settings.webhook_enabled && !skip_channels.contains("webhook") {
         let r = async {
             let payload = build_ghcr_webhook_anomaly_payload_v2(
                 state,
@@ -152,7 +153,7 @@ pub(crate) async fn send_ghcr_webhook_anomaly_with_badge(
         results.insert("webhook".to_string(), result_value(r));
     }
 
-    if settings.telegram_enabled {
+    if settings.telegram_enabled && !skip_channels.contains("telegram") {
         let r = async {
             let payload = build_ghcr_webhook_anomaly_payload_v2(
                 state,
@@ -175,7 +176,7 @@ pub(crate) async fn send_ghcr_webhook_anomaly_with_badge(
         results.insert("telegram".to_string(), telegram_result_value(r));
     }
 
-    if settings.email_enabled {
+    if settings.email_enabled && !skip_channels.contains("email") {
         let r = async {
             let payload = build_ghcr_webhook_anomaly_payload_v2(
                 state,
@@ -192,7 +193,7 @@ pub(crate) async fn send_ghcr_webhook_anomaly_with_badge(
         results.insert("email".to_string(), result_value(r));
     }
 
-    if settings.webpush_enabled {
+    if settings.webpush_enabled && !skip_channels.contains("webPush") {
         let r = async {
             let payload = build_ghcr_webhook_anomaly_payload_v2(
                 state,

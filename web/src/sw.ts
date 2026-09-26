@@ -55,8 +55,70 @@ self.addEventListener('message', (event) => {
   }
 })
 
+type PushNotificationData = {
+  title?: string
+  body?: string
+  url?: string
+  notificationId?: string
+  unreadCount?: number
+}
+
+function validPushUnreadCount(data: PushNotificationData): number | null {
+  if (
+    typeof data.unreadCount !== 'number' ||
+    !Number.isFinite(data.unreadCount) ||
+    data.unreadCount < 0
+  ) {
+    return null
+  }
+  return Math.max(0, Math.floor(data.unreadCount))
+}
+
+async function authoritativePushUnreadCount(data: PushNotificationData): Promise<number | null> {
+  try {
+    const response = await fetch(
+      new URL(`${appBasePath || ''}/api/notifications/unread-count`, self.registration.scope),
+      { credentials: 'include', headers: { Accept: 'application/json' } },
+    )
+    if (response.ok) {
+      const payload = (await response.json()) as { unreadCount?: unknown }
+      if (typeof payload.unreadCount === 'number' && Number.isFinite(payload.unreadCount)) {
+        return Math.max(0, Math.floor(payload.unreadCount))
+      }
+    }
+  } catch {
+    // Fall back to the signed absolute payload when the service is unreachable.
+  }
+  return validPushUnreadCount(data)
+}
+
+async function applyPushBadge(data: PushNotificationData): Promise<void> {
+  const clients = await self.clients.matchAll({ type: 'window', includeUncontrolled: true })
+  if (clients.length > 0) {
+    for (const client of clients) {
+      client.postMessage({ type: 'DOCKREV_NOTIFICATION_PUSH', notificationId: data.notificationId })
+    }
+    return
+  }
+  const unreadCount = await authoritativePushUnreadCount(data)
+  if (unreadCount == null) return
+  const badgeNavigator = navigator as WorkerNavigator & {
+    setAppBadge?: (count?: number) => Promise<void>
+    clearAppBadge?: () => Promise<void>
+  }
+  try {
+    if (unreadCount === 0) {
+      await badgeNavigator.clearAppBadge?.()
+    } else {
+      await badgeNavigator.setAppBadge?.(unreadCount)
+    }
+  } catch {
+    // Badging is optional and must not prevent the notification from showing.
+  }
+}
+
 self.addEventListener('push', (event) => {
-  let data: { title?: string; body?: string; url?: string; notificationId?: string; unreadCount?: number } = {}
+  let data: PushNotificationData = {}
   try {
     const parsed = event.data?.json() as unknown
     data = parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? (parsed as typeof data) : {}
@@ -65,27 +127,14 @@ self.addEventListener('push', (event) => {
   }
 
   const title = data.title || 'Dockrev'
-  const badgeNavigator = navigator as WorkerNavigator & {
-    setAppBadge?: (count?: number) => Promise<void>
-    clearAppBadge?: () => Promise<void>
-  }
   event.waitUntil(
     (async () => {
       if (
-        typeof data.unreadCount === 'number' &&
-        Number.isFinite(data.unreadCount) &&
-        data.unreadCount >= 0
+        typeof data.notificationId === 'string' &&
+        data.notificationId.trim().length > 0 &&
+        validPushUnreadCount(data) != null
       ) {
-        const unreadCount = Math.max(0, Math.floor(data.unreadCount))
-        try {
-          if (unreadCount === 0) {
-            await badgeNavigator.clearAppBadge?.()
-          } else {
-            await badgeNavigator.setAppBadge?.(unreadCount)
-          }
-        } catch {
-          // Badging is optional and must not prevent the notification from showing.
-        }
+        await applyPushBadge(data)
       }
       await self.registration.showNotification(title, {
         body: data.body || '',
