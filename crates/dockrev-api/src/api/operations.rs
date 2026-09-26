@@ -698,9 +698,46 @@ pub(crate) async fn complete_check_job(
     match outcome {
         Ok(summary) => {
             let summary = merge_job_summary(summary, extra_summary.as_ref());
+            let notification = if new_version_notification_reason(reason, &summary).is_some() {
+                let mut discovered_services = notify::extract_new_versions_discovered(&summary);
+                if summary_emits_new_version_notification(&summary)
+                    && let Some(matched_service_ids) = summary_matched_service_ids(&summary)
+                {
+                    discovered_services
+                        .retain(|service| matched_service_ids.contains(&service.service_id));
+                }
+                match notify::prepare_new_version_notification_item_for_finish(
+                    state,
+                    job_id,
+                    finished_at,
+                    &discovered_services,
+                )
+                .await
+                {
+                    Ok(notification) => notification,
+                    Err(error) => {
+                        tracing::warn!(
+                            job_id = %job_id,
+                            error = %error,
+                            "failed to prepare discovered-version notification before finishing check job"
+                        );
+                        None
+                    }
+                }
+            } else {
+                None
+            };
             if let Err(e) = state
                 .db
-                .finish_job(job_id, "success", finished_at, &summary)
+                .finish_job_with_archive_and_settlement_and_notification(
+                    job_id,
+                    "success",
+                    finished_at,
+                    &summary,
+                    None,
+                    None,
+                    notification.as_ref(),
+                )
                 .await
             {
                 tracing::error!(job_id = %job_id, error = %e, "failed to finish check job");

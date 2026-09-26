@@ -1383,6 +1383,8 @@ async fn run_audit_job(state: &Arc<AppState>, job_id: &str) -> GhcrJobCounters {
         );
         persist_progress(state, job_id, &progress).await;
 
+        let _repo_guard = lock_repo_sync(owner, repo).await;
+
         let _ = state
             .db
             .set_github_packages_repo_webhook_job_state(

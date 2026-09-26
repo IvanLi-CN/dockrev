@@ -200,6 +200,64 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn recovery_ends_pending_batch_before_a_new_occurrence() {
+        let db = Db::open(std::path::Path::new(":memory:")).await.unwrap();
+        let scope = vec!["acme/api".to_string()];
+        let first = db
+            .reconcile_notification_anomaly_states(
+                &scope,
+                &[observation("missing")],
+                "2026-09-26T00:00:00Z",
+            )
+            .await
+            .unwrap();
+        let first_keys = first
+            .iter()
+            .map(|item| {
+                (
+                    item.owner.clone(),
+                    item.repo.clone(),
+                    item.state.clone(),
+                    item.occurrence_count,
+                )
+            })
+            .collect::<Vec<_>>();
+        let first_batch = db
+            .list_notification_anomaly_batch_ids(&first_keys)
+            .await
+            .unwrap();
+
+        db.reconcile_notification_anomaly_states(&scope, &[], "2026-09-26T00:01:00Z")
+            .await
+            .unwrap();
+        let recurring = db
+            .reconcile_notification_anomaly_states(
+                &scope,
+                &[observation("missing")],
+                "2026-09-26T00:02:00Z",
+            )
+            .await
+            .unwrap();
+        let recurring_keys = recurring
+            .iter()
+            .map(|item| {
+                (
+                    item.owner.clone(),
+                    item.repo.clone(),
+                    item.state.clone(),
+                    item.occurrence_count,
+                )
+            })
+            .collect::<Vec<_>>();
+        let recurring_batch = db
+            .list_notification_anomaly_batch_ids(&recurring_keys)
+            .await
+            .unwrap();
+
+        assert_ne!(first_batch.get("acme/api"), recurring_batch.get("acme/api"));
+    }
+
+    #[tokio::test]
     async fn stale_audit_does_not_regress_a_newer_anomaly_state() {
         let db = Db::open(std::path::Path::new(":memory:")).await.unwrap();
         let scope = vec!["acme/api".to_string()];
@@ -338,7 +396,7 @@ impl Db {
                     .any(|item| item.owner == owner && item.repo == repo)
                 {
                     tx.execute(
-                        "UPDATE notification_anomaly_states SET active = 0, last_seen_at = ?3 WHERE owner = ?1 AND repo = ?2 AND last_seen_at <= ?3",
+                        "UPDATE notification_anomaly_states SET active = 0, notification_pending = 0, notification_batch_id = NULL, last_seen_at = ?3 WHERE owner = ?1 AND repo = ?2 AND last_seen_at <= ?3",
                         params![owner, repo, now],
                     )?;
                 }

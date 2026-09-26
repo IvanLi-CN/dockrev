@@ -85,14 +85,18 @@ export function NotificationProvider(props: { children: ReactNode }) {
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const syncRef = useRef<Promise<void> | null>(null)
+  const loadMoreRef = useRef<Promise<void> | null>(null)
   const syncInvalidatedRef = useRef(false)
   const mutationRevisionRef = useRef(0)
+  const listRevisionRef = useRef(0)
+  const hasAuthoritativeUnreadCountRef = useRef(false)
   const isOpenRef = useRef(false)
   const itemsLoadedRef = useRef(false)
   const nextCursorRef = useRef<string | null>(null)
   const [nextCursor, setNextCursor] = useState<string | null>(null)
 
   const applyUnreadCount = useCallback((value: number) => {
+    hasAuthoritativeUnreadCountRef.current = true
     setUnreadCount(clampUnreadCount(value))
   }, [])
 
@@ -101,12 +105,18 @@ export function NotificationProvider(props: { children: ReactNode }) {
       if (syncRef.current) return syncRef.current
       const mutationRevision = mutationRevisionRef.current
       const task = (async () => {
+        const listRevision = withItems ? listRevisionRef.current + 1 : listRevisionRef.current
+        if (withItems) listRevisionRef.current = listRevision
         setLoading(true)
         setError(null)
         try {
           if (withItems || isOpenRef.current) {
             const response = await getNotificationInbox({ limit: 50 })
-            if (syncInvalidatedRef.current || mutationRevision !== mutationRevisionRef.current) {
+            if (
+              syncInvalidatedRef.current ||
+              mutationRevision !== mutationRevisionRef.current ||
+              listRevision !== listRevisionRef.current
+            ) {
               syncInvalidatedRef.current = false
               window.setTimeout(() => void sync(isOpenRef.current), 0)
               return
@@ -189,26 +199,37 @@ export function NotificationProvider(props: { children: ReactNode }) {
 
   const loadMore = useCallback(async () => {
     const cursor = nextCursorRef.current
-    if (!cursor || syncRef.current) return
+    if (!cursor || syncRef.current || loadMoreRef.current) return
     const mutationRevision = mutationRevisionRef.current
-    setLoading(true)
-    setError(null)
-    try {
-      const response = await getNotificationInbox({ limit: 50, cursor })
-      setItems((current) => [...current, ...response.items])
-      nextCursorRef.current = response.nextCursor ?? null
-      setNextCursor(response.nextCursor ?? null)
-      if (mutationRevision === mutationRevisionRef.current) {
-        applyUnreadCount(response.unreadCount)
+    const listRevision = listRevisionRef.current
+    const task = (async () => {
+      setLoading(true)
+      setError(null)
+      try {
+        const response = await getNotificationInbox({ limit: 50, cursor })
+        if (listRevision !== listRevisionRef.current) return
+        setItems((current) => [...current, ...response.items])
+        nextCursorRef.current = response.nextCursor ?? null
+        setNextCursor(response.nextCursor ?? null)
+        if (mutationRevision === mutationRevisionRef.current) {
+          applyUnreadCount(response.unreadCount)
+        }
+      } catch (cause) {
+        setError(cause instanceof Error ? cause.message : '通知同步失败')
+      } finally {
+        setLoading(false)
       }
-    } catch (cause) {
-      setError(cause instanceof Error ? cause.message : '通知同步失败')
+    })()
+    loadMoreRef.current = task
+    try {
+      await task
     } finally {
-      setLoading(false)
+      if (loadMoreRef.current === task) loadMoreRef.current = null
     }
   }, [applyUnreadCount])
 
   useEffect(() => {
+    if (!hasAuthoritativeUnreadCountRef.current) return
     setNotificationBadge(unreadCount)
   }, [unreadCount])
 
@@ -257,13 +278,11 @@ export function NotificationProvider(props: { children: ReactNode }) {
       try {
         const item = items.find((candidate) => candidate.id === notificationId)
         mutationRevisionRef.current += 1
-        await markNotificationRead(notificationId)
-        const response = await getNotificationUnreadCount()
+        const response = await markNotificationRead(notificationId)
         applyUnreadCount(response.unreadCount)
         setItems((current) =>
           current.map((candidate) =>
-            candidate.id === notificationId
-              ? { ...candidate, readAt: new Date().toISOString() }
+            candidate.id === notificationId ? { ...candidate, readAt: response.readAt }
               : candidate,
           ),
         )

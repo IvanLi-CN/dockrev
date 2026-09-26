@@ -337,20 +337,22 @@ impl Db {
         &self,
         pendings: &[NewVersionNotificationPending],
         draft: &super::NotificationItemDraft,
-    ) -> anyhow::Result<Option<(Vec<String>, String, u64)>> {
+    ) -> anyhow::Result<Option<(Vec<(String, String)>, String, u64)>> {
         let pendings = pendings.to_vec();
         let draft = draft.clone();
         self.call(move |conn| {
             let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
-            let mut reserved_ids = Vec::new();
+            let mut reservations = Vec::new();
             for pending in &pendings {
-                if let NewVersionNotificationReserveResult::Reserved(id) =
-                    reserve_new_version_notification_tx(&tx, pending)?
-                {
-                    reserved_ids.push(id);
+                match reserve_new_version_notification_tx(&tx, pending)? {
+                    NewVersionNotificationReserveResult::Reserved(id)
+                    | NewVersionNotificationReserveResult::AlreadyPending(id) => {
+                        reservations.push((id, pending.id.clone()));
+                    }
+                    NewVersionNotificationReserveResult::SkippedDuplicate => {}
                 }
             }
-            if reserved_ids.is_empty() {
+            if reservations.is_empty() {
                 tx.commit()?;
                 return Ok(None);
             }
@@ -383,6 +385,10 @@ ON CONFLICT(identity_key) DO NOTHING
                 [],
                 |row| row.get::<_, u64>(0),
             )?;
+            let reserved_ids = reservations
+                .iter()
+                .map(|(record_id, _)| record_id.clone())
+                .collect::<Vec<_>>();
             let placeholders = std::iter::repeat_n("?", reserved_ids.len())
                 .collect::<Vec<_>>()
                 .join(",");
@@ -395,7 +401,7 @@ ON CONFLICT(identity_key) DO NOTHING
                 ),
             )?;
             tx.commit()?;
-            Ok(Some((reserved_ids, item_id, unread_count)))
+            Ok(Some((reservations, item_id, unread_count)))
         })
         .await
         .context("reserve new version notifications with item")
@@ -873,6 +879,41 @@ mod tests {
                 .count(),
             1
         );
+    }
+
+    #[tokio::test]
+    async fn pending_reservation_with_item_is_retried_after_delivery_crash() {
+        let db = Db::open(Path::new(":memory:")).await.unwrap();
+        let first = pending("nvn_1", "svc_1", "sha256:new");
+        let second = pending("nvn_2", "svc_1", "sha256:new");
+        let draft = crate::db::NotificationItemDraft {
+            id: "item_1".to_string(),
+            kind: "new_version_discovered".to_string(),
+            identity_key: "new_version_discovered:chk_1".to_string(),
+            title: "发现新版本".to_string(),
+            body: "body".to_string(),
+            target_url: "/queue/chk_1".to_string(),
+            source_job_id: Some("chk_1".to_string()),
+            created_at: "2026-03-09T00:00:00Z".to_string(),
+        };
+
+        let first_result = db
+            .reserve_new_version_notifications_with_item(&[first], &draft)
+            .await
+            .unwrap()
+            .unwrap();
+        let retry_result = db
+            .reserve_new_version_notifications_with_item(&[second], &draft)
+            .await
+            .unwrap()
+            .unwrap();
+
+        assert_eq!(first_result.0.len(), 1);
+        assert_eq!(
+            retry_result.0,
+            vec![("nvn_1".to_string(), "nvn_2".to_string())]
+        );
+        assert_eq!(first_result.1, retry_result.1);
     }
 
     #[tokio::test]

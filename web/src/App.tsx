@@ -496,35 +496,41 @@ export default function App() {
 
   if (authFailure) {
     return (
-      <AppShell
-        route={route}
-        title={resolvedHead.title}
-        pageSubtitle={resolvedHead.pageSubtitle}
-        topActions={null}
-        authIdentity={authIdentity}
-      >
-        <ManagementEventsStatusBanner />
-        <UnauthorizedPage authDetails={authFailure} />
-      </AppShell>
+      <NotificationProvider>
+        <AppShell
+          route={route}
+          title={resolvedHead.title}
+          pageSubtitle={resolvedHead.pageSubtitle}
+          topActions={null}
+          authIdentity={authIdentity}
+        >
+          <ManagementEventsStatusBanner />
+          <UnauthorizedPage authDetails={authFailure} />
+        </AppShell>
+      </NotificationProvider>
     );
   }
 
   if (route.name === "deploy-check") {
     return (
-      <>
-        <DeployWelcomePage />
-        <PwaUpdateBubble />
-      </>
+      <NotificationProvider>
+        <>
+          <DeployWelcomePage />
+          <PwaUpdateBubble />
+        </>
+      </NotificationProvider>
     );
   }
 
   if (deployCheckGate !== "pass") {
     return (
-      <div className="deployGateLoading" role="status" aria-live="polite">
-        {deployCheckGate === "loading"
-          ? "正在验证部署检查…"
-          : "部署检查未通过，正在打开故障门禁…"}
-      </div>
+      <NotificationProvider>
+        <div className="deployGateLoading" role="status" aria-live="polite">
+          {deployCheckGate === "loading"
+            ? "正在验证部署检查…"
+            : "部署检查未通过，正在打开故障门禁…"}
+        </div>
+      </NotificationProvider>
     );
   }
 

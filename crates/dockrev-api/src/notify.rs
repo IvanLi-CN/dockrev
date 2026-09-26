@@ -114,6 +114,83 @@ pub async fn prepare_job_notification_item_for_finish(
     prepare_job_notification_item(state, job_id, status, now_rfc3339, summary).await
 }
 
+pub async fn prepare_job_notification_item_for_finish_best_effort(
+    state: &AppState,
+    should_notify: bool,
+    job_id: &str,
+    status: &str,
+    now_rfc3339: &str,
+    summary: &Value,
+) -> Option<crate::db::NotificationItemDraft> {
+    match prepare_job_notification_item_for_finish(
+        state,
+        should_notify,
+        job_id,
+        status,
+        now_rfc3339,
+        summary,
+    )
+    .await
+    {
+        Ok(notification) => notification,
+        Err(error) => {
+            tracing::warn!(job_id = %job_id, error = %error, "failed to prepare job notification before finishing job");
+            None
+        }
+    }
+}
+
+pub async fn prepare_new_version_notification_item_for_finish(
+    state: &AppState,
+    check_job_id: &str,
+    now_rfc3339: &str,
+    discovered_services: &[NewVersionDiscoveredService],
+) -> anyhow::Result<Option<crate::db::NotificationItemDraft>> {
+    if discovered_services.is_empty() {
+        return Ok(None);
+    }
+    let settings = state.db.get_notification_settings().await?;
+    if !is_event_enabled(&settings, NotificationEventKind::NewVersionDiscovered) {
+        return Ok(None);
+    }
+    let discovered_services =
+        revalidate_new_version_discovered_services(state, discovered_services).await?;
+    if discovered_services.is_empty() {
+        return Ok(None);
+    }
+    let discovered_services =
+        settle_new_version_discovered_services(state, &discovered_services).await?;
+    let dispatch_now_rfc3339 = notification_now_rfc3339(now_rfc3339);
+    let batch_job_id = state
+        .db
+        .find_new_version_notification_batch_job_id(
+            &discovered_services
+                .iter()
+                .map(|item| (item.service_id.clone(), item.candidate_digest.clone()))
+                .collect::<Vec<_>>(),
+        )
+        .await?
+        .unwrap_or_else(|| check_job_id.to_string());
+    let identity_key =
+        new_version_notification_identity(&std::collections::BTreeSet::from([batch_job_id]));
+    let target_path = if discovered_services.len() == 1 {
+        let service = &discovered_services[0];
+        format!("services/{}/{}", service.stack_id, service.service_id)
+    } else {
+        format!("queue/{check_job_id}")
+    };
+    Ok(Some(crate::db::NotificationItemDraft {
+        id: crate::ids::new_notification_id(),
+        kind: crate::db::NOTIFICATION_KIND_NEW_VERSION.to_string(),
+        identity_key,
+        title: format!("发现 {} 个新版本", discovered_services.len()),
+        body: new_version_notification_body(&discovered_services),
+        target_url: notification_target_url(state, &target_path).await?,
+        source_job_id: Some(check_job_id.to_string()),
+        created_at: dispatch_now_rfc3339,
+    }))
+}
+
 pub async fn notify_new_versions_discovered(
     state: &AppState,
     check_job_id: &str,
@@ -195,7 +272,7 @@ pub async fn notify_new_versions_discovered(
         format!("queue/{check_job_id}")
     };
     let target_url = notification_target_url(state, &target_path).await?;
-    let Some((reserved_ids, notification_item_id, notification_unread_count)) = state
+    let Some((reservations, notification_item_id, notification_unread_count)) = state
         .db
         .reserve_new_version_notifications_with_item(
             &pendings,
@@ -225,11 +302,11 @@ pub async fn notify_new_versions_discovered(
         return Ok(());
     };
 
-    let reserved = reserved_ids
+    let reserved = reservations
         .into_iter()
-        .filter_map(|record_id| {
+        .filter_map(|(record_id, pending_id)| {
             services_by_pending_id
-                .remove(&record_id)
+                .remove(&pending_id)
                 .map(|service| ReservedNewVersionNotification { record_id, service })
         })
         .collect::<Vec<_>>();
