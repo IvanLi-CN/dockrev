@@ -17385,6 +17385,7 @@ html[data-theme="light"] .homepageHeaderSearchPopover {
   height: 39px;
 }
 .appShell .topbarIdentity .brandLogo { width: 136px; height: 39px; }
+.appShellServiceDetail .topbarServiceContext { flex: 1 1 auto; }
 .appShell .topbarGlobalContent { display: block; flex: 1 1 auto; min-width: 0; }
 .appShell .topbarRight { display: flex !important; flex: 0 0 auto; margin-left: auto; }
 
