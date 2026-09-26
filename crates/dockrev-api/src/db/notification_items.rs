@@ -35,6 +35,7 @@ pub(crate) struct NotificationItemRow {
 #[derive(Clone, Debug)]
 pub(crate) struct NotificationItemUpsert {
     pub item: NotificationItemRow,
+    #[allow(dead_code)]
     pub created: bool,
     pub unread_count: u64,
 }

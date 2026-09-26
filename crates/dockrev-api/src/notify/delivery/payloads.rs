@@ -769,6 +769,7 @@ pub(crate) fn to_web_push_job_value_with_badge(
     Ok(value)
 }
 
+#[cfg(test)]
 pub(crate) fn to_web_push_new_version_value(
     payload: &NewVersionNotificationPayloadV2,
 ) -> anyhow::Result<Value> {
@@ -798,6 +799,7 @@ pub(crate) fn to_web_push_new_version_value_with_badge(
     Ok(value)
 }
 
+#[cfg(test)]
 pub(crate) fn to_web_push_ghcr_webhook_anomaly_value(
     payload: &GhcrWebhookAnomalyPayloadV2,
 ) -> anyhow::Result<Value> {
