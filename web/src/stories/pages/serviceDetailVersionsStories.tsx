@@ -111,6 +111,15 @@ function installSectionResizeObserverFallbackFixture(root: HTMLElement): {
 
 const dockrevDigest = (fill: string, last2: string) => `sha256:${fill.repeat(62)}${last2}`;
 
+const acmeLatestServiceOverride = {
+  image: {
+    ref: "ghcr.io/acme/api:latest",
+    tag: "latest",
+    resolvedTag: "5.2.1",
+    digest: dockrevDigest("a", "b1"),
+  },
+} as const;
+
 const dockrevServiceOverride = {
   name: "dockrev",
   image: {
@@ -145,14 +154,9 @@ export const VersionsSection: ServiceDetailStory = {
   parameters: {
     viewport: { defaultViewport: "dockrevWide" },
     dockrevApiScenario: "service-detail-history-rollback-action",
-    serviceOverridesById: {
+    dockrevServiceOverridesById: {
       "svc-prod-api": {
-        image: {
-          ref: "ghcr.io/acme/api:latest",
-          tag: "latest",
-          resolvedTag: "5.2.1",
-          digest: dockrevDigest("a", "b1"),
-        },
+        ...acmeLatestServiceOverride,
       },
     },
     dockrevGitHubReleasesByServiceId: {
@@ -397,13 +401,16 @@ export const VersionsSection: ServiceDetailStory = {
 function selectedVersionSubmissionStory(input: {
   releaseTag: string;
   classification: 'normal' | 'forced';
-  targetDigestFill: string;
+  targetDigest: string;
 }): ServiceDetailStory {
   const forced = input.classification === 'forced';
   return {
     parameters: {
       viewport: { defaultViewport: "dockrevWide" },
       dockrevApiScenario: "service-detail-history-rollback-action",
+      dockrevServiceOverridesById: {
+        "svc-prod-api": acmeLatestServiceOverride,
+      },
       dockrevGitHubReleasesByServiceId: {
         "svc-prod-api": {
           authMode: "anonymous",
@@ -447,9 +454,15 @@ function selectedVersionSubmissionStory(input: {
       expectStory(request?.classification === input.classification, "submission should preserve the preview classification");
       expectStory(request?.forceConfirmed === forced, "submission should carry the required force confirmation state");
       expectStory(
-        request?.targetDigest === `sha256:${input.targetDigestFill.repeat(64)}`,
+        request?.targetDigest === input.targetDigest,
         "submission should preserve the exact digest returned by preview",
       );
+      expectStory(request?.currentDigest === dockrevDigest("a", "b1"), "submission should carry the preview current digest");
+      expectStory(request?.currentVersion === "5.2.1", "submission should carry the preview current version");
+      expectStory(request?.imageReference === "ghcr.io/acme/api:latest", "submission should carry the preview image reference");
+      expectStory(request?.imageRepo === "ghcr.io/acme/api", "submission should carry the preview image repository");
+      expectStory(request?.configuredTag === "latest", "submission should carry the preview configured tag");
+      expectStory(request?.backupMode === "inherit", "submission should preserve the selected version backup mode");
       await waitForCondition(() => normalizeText(
         canvasElement.querySelector('[data-service-detail-context="status-summary"]')?.textContent,
       ).includes("更新中"));
@@ -460,13 +473,13 @@ function selectedVersionSubmissionStory(input: {
 export const VersionsSectionNormalUpdateSubmission = selectedVersionSubmissionStory({
   releaseTag: "5.2.3",
   classification: "normal",
-  targetDigestFill: "2",
+  targetDigest: dockrevDigest("0", "23"),
 });
 
 export const VersionsSectionForcedUpdateSubmission = selectedVersionSubmissionStory({
   releaseTag: "5.4.4",
   classification: "forced",
-  targetDigestFill: "4",
+  targetDigest: `sha256:${"4".repeat(64)}`,
 });
 
 export const VersionsSectionIntermediateWidth: ServiceDetailStory = {
@@ -849,15 +862,8 @@ export const MobileVersionsSection: ServiceDetailStory = {
   parameters: {
     dockrevApiScenario: "service-detail-history-rollback-action",
     viewport: { defaultViewport: "dockrevMobile" },
-    serviceOverridesById: {
-      "svc-prod-api": {
-        image: {
-          ref: "ghcr.io/acme/api:latest",
-          tag: "latest",
-          resolvedTag: "5.2.1",
-          digest: dockrevDigest("a", "b1"),
-        },
-      },
+    dockrevServiceOverridesById: {
+      "svc-prod-api": acmeLatestServiceOverride,
     },
     dockrevGitHubReleasesByServiceId: {
       "svc-prod-api": {
