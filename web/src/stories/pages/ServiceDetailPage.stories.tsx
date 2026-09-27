@@ -10,7 +10,7 @@ import { buildLongLogsSnapshot, buildMultilineLogsSnapshot, historyReleaseNotes,
 import { assertRecentUpdateKeyboardNavigation, assertRecentUpdateReasonPopoverStaysOnRoute, navigateStoryPath } from "./recentUpdateStoryAssertions";
 import { assertMonitoringActivationRefresh, assertMonitoringResourceSync, assertOverviewMonitorSummary } from "./serviceDetailMonitorAssertions";
 import { drawerText, findActionButton, findHistoryRowByJobId, findLogRowContaining, findSectionCard, findTab, render, tabLabels, type ServiceDetailStory } from "./serviceDetailStoryShared";
-export { ActiveUpdateWithoutCandidate, DockrevVersionsSelfUpgrade, DockrevVersionsSelfUpgradeVisual, DockrevVersionsSelfUpgradeOffline, MobileVersionsSection, VersionsSection, VersionsSectionActionGuard, VersionsSectionIntermediateWidth, VersionsSectionIntermediateWideActions } from "./serviceDetailVersionsStories";
+export { ActiveUpdateWithoutCandidate, DockrevVersionsSelfUpgrade, DockrevVersionsSelfUpgradeVisual, DockrevVersionsSelfUpgradeOffline, MobileVersionsSection, VersionsSection, VersionsSectionActionGuard, VersionsSectionForcedUpdateSubmission, VersionsSectionIntermediateWidth, VersionsSectionIntermediateWideActions, VersionsSectionNormalUpdateSubmission } from "./serviceDetailVersionsStories";
 export { DesktopLogsTimestampLayout, LogsSectionDateBoundaries, LogsSectionLifecycleUnion, MobileLogsSection, MobileLogsTimestampLayout } from "./serviceDetailLogsStories";
 import { expectNearlyEqual, expectStory, findButton, findButtons, normalizeText, waitForCondition } from "./storyAssertions";
 

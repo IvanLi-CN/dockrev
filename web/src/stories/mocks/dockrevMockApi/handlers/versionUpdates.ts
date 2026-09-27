@@ -1,13 +1,30 @@
 import { imageRepoFromImageRef } from '../../../../imageRepo'
+import type { JobListItem } from '../../../../api'
 import type { MockRouteContext } from '../context'
 
 export function handleVersionUpdateRoutes(ctx: MockRouteContext): Response | null {
-  const { method, urlPath, init, findService, json, nowIso, parseJsonBody, getString } = ctx
+  const {
+    method,
+    urlPath,
+    init,
+    findService,
+    json,
+    nowIso,
+    parseJsonBody,
+    getString,
+    getBoolean,
+    isRecord,
+    makeMockDebug,
+    jobSeqRef,
+    state,
+  } = ctx
   const isObservationsRoute =
     method === 'GET' && /^\/api\/services\/[^/]+\/version-update-observations$/.test(urlPath)
   const isPreviewRoute =
     method === 'POST' && /^\/api\/services\/[^/]+\/version-update\/preview$/.test(urlPath)
-  if (!isObservationsRoute && !isPreviewRoute) return null
+  const isSubmitRoute =
+    method === 'POST' && /^\/api\/services\/[^/]+\/version-update$/.test(urlPath)
+  if (!isObservationsRoute && !isPreviewRoute && !isSubmitRoute) return null
 
   const parts = urlPath.split('/').filter(Boolean)
   const serviceId = decodeURIComponent(parts[2] ?? '')
@@ -21,7 +38,63 @@ export function handleVersionUpdateRoutes(ctx: MockRouteContext): Response | nul
     return json({ imageRepo, configuredTag: found.svc.image.tag, observations })
   }
   const parsed = parseJsonBody(init?.body)
-  const releaseTag = getString(parsed && typeof parsed === 'object' ? (parsed as Record<string, unknown>).releaseTag : null) ?? ''
+  const record = isRecord(parsed) ? parsed : {}
+  if (isSubmitRoute) {
+    const releaseTag = getString(record.releaseTag) ?? ''
+    const classification = getString(record.classification) ?? ''
+    const targetDigest = getString(record.targetDigest) ?? ''
+    const forceConfirmed = getBoolean(record.forceConfirmed) ?? false
+    if (!releaseTag || !targetDigest || !['normal', 'forced'].includes(classification)) {
+      return json({ error: 'invalid version update request' }, { status: 400 })
+    }
+    if (classification === 'forced' && !forceConfirmed) {
+      return json({ error: 'force confirmation required' }, { status: 400 })
+    }
+
+    const debug = globalThis.__DOCKREV_MOCK_DEBUG__ ?? (globalThis.__DOCKREV_MOCK_DEBUG__ = makeMockDebug())
+    debug.lastUpdateRequest = record
+    debug.lastUpdateUrl = urlPath
+    debug.lastUpdateMethod = method
+
+    jobSeqRef.value += 1
+    const jobId = `job-selected-version-${jobSeqRef.value}`
+    const startedAt = nowIso(-500)
+    const job: JobListItem = {
+      id: jobId,
+      type: 'update',
+      scope: 'service',
+      stackId: found.stack.id,
+      serviceId,
+      status: 'running',
+      createdBy: 'ivan',
+      reason: 'selected_version',
+      createdAt: startedAt,
+      startedAt,
+      finishedAt: null,
+      allowArchMismatch: false,
+      backupMode: getString(record.backupMode) ?? 'inherit',
+      summary: {
+        targets: [{
+          serviceId,
+          targetVersion: releaseTag,
+          targetTag: found.svc.image.tag,
+          targetDigest,
+          skipTargetTagPull: true,
+          classification,
+          imageRepo,
+        }],
+      },
+    }
+    state.jobs = [job, ...state.jobs]
+    state.jobById[jobId] = {
+      ...job,
+      logs: [{ ts: startedAt, level: 'info', msg: `Selected version ${releaseTag} queued for deployment.` }],
+      logsLastId: 1,
+    }
+    return json({ jobId })
+  }
+
+  const releaseTag = getString(record.releaseTag) ?? ''
   const isObserved = serviceId === 'svc-prod-api' && releaseTag === '5.2.3' && found.svc.image.tag === 'latest'
   const digestFill = isObserved ? '2' : '4'
   return json({
