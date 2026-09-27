@@ -51,6 +51,72 @@ pub(super) fn strict_canonical_digest_sql(column: &str) -> String {
     )
 }
 
+fn release_cancelled_auto_policy_job_service_leases_tx(
+    tx: &rusqlite::Transaction<'_>,
+    job_id: &str,
+) -> rusqlite::Result<usize> {
+    tx.execute(
+        r#"
+UPDATE services
+SET accepted_state_generation = (
+  SELECT target.opened_generation + 1
+  FROM job_service_targets target
+  WHERE target.job_id = ?1
+    AND target.service_id = services.id
+    AND target.opened_generation = services.accepted_state_generation
+    AND target.opened_generation % 2 = 1
+)
+WHERE EXISTS (
+  SELECT 1 FROM jobs
+  WHERE id = ?1 AND status = 'cancelled' AND created_by = 'auto-policy'
+)
+  AND accepted_state_generation % 2 = 1
+  AND EXISTS (
+    SELECT 1
+    FROM job_service_targets target
+    WHERE target.job_id = ?1
+      AND target.service_id = services.id
+      AND target.opened_generation = services.accepted_state_generation
+  )
+"#,
+        [job_id],
+    )
+}
+
+fn release_stale_cancelled_auto_policy_job_service_leases_tx(
+    tx: &rusqlite::Transaction<'_>,
+) -> rusqlite::Result<usize> {
+    tx.execute(
+        r#"
+UPDATE services
+SET accepted_state_generation = (
+  SELECT target.opened_generation + 1
+  FROM job_service_targets target
+  JOIN jobs ON jobs.id = target.job_id
+  WHERE target.service_id = services.id
+    AND target.opened_generation = services.accepted_state_generation
+    AND target.opened_generation % 2 = 1
+    AND jobs.status = 'cancelled'
+    AND jobs.created_by = 'auto-policy'
+  ORDER BY jobs.finished_at DESC, jobs.id DESC
+  LIMIT 1
+)
+WHERE accepted_state_generation % 2 = 1
+  AND EXISTS (
+    SELECT 1
+    FROM job_service_targets target
+    JOIN jobs ON jobs.id = target.job_id
+    WHERE target.service_id = services.id
+      AND target.opened_generation = services.accepted_state_generation
+      AND target.opened_generation % 2 = 1
+      AND jobs.status = 'cancelled'
+      AND jobs.created_by = 'auto-policy'
+  )
+"#,
+        [],
+    )
+}
+
 pub(super) fn summary_stack_ids(summary: &serde_json::Value) -> Vec<String> {
     summary
         .get("changedStackIds")

@@ -486,7 +486,7 @@ WHERE id = ?1 AND status = 'enqueuing'
                     params![pending_id, update_job_id, now],
                 )?;
                 if changed == 0 {
-                    tx.execute(
+                    let cancelled = tx.execute(
                         r#"
 UPDATE jobs
 SET status = 'cancelled', finished_at = ?2
@@ -494,6 +494,12 @@ WHERE id = ?1 AND status = 'queued' AND created_by = 'auto-policy'
 "#,
                         params![update_job_id, now],
                     )?;
+                    if cancelled > 0 {
+                        super::release_cancelled_auto_policy_job_service_leases_tx(
+                            &tx,
+                            &update_job_id,
+                        )?;
+                    }
                     tx.execute(
                         r#"
 INSERT INTO update_job_stop_controls (
@@ -580,7 +586,7 @@ WHERE id = ?1 AND status IN ('pending', 'enqueuing', 'enqueued')
                 return Ok(());
             }
             if let Some(update_job_id) = update_job_id {
-                tx.execute(
+                let cancelled = tx.execute(
                     r#"
 UPDATE jobs
 SET status = 'cancelled', finished_at = ?2
@@ -588,6 +594,12 @@ WHERE id = ?1 AND status = 'queued' AND created_by = 'auto-policy'
 "#,
                     params![update_job_id, now],
                 )?;
+                if cancelled > 0 {
+                    super::release_cancelled_auto_policy_job_service_leases_tx(
+                        &tx,
+                        &update_job_id,
+                    )?;
+                }
                 tx.execute(
                     r#"
 INSERT INTO update_job_stop_controls (

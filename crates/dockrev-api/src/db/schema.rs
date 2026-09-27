@@ -657,6 +657,9 @@ pub(super) fn migrate(conn: &mut rusqlite::Connection) -> anyhow::Result<()> {
     schema_job_history_retention::apply(conn)?;
     schema_backup_cleanup_state::apply(conn)?;
     schema_accepted_state_generation::apply(conn)?;
+    let tx = conn.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
+    super::release_stale_cancelled_auto_policy_job_service_leases_tx(&tx)?;
+    tx.commit()?;
     Ok(())
 }
 

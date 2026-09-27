@@ -5,7 +5,7 @@ fn cancel_stale_auto_policy_job(
     update_job_id: &str,
     now: &str,
 ) -> rusqlite::Result<()> {
-    tx.execute(
+    let cancelled = tx.execute(
         r#"
 UPDATE jobs
 SET status = 'cancelled', finished_at = ?2
@@ -13,6 +13,9 @@ WHERE id = ?1 AND status = 'queued' AND created_by = 'auto-policy'
 "#,
         params![update_job_id, now],
     )?;
+    if cancelled > 0 {
+        super::release_cancelled_auto_policy_job_service_leases_tx(tx, update_job_id)?;
+    }
     tx.execute(
         r#"
 INSERT INTO update_job_stop_controls (
@@ -543,7 +546,7 @@ WHERE p.service_id = ?1
                     params![pending_id, serde_json::to_string(&summary)?, now],
                 )?;
                 if let Some(update_job_id) = update_job_id {
-                    tx.execute(
+                    let cancelled = tx.execute(
                         r#"
 UPDATE jobs
 SET status = 'cancelled', finished_at = ?2
@@ -551,6 +554,12 @@ WHERE id = ?1 AND status = 'queued' AND created_by = 'auto-policy'
 "#,
                         params![update_job_id, now],
                     )?;
+                    if cancelled > 0 {
+                        super::release_cancelled_auto_policy_job_service_leases_tx(
+                            &tx,
+                            &update_job_id,
+                        )?;
+                    }
                     if update_job_status.as_deref() == Some("running") {
                         tx.execute(
                             r#"
