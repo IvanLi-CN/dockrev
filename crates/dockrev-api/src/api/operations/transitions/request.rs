@@ -179,7 +179,7 @@ pub(crate) async fn enqueue_update_job(
     now: String,
 ) -> Result<String, ApiError> {
     enqueue_update_job_with_start_and_targets(
-        state, created_by, reason, req, now, true, None, None, None,
+        state, created_by, reason, req, now, true, None, None, None, None,
     )
     .await
 }
@@ -192,7 +192,7 @@ pub(crate) async fn enqueue_update_job_deferred(
     now: String,
 ) -> Result<String, ApiError> {
     enqueue_update_job_with_start_and_targets(
-        state, created_by, reason, req, now, false, None, None, None,
+        state, created_by, reason, req, now, false, None, None, None, None,
     )
     .await
 }
@@ -206,6 +206,7 @@ pub(crate) async fn enqueue_selected_version_update_job(
     expected_current_digest: String,
     expected_image_reference: String,
     expected_configured_tag: String,
+    expected_accepted_state_generation: i64,
     now: String,
 ) -> Result<String, ApiError> {
     enqueue_update_job_with_start_and_targets(
@@ -218,6 +219,7 @@ pub(crate) async fn enqueue_selected_version_update_job(
         Some(vec![target]),
         Some(expected_current_digest),
         Some((expected_image_reference, expected_configured_tag)),
+        Some(expected_accepted_state_generation),
     )
     .await
 }
@@ -233,6 +235,7 @@ async fn enqueue_update_job_with_start_and_targets(
     prevalidated_targets: Option<Vec<UpdateServiceTarget>>,
     expected_current_digest_override: Option<String>,
     expected_service_image_override: Option<(String, String)>,
+    expected_accepted_state_generation_override: Option<i64>,
 ) -> Result<String, ApiError> {
     let stack_ids = resolve_stack_ids_for_update(&state, &req)
         .await
@@ -393,31 +396,37 @@ async fn enqueue_update_job_with_start_and_targets(
                 }
             }
         } else if let Some(expected_current_digest) = expected_current_digest {
-            let outcome =
-                if let Some((image_reference, configured_tag)) = expected_service_image_override {
-                    state
-                        .db
-                        .insert_service_operation_job_if_unblocked_with_service_baseline(
-                            job_db,
-                            operation_targets,
-                            initial_log,
-                            &expected_current_digest,
-                            &image_reference,
-                            &configured_tag,
-                        )
-                        .await
-                } else {
-                    state
-                        .db
-                        .insert_service_operation_job_if_unblocked_with_current_digest(
-                            job_db,
-                            operation_targets,
-                            initial_log,
-                            &expected_current_digest,
-                        )
-                        .await
-                }
-                .map_err(map_internal)?;
+            let outcome = if let Some((image_reference, configured_tag)) =
+                expected_service_image_override
+            {
+                let expected_generation =
+                    expected_accepted_state_generation_override.ok_or_else(|| {
+                        ApiError::conflict("selected version accepted-state baseline is missing")
+                    })?;
+                state
+                    .db
+                    .insert_service_operation_job_if_unblocked_with_service_baseline(
+                        job_db,
+                        operation_targets,
+                        initial_log,
+                        &expected_current_digest,
+                        &image_reference,
+                        &configured_tag,
+                        expected_generation,
+                    )
+                    .await
+            } else {
+                state
+                    .db
+                    .insert_service_operation_job_if_unblocked_with_current_digest(
+                        job_db,
+                        operation_targets,
+                        initial_log,
+                        &expected_current_digest,
+                    )
+                    .await
+            }
+            .map_err(map_internal)?;
             match outcome {
                 crate::db::ServiceOperationAcquireOutcome::Acquired(_) => None,
                 crate::db::ServiceOperationAcquireOutcome::Conflict(job) => Some(*job),

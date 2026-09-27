@@ -1,5 +1,10 @@
 use super::*;
 
+struct BuiltServiceVersionUpdatePreview {
+    response: PreviewServiceVersionUpdateResponse,
+    accepted_state_generation: i64,
+}
+
 async fn load_version_update_service(
     state: &AppState,
     service_id: &str,
@@ -54,11 +59,18 @@ async fn build_service_version_update_preview(
     state: &AppState,
     service_id: &str,
     release_tag: &str,
-) -> Result<PreviewServiceVersionUpdateResponse, ApiError> {
+) -> Result<BuiltServiceVersionUpdatePreview, ApiError> {
     let release_tag = release_tag.trim();
     if release_tag.is_empty() {
         return Err(ApiError::invalid_argument("releaseTag is required"));
     }
+    let accepted_state_generation = state
+        .db
+        .get_versioned_service_accepted_state(service_id)
+        .await
+        .map_err(map_internal)?
+        .ok_or_else(|| ApiError::not_found("service not found"))?
+        .generation;
     let (_, service, image_repo) = load_version_update_service(state, service_id).await?;
     let current_digest = service
         .image
@@ -145,15 +157,18 @@ async fn build_service_version_update_preview(
     let target_digest = snapshot_worker::normalize_digest(&target_digest)
         .ok_or_else(|| ApiError::conflict("selected release digest is invalid"))?;
 
-    Ok(PreviewServiceVersionUpdateResponse {
-        release_tag: release_tag.to_string(),
-        classification,
-        target_digest,
-        current_digest,
-        current_version: current_version.to_string(),
-        image_reference: service.image.reference,
-        image_repo,
-        configured_tag: service.image.tag,
+    Ok(BuiltServiceVersionUpdatePreview {
+        response: PreviewServiceVersionUpdateResponse {
+            release_tag: release_tag.to_string(),
+            classification,
+            target_digest,
+            current_digest,
+            current_version: current_version.to_string(),
+            image_reference: service.image.reference,
+            image_repo,
+            configured_tag: service.image.tag,
+        },
+        accepted_state_generation,
     })
 }
 
@@ -195,7 +210,9 @@ pub(crate) async fn preview_service_version_update(
 ) -> Result<Json<PreviewServiceVersionUpdateResponse>, ApiError> {
     let _user = require_user(&state, &headers).await?;
     Ok(Json(
-        build_service_version_update_preview(&state, &service_id, &req.release_tag).await?,
+        build_service_version_update_preview(&state, &service_id, &req.release_tag)
+            .await?
+            .response,
     ))
 }
 
@@ -206,8 +223,10 @@ pub(crate) async fn trigger_service_version_update(
     Json(req): Json<TriggerServiceVersionUpdateRequest>,
 ) -> Result<Json<TriggerServiceVersionUpdateResponse>, ApiError> {
     let user = require_user(&state, &headers).await?;
-    let preview =
-        build_service_version_update_preview(&state, &service_id, &req.release_tag).await?;
+    let BuiltServiceVersionUpdatePreview {
+        response: preview,
+        accepted_state_generation,
+    } = build_service_version_update_preview(&state, &service_id, &req.release_tag).await?;
     let same_baseline = req.release_tag.trim() == preview.release_tag
         && req.classification == preview.classification
         && req.image_repo == preview.image_repo
@@ -260,6 +279,7 @@ pub(crate) async fn trigger_service_version_update(
         preview.current_digest,
         preview.image_reference,
         preview.configured_tag,
+        accepted_state_generation,
         now,
     )
     .await?;

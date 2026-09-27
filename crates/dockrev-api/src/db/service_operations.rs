@@ -256,6 +256,7 @@ WHERE id = ?1
             None,
             None,
             None,
+            None,
         )
         .await
     }
@@ -267,6 +268,7 @@ WHERE id = ?1
         initial_log: Option<JobLogLine>,
         expected_current_digest: Option<&str>,
         expected_service_image: Option<(&str, &str)>,
+        expected_accepted_state_generation: Option<i64>,
         auto_policy_guard: Option<&AutoPolicyEnqueueGuard>,
     ) -> anyhow::Result<ServiceOperationAcquireOutcome> {
         let event_job_id = job.id.clone();
@@ -472,6 +474,27 @@ WHERE id = ?1 AND status <> 'superseded'
                             .query_row(
                                 "SELECT COALESCE(image_ref = ?2 AND image_tag = ?3, 0) FROM services WHERE id = ?1",
                                 params![target.service_id, expected_image_ref, expected_image_tag],
+                                |row| row.get::<_, bool>(0),
+                            )
+                            .optional()?
+                            .unwrap_or(false);
+                        if !matches {
+                            return Ok(ServiceOperationAcquireOutcome::StaleCurrentDigest);
+                        }
+                    }
+                }
+
+                if let Some(expected_generation) = expected_accepted_state_generation {
+                    for target in &targets {
+                        let matches = tx
+                            .query_row(
+                                r#"
+SELECT accepted_state_generation = ?2
+  AND accepted_state_generation % 2 = 0
+FROM services
+WHERE id = ?1
+"#,
+                                params![target.service_id, expected_generation],
                                 |row| row.get::<_, bool>(0),
                             )
                             .optional()?
@@ -765,6 +788,7 @@ WHERE id = ?1 AND accepted_state_generation = ?2 AND accepted_state_generation %
                 Some(expected_current_digest),
                 None,
                 None,
+                None,
             )
             .await?
         {
@@ -785,6 +809,7 @@ WHERE id = ?1 AND accepted_state_generation = ?2 AND accepted_state_generation %
         expected_current_digest: &str,
         expected_image_ref: &str,
         expected_image_tag: &str,
+        expected_accepted_state_generation: i64,
     ) -> anyhow::Result<ServiceOperationAcquireOutcome> {
         match self
             .insert_service_operation_job_with_accepted_state_if_unblocked_inner(
@@ -793,6 +818,7 @@ WHERE id = ?1 AND accepted_state_generation = ?2 AND accepted_state_generation %
                 initial_log,
                 Some(expected_current_digest),
                 Some((expected_image_ref, expected_image_tag)),
+                Some(expected_accepted_state_generation),
                 None,
             )
             .await?
@@ -818,6 +844,7 @@ WHERE id = ?1 AND accepted_state_generation = ?2 AND accepted_state_generation %
             targets,
             initial_log,
             Some(&guard.expected_current_digest),
+            None,
             None,
             Some(&guard),
         )
@@ -1155,6 +1182,12 @@ INSERT INTO services (
         })
         .await
         .unwrap();
+        let accepted_state_generation = db
+            .get_versioned_service_accepted_state(&service_id)
+            .await
+            .unwrap()
+            .unwrap()
+            .generation;
         let job = crate::api::types::JobRecord::new_running(
             "job_stale_selected_version".to_string(),
             JobType::Update,
@@ -1175,6 +1208,7 @@ INSERT INTO services (
                 baseline_digest,
                 "ghcr.io/acme/web:stable",
                 "stable",
+                accepted_state_generation,
             )
             .await
             .unwrap();

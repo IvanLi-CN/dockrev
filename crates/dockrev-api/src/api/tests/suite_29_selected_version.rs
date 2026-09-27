@@ -35,6 +35,53 @@ impl RegistryClient for SelectedVersionRegistry {
     }
 }
 
+#[derive(Clone)]
+struct InferenceRaceSelectedVersionRegistry {
+    update_on_manifest: Arc<std::sync::Mutex<Option<(Db, String)>>>,
+}
+
+#[async_trait::async_trait]
+impl RegistryClient for InferenceRaceSelectedVersionRegistry {
+    async fn list_tags(&self, _image: &ImageRef) -> anyhow::Result<Vec<String>> {
+        SelectedVersionRegistry.list_tags(_image).await
+    }
+
+    async fn get_manifest(
+        &self,
+        _image: &ImageRef,
+        reference: &str,
+        host_platform: &str,
+    ) -> anyhow::Result<ManifestInfo> {
+        let pending_update = if reference == selected_version_digest('7') {
+            self.update_on_manifest.lock().unwrap().take()
+        } else {
+            None
+        };
+        if let Some((db, service_id)) = pending_update {
+            let now = test_now_rfc3339();
+            db.update_service_check_result(
+                &service_id,
+                Some(selected_version_digest('4')),
+                Some("v2.71.38".to_string()),
+                Some(r#"["v2.71.38"]"#.to_string()),
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                &now,
+                &now,
+            )
+            .await?;
+        }
+        SelectedVersionRegistry
+            .get_manifest(_image, reference, host_platform)
+            .await
+    }
+}
+
 fn selected_version_digest(byte: char) -> String {
     format!("sha256:{}", byte.to_string().repeat(64))
 }
@@ -671,6 +718,88 @@ async fn service_version_preview_classifies_observed_and_unobserved_releases_and
         .await
         .unwrap();
     assert_eq!(current_version_only_submit.status(), 409);
+    assert!(state
+        .db
+        .list_jobs()
+        .await
+        .unwrap()
+        .iter()
+        .all(|job| job.r#type.as_str() != "update"));
+}
+
+#[tokio::test]
+async fn selected_version_submit_rejects_same_digest_version_inference_race() {
+    let update_on_manifest = Arc::new(std::sync::Mutex::new(None));
+    let state = test_state_with(
+        ":memory:",
+        Arc::new(InferenceRaceSelectedVersionRegistry {
+            update_on_manifest: update_on_manifest.clone(),
+        }),
+        Arc::new(FakeRunner),
+    )
+    .await;
+    let (_, service_id, _) = selected_version_seed_service(&state).await;
+    let target_digest = selected_version_digest('7');
+    record_selected_version_observation(&state, &service_id, &target_digest, Some("v2.71.37"))
+        .await;
+    let app = api::router(state.clone());
+
+    let preview_response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri(format!("/api/services/{service_id}/version-update/preview"))
+                .header("content-type", "application/json")
+                .body(Body::from(r#"{"releaseTag":"v2.71.37"}"#))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(preview_response.status(), 200);
+    let preview = response_json(preview_response).await;
+    assert_eq!(preview["currentVersion"], "v2.71.34");
+
+    *update_on_manifest.lock().unwrap() = Some((state.db.clone(), service_id.clone()));
+    let submit_response = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri(format!("/api/services/{service_id}/version-update"))
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    serde_json::json!({
+                        "releaseTag": preview["releaseTag"],
+                        "classification": preview["classification"],
+                        "targetDigest": preview["targetDigest"],
+                        "currentDigest": preview["currentDigest"],
+                        "currentVersion": preview["currentVersion"],
+                        "imageReference": preview["imageReference"],
+                        "imageRepo": preview["imageRepo"],
+                        "configuredTag": preview["configuredTag"],
+                        "forceConfirmed": false,
+                        "backupMode": "inherit",
+                    })
+                    .to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(submit_response.status(), 409);
+
+    let accepted_state = state
+        .db
+        .get_versioned_service_accepted_state(&service_id)
+        .await
+        .unwrap()
+        .unwrap();
+    let current_digest = selected_version_digest('4');
+    assert_eq!(
+        accepted_state.state.current_digest.as_deref(),
+        Some(current_digest.as_str())
+    );
+    assert_eq!(accepted_state.state.current_resolved_tag.as_deref(), Some("v2.71.38"));
     assert!(state
         .db
         .list_jobs()
