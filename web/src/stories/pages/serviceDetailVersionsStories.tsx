@@ -394,6 +394,81 @@ export const VersionsSection: ServiceDetailStory = {
   },
 };
 
+function selectedVersionSubmissionStory(input: {
+  releaseTag: string;
+  classification: 'normal' | 'forced';
+  targetDigestFill: string;
+}): ServiceDetailStory {
+  const forced = input.classification === 'forced';
+  return {
+    parameters: {
+      viewport: { defaultViewport: "dockrevWide" },
+      dockrevApiScenario: "service-detail-history-rollback-action",
+      dockrevGitHubReleasesByServiceId: {
+        "svc-prod-api": {
+          authMode: "anonymous",
+          repo: { fullName: "acme/api", htmlUrl: "https://github.com/acme/api" },
+          items: versionReleaseNotes,
+        },
+      },
+    },
+    render: render("stack-prod", "svc-prod-api", "versions", undefined, {
+      pageTitle: null,
+      pageSubtitle: null,
+    }),
+    play: async ({ canvasElement }) => {
+      const doc = canvasElement.ownerDocument;
+      await waitForCondition(() => Boolean(findVersionCard(canvasElement, input.releaseTag)));
+      const action = findVersionAction(canvasElement, "update", input.releaseTag);
+      expectStory(action && !action.disabled, `${input.releaseTag} should expose an enabled version update action`);
+      action?.click();
+
+      await waitForCondition(() => Boolean(doc.querySelector('[role="alertdialog"], [role="dialog"]')));
+      let dialog = doc.querySelector<HTMLElement>('[role="alertdialog"], [role="dialog"]');
+      expectStory(
+        normalizeText(dialog?.textContent).includes("自动更新策略仍会按原计划运行"),
+        "selected version confirmation should disclose the preserved automatic update policy",
+      );
+      if (forced) {
+        findButton(dialog ?? doc, "继续强制更新")?.click();
+        await waitForCondition(() => normalizeText(
+          doc.querySelector('[role="alertdialog"], [role="dialog"]')?.textContent,
+        ).includes("再次确认强制更新"));
+        dialog = doc.querySelector<HTMLElement>('[role="alertdialog"], [role="dialog"]');
+        findButton(dialog ?? doc, "确认强制更新")?.click();
+      } else {
+        findButton(dialog ?? doc, "更新")?.click();
+      }
+
+      await waitForCondition(() => globalThis.__DOCKREV_MOCK_DEBUG__?.lastUpdateUrl ===
+        "/api/services/svc-prod-api/version-update");
+      const request = globalThis.__DOCKREV_MOCK_DEBUG__?.lastUpdateRequest as Record<string, unknown> | null;
+      expectStory(request?.releaseTag === input.releaseTag, "selected release tag should be submitted unchanged");
+      expectStory(request?.classification === input.classification, "submission should preserve the preview classification");
+      expectStory(request?.forceConfirmed === forced, "submission should carry the required force confirmation state");
+      expectStory(
+        request?.targetDigest === `sha256:${input.targetDigestFill.repeat(64)}`,
+        "submission should preserve the exact digest returned by preview",
+      );
+      await waitForCondition(() => normalizeText(
+        canvasElement.querySelector('[data-service-detail-context="status-summary"]')?.textContent,
+      ).includes("更新中"));
+    },
+  };
+}
+
+export const VersionsSectionNormalUpdateSubmission = selectedVersionSubmissionStory({
+  releaseTag: "5.2.3",
+  classification: "normal",
+  targetDigestFill: "2",
+});
+
+export const VersionsSectionForcedUpdateSubmission = selectedVersionSubmissionStory({
+  releaseTag: "5.4.4",
+  classification: "forced",
+  targetDigestFill: "4",
+});
+
 export const VersionsSectionIntermediateWidth: ServiceDetailStory = {
   parameters: {
     viewport: { defaultViewport: "dockrevIntermediate" },

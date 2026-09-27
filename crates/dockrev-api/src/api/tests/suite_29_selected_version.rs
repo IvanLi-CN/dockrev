@@ -737,6 +737,70 @@ async fn service_version_preview_uses_current_digest_observation_when_tag_is_unr
 }
 
 #[tokio::test]
+async fn selected_version_preview_and_submit_reject_target_architecture_mismatch() {
+    let mut state = test_state_with(
+        ":memory:",
+        Arc::new(SelectedVersionRegistry),
+        Arc::new(FakeRunner),
+    )
+    .await;
+    Arc::get_mut(&mut state)
+        .expect("test state should be uniquely owned before routing")
+        .config
+        .host_platform = Some("linux/arm64".to_string());
+    let (_, service_id, _) = selected_version_seed_service(&state).await;
+    let app = api::router(state.clone());
+
+    let preview_response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri(format!("/api/services/{service_id}/version-update/preview"))
+                .header("content-type", "application/json")
+                .body(Body::from(r#"{"releaseTag":"v2.71.38"}"#))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(preview_response.status(), 409);
+
+    let submit_response = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri(format!("/api/services/{service_id}/version-update"))
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    serde_json::json!({
+                        "releaseTag": "v2.71.38",
+                        "classification": "forced",
+                        "targetDigest": selected_version_digest('8'),
+                        "currentDigest": selected_version_digest('4'),
+                        "currentVersion": "v2.71.34",
+                        "imageReference": "ghcr.io/acme/web:latest",
+                        "imageRepo": "ghcr.io/acme/web",
+                        "configuredTag": "latest",
+                        "forceConfirmed": true,
+                        "backupMode": "inherit",
+                    })
+                    .to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(submit_response.status(), 409);
+    assert!(state
+        .db
+        .list_jobs()
+        .await
+        .unwrap()
+        .iter()
+        .all(|job| job.r#type.as_str() != "update"));
+}
+
+#[tokio::test]
 async fn normal_selected_version_submit_persists_exact_digest_and_tag_pull_policy() {
     let state = test_state_with(
         ":memory:",
