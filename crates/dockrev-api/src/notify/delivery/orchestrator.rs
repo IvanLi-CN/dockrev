@@ -42,6 +42,7 @@ fn web_push_result_value(result: anyhow::Result<WebPushDeliveryReport>) -> Value
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 pub(crate) async fn send_new_versions_with_badge(
     state: &AppState,
     check_job_id: &str,
@@ -49,10 +50,13 @@ pub(crate) async fn send_new_versions_with_badge(
     services_checked: u32,
     discovered_services: &[NewVersionDiscoveredService],
     badge: Option<(&str, u64)>,
+    event_enabled_override: Option<bool>,
     skip_channels: &std::collections::BTreeSet<String>,
 ) -> anyhow::Result<Value> {
     let settings = state.db.get_notification_settings().await?;
-    if !is_event_enabled(&settings, NotificationEventKind::NewVersionDiscovered) {
+    if !event_enabled_override
+        .unwrap_or_else(|| is_event_enabled(&settings, NotificationEventKind::NewVersionDiscovered))
+    {
         return Ok(Value::Object(serde_json::Map::new()));
     }
 
@@ -277,7 +281,7 @@ pub(crate) async fn send_all(
     payload: Option<&Value>,
     mode: NotifySendMode,
 ) -> anyhow::Result<Value> {
-    send_all_with_badge(state, job_id, now_rfc3339, payload, mode, None).await
+    send_all_with_badge(state, job_id, now_rfc3339, payload, mode, None, None).await
 }
 
 pub(crate) async fn send_all_with_badge(
@@ -287,10 +291,12 @@ pub(crate) async fn send_all_with_badge(
     payload: Option<&Value>,
     mode: NotifySendMode,
     badge: Option<(&str, u64)>,
+    event_enabled_override: Option<bool>,
 ) -> anyhow::Result<Value> {
     let settings = state.db.get_notification_settings().await?;
     if matches!(mode, NotifySendMode::Default)
-        && !is_event_enabled(&settings, NotificationEventKind::Update)
+        && !event_enabled_override
+            .unwrap_or_else(|| is_event_enabled(&settings, NotificationEventKind::Update))
     {
         return Ok(Value::Object(serde_json::Map::new()));
     }

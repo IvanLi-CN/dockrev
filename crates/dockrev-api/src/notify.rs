@@ -80,6 +80,7 @@ pub async fn notify_job_updated_with_event_enabled(
         Some(&payload),
         NotifySendMode::Default,
         Some((&item.item.id, item.unread_count)),
+        event_enabled_override,
     )
     .await?;
     Ok(())
@@ -199,7 +200,8 @@ async fn notify_new_versions_discovered_inner(
     }
 
     let settings = state.db.get_notification_settings().await?;
-    if !event_enabled_override.unwrap_or(settings.event_new_version_enabled) {
+    let event_enabled = event_enabled_override.unwrap_or(settings.event_new_version_enabled);
+    if !event_enabled {
         return Ok(());
     }
     let has_external_delivery = has_enabled_delivery_channel(&settings);
@@ -394,6 +396,7 @@ async fn notify_new_versions_discovered_inner(
         services_checked,
         &reserved_services,
         Some((&notification_item_id, notification_unread_count)),
+        Some(event_enabled),
         &previously_sent_channels,
     )
     .await;
