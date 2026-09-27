@@ -19,6 +19,8 @@ pub(crate) struct NotificationAnomalyOccurrence {
     pub batch_id: String,
     pub notification_item_id: Option<String>,
     pub sent_channels: Vec<String>,
+    pub source_job_id: Option<String>,
+    pub source_status: String,
 }
 
 const ANOMALY_DELIVERY_CLAIM_TTL_MINUTES: i64 = 5;
@@ -196,7 +198,9 @@ mod tests {
             &scope,
             &[observation("missing")],
             "2026-09-26T00:00:00Z",
-            false,
+            Some(false),
+            None,
+            "success",
         )
         .await
         .unwrap();
@@ -212,7 +216,9 @@ mod tests {
                 &scope,
                 &[observation("missing")],
                 "2026-09-26T00:01:00Z",
-                true,
+                Some(true),
+                None,
+                "success",
             )
             .await
             .unwrap();
@@ -550,10 +556,12 @@ fn insert_occurrence(
     occurrence_count: i64,
     batch_id: &str,
     notification_pending: bool,
+    source_job_id: Option<&str>,
+    source_status: &str,
     created_at: &str,
 ) -> rusqlite::Result<()> {
     tx.execute(
-        "INSERT INTO notification_anomaly_occurrences (id, owner, repo, state, last_error, occurrence_count, batch_id, notification_pending, created_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+        "INSERT INTO notification_anomaly_occurrences (id, owner, repo, state, last_error, occurrence_count, batch_id, notification_pending, source_job_id, source_status, created_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
         params![
             crate::ids::new_notification_id(),
             owner,
@@ -563,6 +571,8 @@ fn insert_occurrence(
             occurrence_count,
             batch_id,
             notification_pending,
+            source_job_id,
+            source_status,
             created_at,
         ],
     )?;
@@ -577,8 +587,15 @@ impl Db {
         observations: &[NotificationAnomalyObservation],
         now: &str,
     ) -> anyhow::Result<Vec<NotificationAnomalyObservation>> {
-        self.reconcile_notification_anomaly_states_with_enabled(scope_keys, observations, now, true)
-            .await
+        self.reconcile_notification_anomaly_states_with_enabled(
+            scope_keys,
+            observations,
+            now,
+            Some(true),
+            None,
+            "success",
+        )
+        .await
     }
 
     pub(crate) async fn reconcile_notification_anomaly_states_with_enabled(
@@ -586,13 +603,29 @@ impl Db {
         scope_keys: &[String],
         observations: &[NotificationAnomalyObservation],
         now: &str,
-        notification_enabled: bool,
+        notification_enabled: Option<bool>,
+        source_job_id: Option<&str>,
+        source_status: &str,
     ) -> anyhow::Result<Vec<NotificationAnomalyObservation>> {
         let scope_keys = scope_keys.to_vec();
         let observations = observations.to_vec();
         let now = now.to_string();
+        let source_job_id = source_job_id.map(ToString::to_string);
+        let source_status = source_status.to_string();
         self.call(move |conn| {
             let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
+            let notification_enabled = match notification_enabled {
+                Some(enabled) => enabled,
+                None => tx
+                    .query_row(
+                        "SELECT event_ghcr_webhook_anomaly_enabled FROM notification_settings LIMIT 1",
+                        [],
+                        |row| row.get::<_, i64>(0),
+                    )
+                    .optional()?
+                    .unwrap_or(1)
+                    != 0,
+            };
             let notification_pending = notification_enabled;
             // One audit invocation owns one batch. Existing pending occurrences
             // keep their original batch so retries do not mutate an earlier item.
@@ -650,6 +683,8 @@ impl Db {
                             1,
                             &batch_id,
                             notification_pending,
+                            source_job_id.as_deref(),
+                            &source_status,
                             &now,
                         )?;
                         tx.execute(
@@ -691,6 +726,8 @@ impl Db {
                                 occurrence_count,
                                 &occurrence_batch_id,
                                 notification_pending,
+                                source_job_id.as_deref(),
+                                &source_status,
                                 &now,
                             )?;
                         }
@@ -755,6 +792,8 @@ impl Db {
                                 occurrence_count,
                                 &batch_id,
                                 notification_pending,
+                                source_job_id.as_deref(),
+                                &source_status,
                                 &now,
                             )?;
                         }
@@ -868,7 +907,7 @@ impl Db {
             let mut result = Vec::new();
             for (owner, repo, state, occurrence_count) in items {
                 let mut stmt = conn.prepare(
-                    "SELECT state, last_error, occurrence_count, batch_id, notification_item_id, sent_channels_json FROM notification_anomaly_occurrences WHERE owner = ?1 AND repo = ?2 AND state = ?3 AND occurrence_count = ?4 AND notification_pending = 1 ORDER BY created_at, id",
+                    "SELECT state, last_error, occurrence_count, batch_id, notification_item_id, sent_channels_json, source_job_id, source_status FROM notification_anomaly_occurrences WHERE owner = ?1 AND repo = ?2 AND state = ?3 AND occurrence_count = ?4 AND notification_pending = 1 ORDER BY created_at, id",
                 )?;
                 let rows = stmt.query_map(
                     params![owner, repo, state, occurrence_count],
@@ -885,6 +924,8 @@ impl Db {
                             batch_id: row.get(3)?,
                             notification_item_id: row.get(4)?,
                             sent_channels: serde_json::from_str(&raw_channels).unwrap_or_default(),
+                            source_job_id: row.get(6)?,
+                            source_status: row.get(7)?,
                         })
                     },
                 )?;
@@ -901,7 +942,7 @@ impl Db {
     ) -> anyhow::Result<Vec<NotificationAnomalyOccurrence>> {
         self.call(|conn| {
             let mut stmt = conn.prepare(
-                "SELECT owner, repo, state, last_error, occurrence_count, batch_id, notification_item_id, sent_channels_json FROM notification_anomaly_occurrences WHERE notification_pending = 1 ORDER BY created_at, id",
+                "SELECT owner, repo, state, last_error, occurrence_count, batch_id, notification_item_id, sent_channels_json, source_job_id, source_status FROM notification_anomaly_occurrences WHERE notification_pending = 1 ORDER BY created_at, id LIMIT 256",
             )?;
             let rows = stmt.query_map([], |row| {
                 let raw_channels: String = row.get(7)?;
@@ -916,6 +957,8 @@ impl Db {
                     batch_id: row.get(5)?,
                     notification_item_id: row.get(6)?,
                     sent_channels: serde_json::from_str(&raw_channels).unwrap_or_default(),
+                    source_job_id: row.get(8)?,
+                    source_status: row.get(9)?,
                 })
             })?;
             Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
@@ -931,7 +974,7 @@ impl Db {
         let batch_id = batch_id.to_string();
         self.call(move |conn| {
             let mut stmt = conn.prepare(
-                "SELECT owner, repo, state, last_error, occurrence_count, batch_id, notification_item_id, sent_channels_json FROM notification_anomaly_occurrences WHERE batch_id = ?1 AND notification_pending = 1 ORDER BY created_at, id",
+                "SELECT owner, repo, state, last_error, occurrence_count, batch_id, notification_item_id, sent_channels_json, source_job_id, source_status FROM notification_anomaly_occurrences WHERE batch_id = ?1 AND notification_pending = 1 ORDER BY created_at, id",
             )?;
             let rows = stmt.query_map(params![batch_id], |row| {
                 let raw_channels: String = row.get(7)?;
@@ -946,6 +989,8 @@ impl Db {
                     batch_id: row.get(5)?,
                     notification_item_id: row.get(6)?,
                     sent_channels: serde_json::from_str(&raw_channels).unwrap_or_default(),
+                    source_job_id: row.get(8)?,
+                    source_status: row.get(9)?,
                 })
             })?;
             Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)

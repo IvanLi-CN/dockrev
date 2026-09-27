@@ -13,6 +13,7 @@ pub(super) fn apply_migrations(conn: &mut rusqlite::Connection) -> anyhow::Resul
     apply_migration_0035_add_new_version_delivery_claim(conn)?;
     apply_migration_0036_add_notification_dispatch_reason(conn)?;
     apply_migration_0037_add_notification_anomaly_delivery_claim(conn)?;
+    apply_migration_0038_add_notification_delivery_guards(conn)?;
     Ok(())
 }
 
@@ -206,6 +207,32 @@ CREATE TABLE IF NOT EXISTS notification_dispatch_outbox (
 CREATE INDEX IF NOT EXISTS idx_notification_dispatch_outbox_pending
   ON notification_dispatch_outbox(processed_at, finished_at, job_id);
 "#,
+    )?;
+    record_migration_tx(&tx, id)?;
+    tx.commit()?;
+    Ok(())
+}
+
+pub(super) fn apply_migration_0038_add_notification_delivery_guards(
+    conn: &mut rusqlite::Connection,
+) -> anyhow::Result<()> {
+    let id = "0038_add_notification_delivery_guards";
+    if migration_applied(conn, id)? {
+        return Ok(());
+    }
+
+    let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
+    tx.execute(
+        "ALTER TABLE notification_dispatch_outbox ADD COLUMN event_enabled INTEGER NOT NULL DEFAULT 1",
+        [],
+    )?;
+    tx.execute(
+        "ALTER TABLE notification_anomaly_occurrences ADD COLUMN source_job_id TEXT",
+        [],
+    )?;
+    tx.execute(
+        "ALTER TABLE notification_anomaly_occurrences ADD COLUMN source_status TEXT NOT NULL DEFAULT 'success'",
+        [],
     )?;
     record_migration_tx(&tx, id)?;
     tx.commit()?;

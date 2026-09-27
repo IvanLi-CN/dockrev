@@ -472,6 +472,7 @@ export type Fixture = {
   discoveredProjects: DiscoveredProject[]
   settings: SettingsResponse
   notifications: NotificationConfig
+  notificationReadAll: boolean
   githubPackagesSettings: GitHubPackagesSettingsResponse
   githubPackagesRepos: GitHubPackagesRepo[]
   serviceSettingsById: Record<string, ServiceSettings>

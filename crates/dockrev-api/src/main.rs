@@ -49,6 +49,7 @@ mod ui;
 mod update_stop;
 mod updater;
 
+use anyhow::Context as _;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
 async fn recover_managed_override_transactions(state: &std::sync::Arc<state::AppState>) {
@@ -304,10 +305,24 @@ async fn main() -> anyhow::Result<()> {
             .reopen_auto_update_pending_for_recovered_jobs(&recovered, &now)
             .await?;
     }
-    api::replay_pending_check_notifications(&state).await;
-    if let Err(err) = notify::replay_pending_ghcr_webhook_anomalies(&state, &now).await {
-        tracing::warn!(error = %err, "failed to replay pending GHCR webhook anomaly notifications");
-    }
+    let startup_replay_state = state.clone();
+    let startup_replay_now = now.clone();
+    tokio::spawn(async move {
+        api::replay_pending_check_notifications(&startup_replay_state).await;
+        if let Err(err) = tokio::time::timeout(
+            std::time::Duration::from_secs(240),
+            notify::replay_pending_ghcr_webhook_anomalies(
+                &startup_replay_state,
+                &startup_replay_now,
+            ),
+        )
+        .await
+        .context("startup GHCR notification replay timed out")
+        .and_then(|result| result)
+        {
+            tracing::warn!(error = %err, "failed to replay pending GHCR webhook anomaly notifications");
+        }
+    });
     let notification_replay_state = state.clone();
     tokio::spawn(async move {
         loop {
@@ -316,11 +331,16 @@ async fn main() -> anyhow::Result<()> {
             let replay_now = time::OffsetDateTime::now_utc()
                 .format(&time::format_description::well_known::Rfc3339)
                 .unwrap_or_else(|_| "1970-01-01T00:00:00Z".to_string());
-            if let Err(err) = notify::replay_pending_ghcr_webhook_anomalies(
-                &notification_replay_state,
-                &replay_now,
+            if let Err(err) = tokio::time::timeout(
+                std::time::Duration::from_secs(240),
+                notify::replay_pending_ghcr_webhook_anomalies(
+                    &notification_replay_state,
+                    &replay_now,
+                ),
             )
             .await
+            .context("periodic GHCR notification replay timed out")
+            .and_then(|result| result)
             {
                 tracing::warn!(error = %err, "failed to replay pending GHCR webhook anomaly notifications");
             }

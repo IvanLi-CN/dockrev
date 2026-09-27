@@ -11,6 +11,7 @@ export const PUSH_ACK = 'DOCKREV_NOTIFICATION_PUSH_ACK'
 export const PUSH_BADGE_TIMEOUT_MS = 1500
 export const PUSH_BADGE_FETCH_TIMEOUT_MS = 400
 export const CLICK_ACK = 'DOCKREV_NOTIFICATION_CLICK_ACK'
+export const CLICK_CANCEL = 'DOCKREV_NOTIFICATION_CLICK_CANCEL'
 
 export function validPushUnreadCount(data: PushNotificationData): number | null {
   if (

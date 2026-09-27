@@ -27,6 +27,25 @@ pub(crate) async fn replay_pending_check_notifications(state: &Arc<AppState>) {
             .map(|dispatch| (dispatch.finished_at.clone(), dispatch.job_id.clone()));
         let mut processed_any = false;
         for dispatch in pending {
+            if !dispatch.event_enabled {
+                if let Err(error) = state
+                    .db
+                    .mark_check_notification_dispatch_processed(
+                        &dispatch.job_id,
+                        &dispatch.finished_at,
+                    )
+                    .await
+                {
+                    tracing::warn!(
+                        job_id = %dispatch.job_id,
+                        error = %error,
+                        "failed to mark disabled check notification dispatch processed"
+                    );
+                } else {
+                    processed_any = true;
+                }
+                continue;
+            }
             match maybe_notify_check_new_versions(
                 state,
                 &dispatch.job_id,

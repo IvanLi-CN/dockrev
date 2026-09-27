@@ -9,6 +9,7 @@ pub(crate) struct PendingCheckNotificationDispatch {
     pub reason: String,
     pub finished_at: String,
     pub summary: serde_json::Value,
+    pub event_enabled: bool,
 }
 
 pub(super) fn enqueue_check_notification_tx(
@@ -17,14 +18,21 @@ pub(super) fn enqueue_check_notification_tx(
     reason: &str,
     finished_at: &str,
     summary: &serde_json::Value,
+    event_enabled: bool,
 ) -> anyhow::Result<()> {
     tx.execute(
         r#"
-INSERT INTO notification_dispatch_outbox (job_id, reason, finished_at, summary_json)
-VALUES (?1, ?2, ?3, ?4)
+INSERT INTO notification_dispatch_outbox (job_id, reason, finished_at, summary_json, event_enabled)
+VALUES (?1, ?2, ?3, ?4, ?5)
 ON CONFLICT(job_id) DO NOTHING
 "#,
-        params![job_id, reason, finished_at, serde_json::to_string(summary)?],
+        params![
+            job_id,
+            reason,
+            finished_at,
+            serde_json::to_string(summary)?,
+            event_enabled
+        ],
     )?;
     Ok(())
 }
@@ -47,7 +55,7 @@ impl Db {
         self.call(move |conn| {
             let mut stmt = conn.prepare(
                 r#"
-SELECT outbox.job_id, outbox.reason, outbox.finished_at, outbox.summary_json
+SELECT outbox.job_id, outbox.reason, outbox.finished_at, outbox.summary_json, outbox.event_enabled
 FROM notification_dispatch_outbox outbox
 WHERE outbox.processed_at IS NULL
   AND (
@@ -73,6 +81,7 @@ LIMIT 256
                     reason: row.get(1)?,
                     finished_at: row.get(2)?,
                     summary,
+                    event_enabled: row.get::<_, i64>(4)? != 0,
                 })
             })?;
             Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)

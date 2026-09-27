@@ -7,6 +7,7 @@ import { DYNAMIC_PAGE_TEMPLATES, DYNAMIC_SEGMENT_PATTERN, RESERVED_PREFIXES, STA
 import {
   PUSH_BADGE_TIMEOUT_MS,
   PUSH_BADGE_FETCH_TIMEOUT_MS,
+  CLICK_CANCEL,
   PUSH_MESSAGE,
   isNotificationClickAcknowledged,
   isPushBadgeAcknowledged,
@@ -180,11 +181,12 @@ self.addEventListener('push', (event) => {
 async function waitForNotificationClickAck(client: WindowClient, notificationId: string, url: string): Promise<boolean> {
   if (typeof MessageChannel === 'undefined') return false
   const channel = new MessageChannel()
+  const requestId = `notification-click-${Date.now()}-${Math.random()}`
   const confirmed = await waitForServiceWorkerAck(
     (receive) => {
       channel.port1.onmessage = (message) => receive(message.data)
       client.postMessage(
-        { type: 'DOCKREV_NOTIFICATION_CLICK', notificationId, url },
+        { type: 'DOCKREV_NOTIFICATION_CLICK', notificationId, url, requestId },
         [channel.port2],
       )
     },
@@ -192,6 +194,9 @@ async function waitForNotificationClickAck(client: WindowClient, notificationId:
     2500,
   )
   channel.port1.close()
+  if (!confirmed) {
+    client.postMessage({ type: CLICK_CANCEL, requestId })
+  }
   return confirmed
 }
 

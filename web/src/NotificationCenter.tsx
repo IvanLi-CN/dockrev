@@ -30,6 +30,7 @@ const BROADCAST_CHANNEL_NAME = 'dockrev:notifications'
 const COLD_START_ID = 'dockrevNotificationId'
 const COLD_START_TARGET = 'dockrevNotificationTarget'
 const CLICK_MESSAGE = 'DOCKREV_NOTIFICATION_CLICK'
+const CLICK_CANCEL = 'DOCKREV_NOTIFICATION_CLICK_CANCEL'
 const CLICK_ACK = 'DOCKREV_NOTIFICATION_CLICK_ACK'
 const PUSH_MESSAGE = 'DOCKREV_NOTIFICATION_PUSH'
 const PUSH_ACK = 'DOCKREV_NOTIFICATION_PUSH_ACK'
@@ -90,6 +91,7 @@ export function NotificationProvider(props: { children: ReactNode }) {
   const syncRef = useRef<Promise<boolean> | null>(null)
   const loadMoreRef = useRef<Promise<void> | null>(null)
   const mutationRevisionRef = useRef(0)
+  const canceledClickRequestsRef = useRef(new Set<string>())
   const listRevisionRef = useRef(0)
   const unreadCountRef = useRef(0)
   const isOpenRef = useRef(false)
@@ -198,8 +200,10 @@ export function NotificationProvider(props: { children: ReactNode }) {
 
   const read = useCallback(
     async (item: NotificationItem) => {
-      mutationRevisionRef.current += 1
+      const mutationRevision = mutationRevisionRef.current + 1
+      mutationRevisionRef.current = mutationRevision
       const response = await markNotificationRead(item.id)
+      if (mutationRevision !== mutationRevisionRef.current) return
       mutationRevisionRef.current += 1
       setItems((current) =>
         current.map((candidate) =>
@@ -215,8 +219,10 @@ export function NotificationProvider(props: { children: ReactNode }) {
 
   const readAll = useCallback(async () => {
     try {
-      mutationRevisionRef.current += 1
+      const mutationRevision = mutationRevisionRef.current + 1
+      mutationRevisionRef.current = mutationRevision
       const response = await markAllNotificationsRead()
+      if (mutationRevision !== mutationRevisionRef.current) return
       mutationRevisionRef.current += 1
       setItems((current) => current.map((item) => ({ ...item, readAt: response.readAt })))
       applyUnreadCount(response.unreadCount)
@@ -299,11 +305,20 @@ export function NotificationProvider(props: { children: ReactNode }) {
   }, [refreshAfterServerChange])
 
   const acknowledgeClick = useCallback(
-    async (notificationId: string, target: string, port?: MessagePort): Promise<boolean> => {
+    async (
+      notificationId: string,
+      target: string,
+      port?: MessagePort,
+      requestId?: string,
+    ): Promise<boolean> => {
       try {
+        if (requestId && canceledClickRequestsRef.current.delete(requestId)) return false
         const item = items.find((candidate) => candidate.id === notificationId)
-        mutationRevisionRef.current += 1
+        const mutationRevision = mutationRevisionRef.current + 1
+        mutationRevisionRef.current = mutationRevision
         const response = await markNotificationRead(notificationId)
+        if (mutationRevision !== mutationRevisionRef.current) return false
+        if (requestId && canceledClickRequestsRef.current.delete(requestId)) return false
         mutationRevisionRef.current += 1
         applyUnreadCount(response.unreadCount)
         setItems((current) =>
@@ -334,8 +349,12 @@ export function NotificationProvider(props: { children: ReactNode }) {
           .catch(() => event.ports?.[0]?.postMessage({ type: PUSH_ACK, ok: false }))
         return
       }
+      if (data?.type === CLICK_CANCEL && typeof data.requestId === 'string') {
+        canceledClickRequestsRef.current.add(data.requestId)
+        return
+      }
       if (!data || data.type !== CLICK_MESSAGE) return
-      void acknowledgeClick(data.notificationId, data.url, event.ports?.[0])
+      void acknowledgeClick(data.notificationId, data.url, event.ports?.[0], data.requestId)
     }
     navigator.serviceWorker?.addEventListener('message', onServiceWorkerMessage)
     return () => navigator.serviceWorker?.removeEventListener('message', onServiceWorkerMessage)

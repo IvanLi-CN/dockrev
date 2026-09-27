@@ -4,6 +4,7 @@ import {
   PUSH_BADGE_FETCH_TIMEOUT_MS,
   PUSH_BADGE_TIMEOUT_MS,
   PUSH_MESSAGE,
+  CLICK_CANCEL,
   isNotificationClickAcknowledged,
   isPushBadgeAcknowledged,
   notificationLaunchUrl,
@@ -24,6 +25,7 @@ describe('service worker push contract', () => {
 
   test('uses an explicit page claim before the worker falls back to REST', () => {
     expect(PUSH_MESSAGE).toBe('DOCKREV_NOTIFICATION_PUSH')
+    expect(CLICK_CANCEL).toBe('DOCKREV_NOTIFICATION_CLICK_CANCEL')
     expect(PUSH_ACK).toBe('DOCKREV_NOTIFICATION_PUSH_ACK')
     expect(isPushBadgeAcknowledged({ type: PUSH_ACK, ok: true })).toBe(true)
     expect(isPushBadgeAcknowledged({ type: PUSH_ACK, ok: false })).toBe(false)

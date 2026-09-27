@@ -141,6 +141,15 @@ WHERE id IN (
                         .as_ref()
                         .is_some_and(|(job_type, _, _)| job_type == "check")
                 {
+                    let event_enabled = tx
+                        .query_row(
+                            "SELECT event_new_version_enabled FROM notification_settings LIMIT 1",
+                            [],
+                            |row| row.get::<_, i64>(0),
+                        )
+                        .optional()?
+                        .unwrap_or(1)
+                        != 0;
                     new_version_discoveries::record_new_version_discoveries_from_summary_conn(
                         &tx,
                         &job_id,
@@ -151,11 +160,12 @@ WHERE id IN (
                         &tx,
                         &job_id,
                         previous
-                            .as_ref()
-                            .map(|(_, reason, _)| reason.as_str())
-                            .unwrap_or_default(),
+                        .as_ref()
+                        .map(|(_, reason, _)| reason.as_str())
+                        .unwrap_or_default(),
                         &finished_at,
                         &summary_json,
+                        event_enabled,
                     )?;
                 }
                 if let Some(notification) = notification.as_ref() {

@@ -40,6 +40,7 @@ const MAX_NEW_VERSION_SERVICE_URLS: usize = 10;
 const MAX_GHCR_REPOS: usize = 10;
 const MAX_GHCR_REPO_ERROR_CHARS: usize = 256;
 const NEW_VERSION_NOTIFY_SETTLE_TIMEOUT: Duration = Duration::from_secs(10);
+const GHCR_ANOMALY_DELIVERY_TIMEOUT: Duration = Duration::from_secs(240);
 
 pub async fn notify_job_updated(
     state: &AppState,
@@ -112,32 +113,6 @@ pub async fn prepare_job_notification_item_for_finish(
         return Ok(None);
     }
     prepare_job_notification_item(state, job_id, status, now_rfc3339, summary).await
-}
-
-pub async fn prepare_job_notification_item_for_finish_best_effort(
-    state: &AppState,
-    should_notify: bool,
-    job_id: &str,
-    status: &str,
-    now_rfc3339: &str,
-    summary: &Value,
-) -> Option<crate::db::NotificationItemDraft> {
-    match prepare_job_notification_item_for_finish(
-        state,
-        should_notify,
-        job_id,
-        status,
-        now_rfc3339,
-        summary,
-    )
-    .await
-    {
-        Ok(notification) => notification,
-        Err(error) => {
-            tracing::warn!(job_id = %job_id, error = %error, "failed to prepare job notification before finishing job");
-            None
-        }
-    }
 }
 
 #[allow(dead_code)]
@@ -471,12 +446,6 @@ pub async fn notify_ghcr_webhook_anomaly(
     if pending_occurrences.is_empty() {
         return Ok(());
     }
-    let target_path = if event.job_id.is_empty() {
-        "queue".to_string()
-    } else {
-        format!("queue/{}", event.job_id)
-    };
-    let target_url = notification_target_url(state, &target_path).await?;
     let mut groups =
         std::collections::BTreeMap::<String, Vec<crate::db::NotificationAnomalyOccurrence>>::new();
     for occurrence in pending_occurrences {
@@ -502,6 +471,22 @@ pub async fn notify_ghcr_webhook_anomaly(
         if occurrences.is_empty() {
             continue;
         }
+        let source_job_id = occurrences
+            .iter()
+            .find_map(|occurrence| occurrence.source_job_id.clone())
+            .filter(|job_id| !job_id.is_empty())
+            .unwrap_or_else(|| event.job_id.to_string());
+        let source_status = occurrences
+            .first()
+            .map(|occurrence| occurrence.source_status.as_str())
+            .filter(|status| !status.is_empty())
+            .unwrap_or(event.status);
+        let target_path = if source_job_id.is_empty() {
+            "queue".to_string()
+        } else {
+            format!("queue/{source_job_id}")
+        };
+        let target_url = notification_target_url(state, &target_path).await?;
         let anomaly_repos = occurrences
             .iter()
             .map(|occurrence| GhcrWebhookAnomalyRepo {
@@ -562,7 +547,7 @@ pub async fn notify_ghcr_webhook_anomaly(
                     title: format!("GHCR Webhook 发现 {} 个异常", anomaly_repos.len()),
                     body: ghcr_anomaly_notification_body(&anomaly_repos),
                     target_url: target_url.clone(),
-                    source_job_id: Some(event.job_id.to_string()),
+                    source_job_id: (!source_job_id.is_empty()).then_some(source_job_id.clone()),
                     created_at: now_rfc3339.to_string(),
                 },
                 now_rfc3339,
@@ -573,19 +558,23 @@ pub async fn notify_ghcr_webhook_anomaly(
             .mark_notification_anomaly_occurrences_item_persisted(&group_keys, &item.item.id)
             .await?;
         let group_event = GhcrWebhookAnomalyEvent {
-            job_id: event.job_id,
-            status: event.status,
+            job_id: &source_job_id,
+            status: source_status,
             counts: anomaly_counts,
             repos: &anomaly_repos,
         };
-        let results = send_ghcr_webhook_anomaly_with_badge(
-            state,
-            now_rfc3339,
-            group_event,
-            Some((&item.item.id, item.unread_count)),
-            &previously_sent_channels.unwrap_or_default(),
+        let results = tokio::time::timeout(
+            GHCR_ANOMALY_DELIVERY_TIMEOUT,
+            send_ghcr_webhook_anomaly_with_badge(
+                state,
+                now_rfc3339,
+                group_event,
+                Some((&item.item.id, item.unread_count)),
+                &previously_sent_channels.unwrap_or_default(),
+            ),
         )
-        .await?;
+        .await
+        .context("GHCR anomaly delivery timed out")??;
         state
             .db
             .record_notification_anomaly_delivery_with_claim(
