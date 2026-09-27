@@ -14,11 +14,14 @@
 - Persistence: 成功检查只记录服务、镜像仓库、当时配置标签、返回摘要和观测时间；迁移不回填；摘要先于或晚于版本推断都能按相同仓库和摘要绑定。
 - API: 服务级观察查询、预检和提交接口已实现；普通更新使用历史摘要，强制更新实时解析原始 release tag，并在提交时重做预检。
 - Execution: 选定摘要部署复用更新任务与回滚保护，跳过再次拉取配置标签，并将运行镜像同步到本地配置标签；Compose 文件不变。
+- Automatic updates: 成功的计划或匹配 GHCR Webhook 检查可重验已存在候选，但只有观测服务、镜像仓库、当前配置标签和候选摘要全部一致，且候选摘要仍不同于当前部署时才重新进入自动策略。严格 SemVer 仅从该条摘要绑定观测传入结算；普通展示字符串仍不能跳过候选推断。
 - UI: 普通/强制更新按钮和一层/两层确认已接入版本列表，其他更新入口沿用原行为。
 - Verification commands:
-  - `cargo fmt --all -- --check`
-  - `cargo clippy --workspace --all-targets --all-features -- -D warnings`
-  - `cargo test -p dockrev-api --bin dockrev -- --test-threads=1`（951 passed、1 ignored）
+- `cargo fmt --all -- --check`
+- `cargo check -p dockrev-api --tests`
+- `cargo clippy --workspace --all-targets --all-features -- -D warnings`
+- `cargo test --release -p dockrev-api --bin dockrev -- --test-threads=1`（980 passed、1 ignored）
+- Automatic-policy recheck tests: 11 passed; digest-bound settlement regression test: 1 passed.
   - In `web/`: `bun run test`（249 passed、778 expectations）、`bun run lint`（0 errors；3 existing hook warnings）、`bun run build:demo:pages`
   - TypeScript build, selected-version Spec contract check, and visual-evidence document check passed; the related legacy service-detail Spec retains its historical format and does not pass the current canonical-format checker.
   - In `web/`: `node ./scripts/storybook-build.mjs` and `DOCKREV_TEST_STORYBOOK_INTERACTIVE_ONLY=1 node ./scripts/test-storybook.mjs`

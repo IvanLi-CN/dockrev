@@ -379,8 +379,9 @@ fn candidate_digest_is_valid(candidate_digest: &str) -> bool {
     crate::snapshot_worker::normalize_digest_identity(candidate_digest).is_some()
 }
 
-fn candidate_settlement_state(
+fn candidate_settlement_state_with_version(
     candidate: &notify::NewVersionDiscoveredService,
+    digest_bound_version: Option<&str>,
 ) -> (&'static str, Option<String>, Option<String>) {
     if candidate.candidate_digest.trim().is_empty() {
         return (
@@ -396,7 +397,12 @@ fn candidate_settlement_state(
             Some("invalid_candidate_digest".to_string()),
         );
     }
-    if let Some(version) = resolved_candidate_version(candidate) {
+    let resolved_version = resolved_candidate_version(candidate).or_else(|| {
+        digest_bound_version
+            .filter(|version| crate::ignore::is_strict_semver(version))
+            .map(str::to_string)
+    });
+    if let Some(version) = resolved_version {
         return (
             "ready",
             Some(version),
@@ -752,6 +758,7 @@ pub async fn reconcile_inference_for_digest(
                 now,
                 &candidate_from_row(&settled),
                 Some(&settled.source),
+                None,
             )
             .await?;
         }
@@ -837,6 +844,7 @@ pub async fn reevaluate_service_policy(
                 now,
                 &candidate_from_row(&candidate),
                 Some(&candidate.source),
+                None,
             )
             .await?;
         }
@@ -1201,6 +1209,7 @@ async fn evaluate_candidate(
     finished_at: &str,
     candidate: &notify::NewVersionDiscoveredService,
     source: Option<&str>,
+    digest_bound_version: Option<&str>,
 ) -> anyhow::Result<()> {
     if !candidate_digest_is_valid(&candidate.candidate_digest) {
         tracing::warn!(
@@ -1235,7 +1244,7 @@ async fn evaluate_candidate(
         return Ok(());
     }
     let (settlement_status, resolved_version, settlement_reason) =
-        candidate_settlement_state(candidate);
+        candidate_settlement_state_with_version(candidate, digest_bound_version);
     let candidate_row = state
         .db
         .upsert_auto_update_candidate(

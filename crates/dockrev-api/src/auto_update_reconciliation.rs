@@ -60,6 +60,7 @@ async fn reconcile_auto_update_policy_candidates(
             now,
             &candidate_from_row(&candidate),
             Some(&candidate.source),
+            None,
         )
         .await?;
     }
