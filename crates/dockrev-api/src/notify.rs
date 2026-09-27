@@ -140,57 +140,6 @@ pub async fn prepare_job_notification_item_for_finish_best_effort(
     }
 }
 
-pub async fn prepare_new_version_notification_item_for_finish(
-    state: &AppState,
-    check_job_id: &str,
-    now_rfc3339: &str,
-    discovered_services: &[NewVersionDiscoveredService],
-) -> anyhow::Result<Option<crate::db::NotificationItemDraft>> {
-    if discovered_services.is_empty() {
-        return Ok(None);
-    }
-    let settings = state.db.get_notification_settings().await?;
-    if !is_event_enabled(&settings, NotificationEventKind::NewVersionDiscovered) {
-        return Ok(None);
-    }
-    let discovered_services =
-        revalidate_new_version_discovered_services(state, discovered_services).await?;
-    if discovered_services.is_empty() {
-        return Ok(None);
-    }
-    let discovered_services =
-        settle_new_version_discovered_services(state, &discovered_services).await?;
-    let dispatch_now_rfc3339 = notification_now_rfc3339(now_rfc3339);
-    let batch_job_id = state
-        .db
-        .find_new_version_notification_batch_job_id(
-            &discovered_services
-                .iter()
-                .map(|item| (item.service_id.clone(), item.candidate_digest.clone()))
-                .collect::<Vec<_>>(),
-        )
-        .await?
-        .unwrap_or_else(|| check_job_id.to_string());
-    let identity_key =
-        new_version_notification_identity(&std::collections::BTreeSet::from([batch_job_id]));
-    let target_path = if discovered_services.len() == 1 {
-        let service = &discovered_services[0];
-        format!("services/{}/{}", service.stack_id, service.service_id)
-    } else {
-        format!("queue/{check_job_id}")
-    };
-    Ok(Some(crate::db::NotificationItemDraft {
-        id: crate::ids::new_notification_id(),
-        kind: crate::db::NOTIFICATION_KIND_NEW_VERSION.to_string(),
-        identity_key,
-        title: format!("发现 {} 个新版本", discovered_services.len()),
-        body: new_version_notification_body(&discovered_services),
-        target_url: notification_target_url(state, &target_path).await?,
-        source_job_id: Some(check_job_id.to_string()),
-        created_at: dispatch_now_rfc3339,
-    }))
-}
-
 pub async fn notify_new_versions_discovered(
     state: &AppState,
     check_job_id: &str,
@@ -478,68 +427,114 @@ pub async fn notify_ghcr_webhook_anomaly(
             .await?;
         return Ok(());
     }
-    let anomaly_batch_ids = state
-        .db
-        .list_notification_anomaly_batch_ids(&anomaly_state_keys)
-        .await?;
     let target_url = notification_target_url(state, &format!("queue/{}", event.job_id)).await?;
-    let item = state
+    let pending_occurrences = state
         .db
-        .ensure_notification_item(
-            &crate::db::NotificationItemDraft {
-                id: crate::ids::new_notification_id(),
-                kind: crate::db::NOTIFICATION_KIND_GHCR_ANOMALY.to_string(),
-                identity_key: ghcr_anomaly_notification_identity(event.repos, &anomaly_batch_ids),
-                title: format!("GHCR Webhook 发现 {} 个异常", event.counts.total()),
-                body: ghcr_anomaly_notification_body(event.repos),
-                target_url,
-                source_job_id: Some(event.job_id.to_string()),
-                created_at: now_rfc3339.to_string(),
-            },
+        .list_pending_notification_anomaly_occurrences(&anomaly_state_keys)
+        .await?;
+    let mut groups =
+        std::collections::BTreeMap::<String, Vec<crate::db::NotificationAnomalyOccurrence>>::new();
+    for occurrence in pending_occurrences {
+        groups
+            .entry(occurrence.batch_id.clone())
+            .or_default()
+            .push(occurrence);
+    }
+
+    for (batch_id, occurrences) in groups {
+        let anomaly_repos = occurrences
+            .iter()
+            .map(|occurrence| GhcrWebhookAnomalyRepo {
+                owner: occurrence.observation.owner.clone(),
+                repo: occurrence.observation.repo.clone(),
+                state: occurrence.observation.state.clone(),
+                last_error: occurrence.observation.last_error.clone(),
+                occurrence_count: occurrence.observation.occurrence_count,
+            })
+            .collect::<Vec<_>>();
+        let anomaly_counts = GhcrWebhookAnomalyCounts {
+            missing: anomaly_repos
+                .iter()
+                .filter(|repo| repo.state == "missing")
+                .count() as u32,
+            conflict: anomaly_repos
+                .iter()
+                .filter(|repo| repo.state == "conflict")
+                .count() as u32,
+            error: anomaly_repos
+                .iter()
+                .filter(|repo| repo.state == "error")
+                .count() as u32,
+        };
+        let group_keys = anomaly_repos
+            .iter()
+            .map(|repo| {
+                (
+                    repo.owner.clone(),
+                    repo.repo.clone(),
+                    repo.state.clone(),
+                    repo.occurrence_count,
+                )
+            })
+            .collect::<Vec<_>>();
+        let mut previously_sent_channels = None::<std::collections::BTreeSet<String>>;
+        for occurrence in &occurrences {
+            let channels = occurrence
+                .sent_channels
+                .iter()
+                .cloned()
+                .collect::<std::collections::BTreeSet<_>>();
+            previously_sent_channels = Some(match previously_sent_channels {
+                None => channels,
+                Some(mut shared) => {
+                    shared.retain(|channel| channels.contains(channel));
+                    shared
+                }
+            });
+        }
+        let item = state
+            .db
+            .ensure_notification_item(
+                &crate::db::NotificationItemDraft {
+                    id: crate::ids::new_notification_id(),
+                    kind: crate::db::NOTIFICATION_KIND_GHCR_ANOMALY.to_string(),
+                    identity_key: format!("ghcr_webhook_anomaly:{batch_id}"),
+                    title: format!("GHCR Webhook 发现 {} 个异常", anomaly_repos.len()),
+                    body: ghcr_anomaly_notification_body(&anomaly_repos),
+                    target_url: target_url.clone(),
+                    source_job_id: Some(event.job_id.to_string()),
+                    created_at: now_rfc3339.to_string(),
+                },
+                now_rfc3339,
+            )
+            .await?;
+        state
+            .db
+            .mark_notification_anomaly_occurrences_item_persisted(&group_keys, &item.item.id)
+            .await?;
+        let group_event = GhcrWebhookAnomalyEvent {
+            job_id: event.job_id,
+            status: event.status,
+            counts: anomaly_counts,
+            repos: &anomaly_repos,
+        };
+        let results = send_ghcr_webhook_anomaly_with_badge(
+            state,
             now_rfc3339,
+            group_event,
+            Some((&item.item.id, item.unread_count)),
+            &previously_sent_channels.unwrap_or_default(),
         )
         .await?;
-    let sent_channel_records = state
-        .db
-        .list_notification_anomaly_sent_channels(&anomaly_state_keys)
-        .await?;
-    let previously_sent_channels = anomaly_state_keys
-        .iter()
-        .fold(
-            None::<std::collections::BTreeSet<String>>,
-            |shared, (owner, repo, _, _)| {
-                let channels = sent_channel_records
-                    .get(&format!("{owner}/{repo}"))
-                    .into_iter()
-                    .flatten()
-                    .cloned()
-                    .collect::<std::collections::BTreeSet<_>>();
-                Some(match shared {
-                    None => channels,
-                    Some(mut shared) => {
-                        shared.retain(|channel| channels.contains(channel));
-                        shared
-                    }
-                })
-            },
-        )
-        .unwrap_or_default();
-    let results = send_ghcr_webhook_anomaly_with_badge(
-        state,
-        now_rfc3339,
-        event,
-        Some((&item.item.id, item.unread_count)),
-        &previously_sent_channels,
-    )
-    .await?;
-    state
-        .db
-        .record_notification_anomaly_delivery(
-            &anomaly_state_keys,
-            &successful_delivery_channels(&results),
-            failed_delivery_error(&results).is_none(),
-        )
-        .await?;
+        state
+            .db
+            .record_notification_anomaly_delivery(
+                &group_keys,
+                &successful_delivery_channels(&results),
+                failed_delivery_error(&results).is_none(),
+            )
+            .await?;
+    }
     Ok(())
 }
 
@@ -776,6 +771,7 @@ fn new_version_notification_identity(check_job_ids: &std::collections::BTreeSet<
     )
 }
 
+#[cfg(test)]
 fn ghcr_anomaly_notification_identity(
     items: &[GhcrWebhookAnomalyRepo],
     batch_ids: &std::collections::HashMap<String, String>,
@@ -1330,15 +1326,30 @@ fn successful_delivery_channels(results: &Value) -> Vec<String> {
     let Some(map) = results.as_object() else {
         return Vec::new();
     };
-    map.iter()
-        .filter_map(|(channel, result)| {
-            result
-                .get("ok")
-                .and_then(|value| value.as_bool())
-                .filter(|ok| *ok)
-                .map(|_| channel.clone())
-        })
-        .collect()
+    let mut channels = Vec::new();
+    for (channel, result) in map {
+        if result
+            .get("ok")
+            .and_then(|value| value.as_bool())
+            .filter(|ok| *ok)
+            .is_some()
+        {
+            channels.push(channel.clone());
+        }
+        if channel == "webPush"
+            && let Some(subscriptions) = result
+                .get("successfulSubscriptions")
+                .and_then(Value::as_array)
+        {
+            channels.extend(
+                subscriptions
+                    .iter()
+                    .filter_map(Value::as_str)
+                    .map(str::to_string),
+            );
+        }
+    }
+    channels
 }
 
 fn failed_delivery_error(results: &Value) -> Option<String> {

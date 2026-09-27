@@ -8,6 +8,7 @@ pub(super) fn apply_migrations(conn: &mut rusqlite::Connection) -> anyhow::Resul
     apply_migration_0030_add_notification_anomaly_batch(conn)?;
     apply_migration_0031_add_new_version_notification_item(conn)?;
     apply_migration_0032_add_notification_anomaly_delivery(conn)?;
+    apply_migration_0033_add_notification_anomaly_occurrences(conn)?;
     Ok(())
 }
 
@@ -140,6 +141,41 @@ pub(super) fn apply_migration_0032_add_notification_anomaly_delivery(
     tx.execute(
         "ALTER TABLE notification_anomaly_states ADD COLUMN notification_sent_channels_json TEXT NOT NULL DEFAULT '[]'",
         [],
+    )?;
+    record_migration_tx(&tx, id)?;
+    tx.commit()?;
+    Ok(())
+}
+
+pub(super) fn apply_migration_0033_add_notification_anomaly_occurrences(
+    conn: &mut rusqlite::Connection,
+) -> anyhow::Result<()> {
+    let id = "0033_add_notification_anomaly_occurrences";
+    if migration_applied(conn, id)? {
+        return Ok(());
+    }
+
+    let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
+    tx.execute_batch(
+        r#"
+CREATE TABLE IF NOT EXISTS notification_anomaly_occurrences (
+  id TEXT PRIMARY KEY NOT NULL,
+  owner TEXT NOT NULL,
+  repo TEXT NOT NULL,
+  state TEXT NOT NULL,
+  last_error TEXT,
+  occurrence_count INTEGER NOT NULL,
+  batch_id TEXT NOT NULL,
+  notification_pending INTEGER NOT NULL DEFAULT 1,
+  notification_item_id TEXT,
+  sent_channels_json TEXT NOT NULL DEFAULT '[]',
+  created_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_notification_anomaly_occurrences_pending
+  ON notification_anomaly_occurrences (notification_pending, owner, repo, created_at, id);
+CREATE INDEX IF NOT EXISTS idx_notification_anomaly_occurrences_item
+  ON notification_anomaly_occurrences (notification_item_id);
+"#,
     )?;
     record_migration_tx(&tx, id)?;
     tx.commit()?;

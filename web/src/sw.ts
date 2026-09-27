@@ -4,6 +4,13 @@ import { clientsClaim } from 'workbox-core'
 import { addPlugins, cleanupOutdatedCaches, createHandlerBoundToURL, precacheAndRoute } from 'workbox-precaching'
 import { NavigationRoute, registerRoute } from 'workbox-routing'
 import { DYNAMIC_PAGE_TEMPLATES, DYNAMIC_SEGMENT_PATTERN, RESERVED_PREFIXES, STATIC_PAGE_PATHS } from './routeContract'
+import {
+  PUSH_BADGE_TIMEOUT_MS,
+  PUSH_MESSAGE,
+  isPushBadgeAcknowledged,
+  type PushNotificationData,
+  validPushUnreadCount,
+} from './swPush'
 
 declare let self: ServiceWorkerGlobalScope & {
   __WB_MANIFEST: Array<{ url: string; revision: string | null }>
@@ -55,25 +62,6 @@ self.addEventListener('message', (event) => {
   }
 })
 
-type PushNotificationData = {
-  title?: string
-  body?: string
-  url?: string
-  notificationId?: string
-  unreadCount?: number
-}
-
-function validPushUnreadCount(data: PushNotificationData): number | null {
-  if (
-    typeof data.unreadCount !== 'number' ||
-    !Number.isFinite(data.unreadCount) ||
-    data.unreadCount < 0
-  ) {
-    return null
-  }
-  return Math.max(0, Math.floor(data.unreadCount))
-}
-
 async function authoritativePushUnreadCount(data: PushNotificationData): Promise<number | null> {
   try {
     const response = await fetch(
@@ -92,13 +80,36 @@ async function authoritativePushUnreadCount(data: PushNotificationData): Promise
   return validPushUnreadCount(data)
 }
 
+async function waitForPushBadgeClaim(client: WindowClient, notificationId: string): Promise<boolean> {
+  if (typeof MessageChannel === 'undefined') return false
+  const channel = new MessageChannel()
+  const acknowledgement = new Promise<boolean>((resolve) => {
+    const timeout = setTimeout(() => resolve(false), 1000)
+    channel.port1.onmessage = (message) => {
+      clearTimeout(timeout)
+      resolve(isPushBadgeAcknowledged(message.data))
+    }
+  })
+  try {
+    client.postMessage({ type: PUSH_MESSAGE, notificationId }, [channel.port2])
+  } catch {
+    channel.port1.close()
+    return false
+  }
+  const claimed = await acknowledgement
+  channel.port1.close()
+  return claimed
+}
+
 async function applyPushBadge(data: PushNotificationData): Promise<void> {
   const clients = await self.clients.matchAll({ type: 'window', includeUncontrolled: true })
   if (clients.length > 0) {
-    for (const client of clients) {
-      client.postMessage({ type: 'DOCKREV_NOTIFICATION_PUSH', notificationId: data.notificationId })
-    }
-    return
+    const claimed = await Promise.all(
+      typeof data.notificationId === 'string'
+        ? clients.map((client) => waitForPushBadgeClaim(client, data.notificationId!))
+        : [],
+    )
+    if (claimed.some(Boolean)) return
   }
   const unreadCount = await authoritativePushUnreadCount(data)
   if (unreadCount == null) return
@@ -134,7 +145,19 @@ self.addEventListener('push', (event) => {
         data.notificationId.trim().length > 0 &&
         validPushUnreadCount(data) != null
       ) {
-        await applyPushBadge(data)
+        await self.registration.showNotification(title, {
+          body: data.body || '',
+          tag:
+            typeof data.notificationId === 'string' && data.notificationId.trim().length > 0
+              ? `dockrev-${data.notificationId}`
+              : undefined,
+          data,
+        })
+        await Promise.race([
+          applyPushBadge(data).catch(() => undefined),
+          new Promise<void>((resolve) => setTimeout(resolve, PUSH_BADGE_TIMEOUT_MS)),
+        ])
+        return
       }
       await self.registration.showNotification(title, {
         body: data.body || '',

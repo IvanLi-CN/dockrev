@@ -345,9 +345,23 @@ impl Db {
             let mut reservations = Vec::new();
             for pending in &pendings {
                 match reserve_new_version_notification_tx(&tx, pending)? {
-                    NewVersionNotificationReserveResult::Reserved(id)
-                    | NewVersionNotificationReserveResult::AlreadyPending(id) => {
+                    NewVersionNotificationReserveResult::Reserved(id) => {
                         reservations.push((id, pending.id.clone()));
+                    }
+                    NewVersionNotificationReserveResult::AlreadyPending(id) => {
+                        let notification_item_identity = tx
+                            .query_row(
+                                "SELECT item.identity_key FROM new_version_notifications notification JOIN notification_items item ON item.id = notification.notification_item_id WHERE notification.id = ?1",
+                                params![id],
+                                |row| row.get::<_, String>(0),
+                            )
+                            .optional()?;
+                        if notification_item_identity
+                            .as_deref()
+                            .is_none_or(|identity| identity == draft.identity_key)
+                        {
+                            reservations.push((id, pending.id.clone()));
+                        }
                     }
                     NewVersionNotificationReserveResult::SkippedDuplicate => {}
                 }
@@ -413,23 +427,34 @@ ON CONFLICT(identity_key) DO NOTHING
     ) -> anyhow::Result<Option<String>> {
         let candidates = candidates.to_vec();
         self.call(move |conn| {
+            if candidates.is_empty() {
+                return Ok(None);
+            }
             let mut stmt = conn.prepare(
-            "SELECT job_id FROM new_version_notifications WHERE service_id = ?1 AND candidate_digest = ?2 AND status IN (?3, ?4, ?5) ORDER BY created_at ASC, id ASC LIMIT 1",
+            "SELECT job_id FROM new_version_notifications WHERE service_id = ?1 AND candidate_digest = ?2 AND status IN (?3, ?4) ORDER BY created_at ASC, id ASC LIMIT 1",
             )?;
+            let mut batch_job_id = None;
             for (service_id, candidate_digest) in candidates {
                 let digest = normalize_candidate_digest(Some(&candidate_digest))
                     .ok_or_else(|| rusqlite::Error::InvalidParameterName("candidate_digest".into()))?;
-                if let Some(job_id) = stmt
+                let Some(job_id) = stmt
                     .query_row(
-                        params![service_id, digest, STATUS_PENDING, STATUS_FAILED, STATUS_SENT],
+                        params![service_id, digest, STATUS_PENDING, STATUS_SENT],
                         |row| row.get::<_, String>(0),
                     )
                     .optional()?
+                else {
+                    return Ok(None);
+                };
+                if batch_job_id
+                    .as_ref()
+                    .is_some_and(|existing| existing != &job_id)
                 {
-                    return Ok(Some(job_id));
+                    return Ok(None);
                 }
+                batch_job_id = Some(job_id);
             }
-            Ok(None)
+            Ok(batch_job_id)
         })
         .await
         .context("find new version notification batch job id")
@@ -914,6 +939,47 @@ mod tests {
             vec![("nvn_1".to_string(), "nvn_2".to_string())]
         );
         assert_eq!(first_result.1, retry_result.1);
+    }
+
+    #[tokio::test]
+    async fn pending_reservation_with_different_batch_does_not_duplicate_inbox_item() {
+        let db = Db::open(Path::new(":memory:")).await.unwrap();
+        let first = pending("nvn_1", "svc_1", "sha256:new");
+        let mut second = pending("nvn_2", "svc_1", "sha256:new");
+        second.job_id = "chk_2".to_string();
+        let first_draft = crate::db::NotificationItemDraft {
+            id: "item_1".to_string(),
+            kind: "new_version_discovered".to_string(),
+            identity_key: "new_version_discovered:chk_1".to_string(),
+            title: "发现新版本".to_string(),
+            body: "body".to_string(),
+            target_url: "/queue/chk_1".to_string(),
+            source_job_id: Some("chk_1".to_string()),
+            created_at: "2026-03-09T00:00:00Z".to_string(),
+        };
+        let mut second_draft = first_draft.clone();
+        second_draft.id = "item_2".to_string();
+        second_draft.identity_key = "new_version_discovered:chk_2".to_string();
+        second_draft.target_url = "/queue/chk_2".to_string();
+        second_draft.source_job_id = Some("chk_2".to_string());
+
+        db.reserve_new_version_notifications_with_item(&[first], &first_draft)
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(
+            db.reserve_new_version_notifications_with_item(&[second], &second_draft)
+                .await
+                .unwrap()
+                .is_none()
+        );
+
+        let inbox = db
+            .list_notification_items(50, None, "2026-03-09T00:00:01Z")
+            .await
+            .unwrap();
+        assert_eq!(inbox.items.len(), 1);
+        assert_eq!(inbox.unread_count, 1);
     }
 
     #[tokio::test]

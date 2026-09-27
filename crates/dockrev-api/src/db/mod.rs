@@ -104,6 +104,7 @@ pub(crate) use new_version_notifications::{
     list_stable_candidate_display_tags_for_notification_targets_conn,
 };
 pub(crate) use notification_anomalies::NotificationAnomalyObservation;
+pub(crate) use notification_anomalies::NotificationAnomalyOccurrence;
 pub(crate) use notification_items::{
     NOTIFICATION_KIND_GHCR_ANOMALY, NOTIFICATION_KIND_JOB_FINISHED, NOTIFICATION_KIND_NEW_VERSION,
     NotificationInboxPage, NotificationItemDraft, NotificationItemRow,

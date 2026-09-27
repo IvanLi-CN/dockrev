@@ -1,5 +1,47 @@
 use super::*;
 
+struct WebPushDeliveryReport {
+    successful_subscriptions: Vec<String>,
+    error: Option<String>,
+}
+
+fn web_push_subscription_key(endpoint: &str) -> String {
+    format!("webPush:{endpoint}")
+}
+
+fn require_web_push_success(report: WebPushDeliveryReport) -> anyhow::Result<()> {
+    match report.error {
+        Some(error) => Err(anyhow::anyhow!(error)),
+        None => Ok(()),
+    }
+}
+
+fn web_push_log_result(result: &anyhow::Result<WebPushDeliveryReport>) -> anyhow::Result<()> {
+    match result {
+        Ok(report) => match report.error.as_deref() {
+            Some(error) => Err(anyhow::anyhow!(error.to_string())),
+            None => Ok(()),
+        },
+        Err(error) => Err(anyhow::anyhow!(error.to_string())),
+    }
+}
+
+fn web_push_result_value(result: anyhow::Result<WebPushDeliveryReport>) -> Value {
+    match result {
+        Ok(report) => {
+            let mut value = json!({
+                "ok": report.error.is_none(),
+                "successfulSubscriptions": report.successful_subscriptions,
+            });
+            if let Some(error) = report.error {
+                value["error"] = Value::String(error);
+            }
+            value
+        }
+        Err(error) => json!({"ok": false, "error": error.to_string()}),
+    }
+}
+
 pub(crate) async fn send_new_versions_with_badge(
     state: &AppState,
     check_job_id: &str,
@@ -99,13 +141,15 @@ pub(crate) async fn send_new_versions_with_badge(
             )
             .await?;
             let web_push_payload = to_web_push_new_version_value_with_badge(&payload, badge)?;
-            send_web_push(
+            send_web_push_with_progress(
                 state,
                 settings.webpush_vapid_private_key.as_deref(),
                 settings.webpush_vapid_subject.as_deref(),
                 &web_push_payload,
+                &std::collections::BTreeSet::new(),
             )
             .await
+            .and_then(require_web_push_success)
         }
         .await;
         log_result(state, Some(check_job_id), now_rfc3339, "webPush", &r).await;
@@ -205,17 +249,19 @@ pub(crate) async fn send_ghcr_webhook_anomaly_with_badge(
             .await?;
             let web_push_payload =
                 to_web_push_ghcr_webhook_anomaly_value_with_badge(&payload, badge)?;
-            send_web_push(
+            send_web_push_with_progress(
                 state,
                 settings.webpush_vapid_private_key.as_deref(),
                 settings.webpush_vapid_subject.as_deref(),
                 &web_push_payload,
+                skip_channels,
             )
             .await
         }
         .await;
-        log_result(state, Some(event.job_id), now_rfc3339, "webPush", &r).await;
-        results.insert("webPush".to_string(), result_value(r));
+        let log_r = web_push_log_result(&r);
+        log_result(state, Some(event.job_id), now_rfc3339, "webPush", &log_r).await;
+        results.insert("webPush".to_string(), web_push_result_value(r));
     }
 
     Ok(Value::Object(results))
@@ -440,13 +486,15 @@ pub(crate) async fn send_all_with_badge(
                     error_excerpt.as_deref(),
                     badge,
                 )?;
-                send_web_push(
+                send_web_push_with_progress(
                     state,
                     settings.webpush_vapid_private_key.as_deref(),
                     settings.webpush_vapid_subject.as_deref(),
                     &web_push_payload,
+                    &std::collections::BTreeSet::new(),
                 )
                 .await
+                .and_then(require_web_push_success)
             }
             NotifySendMode::Test { channel, message } => {
                 let test_payload = build_test_payload_v2(
@@ -458,13 +506,15 @@ pub(crate) async fn send_all_with_badge(
                     &test_url,
                 );
                 let web_push_payload = to_web_push_value(&test_payload)?;
-                send_web_push(
+                send_web_push_with_progress(
                     state,
                     settings.webpush_vapid_private_key.as_deref(),
                     settings.webpush_vapid_subject.as_deref(),
                     &web_push_payload,
+                    &std::collections::BTreeSet::new(),
                 )
                 .await
+                .and_then(require_web_push_success)
             }
         };
         log_result(state, job_id, now_rfc3339, "webPush", &r).await;
@@ -682,25 +732,41 @@ pub(crate) fn parse_smtp_dsn(smtp_url: &str) -> anyhow::Result<(String, Mailbox,
     Ok((url.to_string(), from, to))
 }
 
-async fn send_web_push(
+async fn send_web_push_with_progress(
     state: &AppState,
     vapid_private_key: Option<&str>,
     vapid_subject: Option<&str>,
     payload: &Value,
-) -> anyhow::Result<()> {
+    skip_subscriptions: &std::collections::BTreeSet<String>,
+) -> anyhow::Result<WebPushDeliveryReport> {
     let private_key = vapid_private_key.context("webPush.vapidPrivateKey missing")?;
     let subject = vapid_subject.unwrap_or("mailto:dockrev@localhost");
 
     let subs = state.db.list_web_push_subscriptions().await?;
     if subs.is_empty() {
-        return Err(anyhow::anyhow!("no web push subscriptions"));
+        return Ok(WebPushDeliveryReport {
+            successful_subscriptions: Vec::new(),
+            error: Some("no web push subscriptions".to_string()),
+        });
     }
 
     let client = HyperWebPushClient::new();
     let content = serde_json::to_vec(payload)?;
 
-    let mut pending = subs;
-    let mut sent = 0u32;
+    let mut pending = subs
+        .into_iter()
+        .filter(|(endpoint, _, _)| {
+            !skip_subscriptions.contains(&web_push_subscription_key(endpoint))
+        })
+        .collect::<Vec<_>>();
+    if pending.is_empty() {
+        return Ok(WebPushDeliveryReport {
+            successful_subscriptions: Vec::new(),
+            error: None,
+        });
+    }
+    let attempted = pending.len();
+    let mut successful_subscriptions = Vec::new();
     let mut first_error = None;
     for attempt in 0..2 {
         let mut retry = Vec::new();
@@ -719,7 +785,10 @@ async fn send_web_push(
             builder.set_vapid_signature(signature);
 
             match client.send(builder.build()?).await {
-                Ok(()) => sent += 1,
+                Ok(()) => {
+                    successful_subscriptions
+                        .push(web_push_subscription_key(&subscription.endpoint));
+                }
                 Err(WebPushError::EndpointNotValid(_)) | Err(WebPushError::EndpointNotFound(_)) => {
                     let _ = state
                         .db
@@ -728,7 +797,7 @@ async fn send_web_push(
                 }
                 Err(e) => {
                     if first_error.is_none() {
-                        first_error = Some(anyhow::anyhow!("web push send failed: {}", e));
+                        first_error = Some(format!("web push send failed: {}", e));
                     }
                     if attempt == 0 {
                         retry.push(retry_subscription);
@@ -742,12 +811,15 @@ async fn send_web_push(
         }
     }
 
-    if !pending.is_empty() {
-        return Err(first_error.unwrap_or_else(|| anyhow::anyhow!("web push: no successful sends")));
-    }
-    if sent == 0 {
-        return Err(first_error.unwrap_or_else(|| anyhow::anyhow!("web push: no successful sends")));
-    }
-
-    Ok(())
+    let error = if !pending.is_empty() || (successful_subscriptions.is_empty() && attempted > 0) {
+        Some(first_error.unwrap_or_else(|| "web push: no successful sends".to_string()))
+    } else {
+        None
+    };
+    successful_subscriptions.sort();
+    successful_subscriptions.dedup();
+    Ok(WebPushDeliveryReport {
+        successful_subscriptions,
+        error,
+    })
 }

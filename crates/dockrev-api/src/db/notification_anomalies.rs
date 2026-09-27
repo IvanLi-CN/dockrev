@@ -1,6 +1,6 @@
 use anyhow::Context as _;
 use rusqlite::{OptionalExtension as _, TransactionBehavior, params};
-use std::collections::HashMap;
+use std::collections::{BTreeSet, HashMap};
 
 use super::Db;
 
@@ -11,6 +11,14 @@ pub(crate) struct NotificationAnomalyObservation {
     pub state: String,
     pub last_error: Option<String>,
     pub occurrence_count: i64,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct NotificationAnomalyOccurrence {
+    pub observation: NotificationAnomalyObservation,
+    pub batch_id: String,
+    pub notification_item_id: Option<String>,
+    pub sent_channels: Vec<String>,
 }
 
 #[cfg(test)]
@@ -255,6 +263,58 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn rapid_anomaly_changes_keep_each_pending_occurrence() {
+        let db = Db::open(std::path::Path::new(":memory:")).await.unwrap();
+        let scope = vec!["acme/api".to_string()];
+        db.reconcile_notification_anomaly_states(
+            &scope,
+            &[observation("missing")],
+            "2026-09-26T00:00:00Z",
+        )
+        .await
+        .unwrap();
+        let pending = db
+            .reconcile_notification_anomaly_states(
+                &scope,
+                &[observation("conflict")],
+                "2026-09-26T00:01:00Z",
+            )
+            .await
+            .unwrap();
+        let keys = pending
+            .iter()
+            .map(|item| {
+                (
+                    item.owner.clone(),
+                    item.repo.clone(),
+                    item.state.clone(),
+                    item.occurrence_count,
+                )
+            })
+            .collect::<Vec<_>>();
+        let occurrences = db
+            .list_pending_notification_anomaly_occurrences(&keys)
+            .await
+            .unwrap();
+
+        assert_eq!(occurrences.len(), 2);
+        assert_ne!(occurrences[0].batch_id, occurrences[1].batch_id);
+
+        db.mark_notification_anomaly_occurrences_item_persisted(&keys, "item-1")
+            .await
+            .unwrap();
+        let persisted = db
+            .list_pending_notification_anomaly_occurrences(&keys)
+            .await
+            .unwrap();
+        assert!(
+            persisted
+                .iter()
+                .all(|item| item.notification_item_id.as_deref() == Some("item-1"))
+        );
+    }
+
+    #[tokio::test]
     async fn recovery_ends_pending_batch_before_a_new_occurrence() {
         let db = Db::open(std::path::Path::new(":memory:")).await.unwrap();
         let scope = vec!["acme/api".to_string()];
@@ -398,6 +458,33 @@ mod tests {
     }
 }
 
+#[allow(clippy::too_many_arguments)]
+fn insert_occurrence(
+    tx: &rusqlite::Transaction<'_>,
+    owner: &str,
+    repo: &str,
+    state: &str,
+    last_error: Option<&str>,
+    occurrence_count: i64,
+    batch_id: &str,
+    created_at: &str,
+) -> rusqlite::Result<()> {
+    tx.execute(
+        "INSERT INTO notification_anomaly_occurrences (id, owner, repo, state, last_error, occurrence_count, batch_id, created_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+        params![
+            crate::ids::new_notification_id(),
+            owner,
+            repo,
+            state,
+            last_error,
+            occurrence_count,
+            batch_id,
+            created_at,
+        ],
+    )?;
+    Ok(())
+}
+
 impl Db {
     pub(crate) async fn reconcile_notification_anomaly_states(
         &self,
@@ -410,15 +497,21 @@ impl Db {
         let now = now.to_string();
         self.call(move |conn| {
             let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
-            let mut newly_active = Vec::new();
-            let batch_id = tx
+            let reusable_batch_id = tx
                 .query_row(
-                    "SELECT notification_batch_id FROM notification_anomaly_states WHERE notification_pending = 1 AND notification_batch_id IS NOT NULL ORDER BY last_seen_at, owner, repo LIMIT 1",
+                    "SELECT batch_id FROM notification_anomaly_occurrences WHERE notification_pending = 1 ORDER BY created_at, id LIMIT 1",
                     [],
                     |row| row.get::<_, String>(0),
                 )
                 .optional()?;
+            let mut new_batch_id = None;
             let mut changed_batch_id = None;
+            let mut requested_keys = scope_keys.iter().cloned().collect::<BTreeSet<_>>();
+            requested_keys.extend(
+                observations
+                    .iter()
+                    .map(|item| format!("{}/{}", item.owner, item.repo)),
+            );
 
             for observation in &observations {
                 let previous = tx
@@ -438,40 +531,77 @@ impl Db {
                     )
                     .optional()?;
 
-                match previous {
+                let (occurrence_count, occurrence_batch_id) = match previous {
                     None => {
+                        let batch_id = reusable_batch_id.clone().unwrap_or_else(|| {
+                            new_batch_id
+                                .get_or_insert_with(crate::ids::new_notification_id)
+                                .clone()
+                        });
+                        insert_occurrence(
+                            &tx,
+                            &observation.owner,
+                            &observation.repo,
+                            &observation.state,
+                            observation.last_error.as_deref(),
+                            1,
+                            &batch_id,
+                            &now,
+                        )?;
                         tx.execute(
                             "INSERT INTO notification_anomaly_states (owner, repo, state, active, occurrence_count, last_error, last_seen_at, notification_pending, notification_batch_id) VALUES (?1, ?2, ?3, 1, 1, ?4, ?5, 1, ?6)",
                             params![observation.owner, observation.repo, observation.state, observation.last_error, now, batch_id],
                         )?;
-                        let mut current = observation.clone();
-                        current.occurrence_count = 1;
-                        newly_active.push(current);
+                        (1, batch_id)
                     }
-                    Some((previous_state, was_active, previous_occurrence_count, pending, previous_batch_id, last_seen_at)) => {
+                    Some((previous_state, was_active, previous_count, pending, previous_batch_id, last_seen_at)) => {
                         if last_seen_at > now {
                             continue;
                         }
                         let changed = !was_active || previous_state != observation.state;
                         let occurrence_count = if changed {
-                            previous_occurrence_count.saturating_add(1)
+                            previous_count.saturating_add(1)
                         } else {
-                            previous_occurrence_count
+                            previous_count
                         };
-                        let notification_pending = changed || pending;
-                        let notification_batch_id = if changed {
-                            Some(
-                                changed_batch_id
-                                    .get_or_insert_with(crate::ids::new_notification_id)
-                                    .clone(),
-                            )
+                        let occurrence_batch_id = if changed {
+                            changed_batch_id
+                                .get_or_insert_with(crate::ids::new_notification_id)
+                                .clone()
                         } else if pending {
-                            previous_batch_id.or_else(|| batch_id.clone())
-                        } else {
                             previous_batch_id
+                                .or_else(|| reusable_batch_id.clone())
+                                .unwrap_or_else(|| {
+                                    new_batch_id
+                                        .get_or_insert_with(crate::ids::new_notification_id)
+                                        .clone()
+                                })
+                        } else {
+                            previous_batch_id.unwrap_or_else(|| {
+                                new_batch_id
+                                    .get_or_insert_with(crate::ids::new_notification_id)
+                                    .clone()
+                            })
                         };
+                        let pending_occurrence_exists = tx.query_row(
+                            "SELECT EXISTS(SELECT 1 FROM notification_anomaly_occurrences WHERE owner = ?1 AND repo = ?2 AND state = ?3 AND occurrence_count = ?4 AND notification_pending = 1)",
+                            params![observation.owner, observation.repo, observation.state, occurrence_count],
+                            |row| row.get::<_, i64>(0),
+                        )? != 0;
+                        if changed || (pending && !pending_occurrence_exists) {
+                            insert_occurrence(
+                                &tx,
+                                &observation.owner,
+                                &observation.repo,
+                                &observation.state,
+                                observation.last_error.as_deref(),
+                                occurrence_count,
+                                &occurrence_batch_id,
+                                &now,
+                            )?;
+                        }
                         tx.execute(
-                            "UPDATE notification_anomaly_states SET state = ?3, active = 1, occurrence_count = ?4, last_error = ?5, last_seen_at = ?6, notification_pending = ?7, notification_batch_id = ?8 WHERE owner = ?1 AND repo = ?2 AND last_seen_at <= ?6",
+                            "UPDATE notification_anomaly_states SET state = ?3, active = 1, occurrence_count = ?4, last_error = ?5, last_seen_at = ?6, notification_pending = EXISTS(SELECT 1 FROM notification_anomaly_occurrences WHERE owner = ?1 AND repo = ?2 AND notification_pending = 1), notification_batch_id = ?7 WHERE owner = ?1 AND repo = ?2 AND last_seen_at <= ?6",
                             params![
                                 observation.owner,
                                 observation.repo,
@@ -479,20 +609,16 @@ impl Db {
                                 occurrence_count,
                                 observation.last_error,
                                 now,
-                                notification_pending,
-                                notification_batch_id,
+                                occurrence_batch_id,
                             ],
                         )?;
-                        if changed || pending {
-                            let mut current = observation.clone();
-                            current.occurrence_count = occurrence_count;
-                            newly_active.push(current);
-                        }
+                        (occurrence_count, occurrence_batch_id)
                     }
-                }
+                };
+                let _ = (occurrence_count, occurrence_batch_id);
             }
 
-            for key in scope_keys {
+            for key in &requested_keys {
                 let Some((owner, repo)) = key.split_once('/') else {
                     continue;
                 };
@@ -500,9 +626,9 @@ impl Db {
                     .iter()
                     .any(|item| item.owner == owner && item.repo == repo)
                 {
-                    let pending = tx
+                    if let Some((state, occurrence_count, last_error, pending, batch_id)) = tx
                         .query_row(
-                            "SELECT state, occurrence_count, last_error, notification_pending FROM notification_anomaly_states WHERE owner = ?1 AND repo = ?2",
+                            "SELECT state, occurrence_count, last_error, notification_pending, notification_batch_id FROM notification_anomaly_states WHERE owner = ?1 AND repo = ?2",
                             params![owner, repo],
                             |row| {
                                 Ok((
@@ -510,28 +636,64 @@ impl Db {
                                     row.get::<_, i64>(1)?,
                                     row.get::<_, Option<String>>(2)?,
                                     row.get::<_, i64>(3)? != 0,
+                                    row.get::<_, Option<String>>(4)?,
                                 ))
                             },
                         )
-                        .optional()?;
-                    if let Some((state, occurrence_count, last_error, true)) = pending {
-                        newly_active.push(NotificationAnomalyObservation {
-                            owner: owner.to_string(),
-                            repo: repo.to_string(),
-                            state,
-                            last_error,
-                            occurrence_count,
-                        });
+                        .optional()?
+                    {
+                        let pending_occurrence_exists = tx.query_row(
+                            "SELECT EXISTS(SELECT 1 FROM notification_anomaly_occurrences WHERE owner = ?1 AND repo = ?2 AND occurrence_count = ?3 AND notification_pending = 1)",
+                            params![owner, repo, occurrence_count],
+                            |row| row.get::<_, i64>(0),
+                        )? != 0;
+                        if pending && !pending_occurrence_exists {
+                            let batch_id = batch_id.unwrap_or_else(|| {
+                                new_batch_id
+                                    .get_or_insert_with(crate::ids::new_notification_id)
+                                    .clone()
+                            });
+                            insert_occurrence(
+                                &tx,
+                                owner,
+                                repo,
+                                &state,
+                                last_error.as_deref(),
+                                occurrence_count,
+                                &batch_id,
+                                &now,
+                            )?;
+                        }
                     }
                     tx.execute(
-                        "UPDATE notification_anomaly_states SET active = 0, last_seen_at = ?3 WHERE owner = ?1 AND repo = ?2 AND last_seen_at <= ?3",
+                        "UPDATE notification_anomaly_states SET active = 0, last_seen_at = ?3, notification_pending = EXISTS(SELECT 1 FROM notification_anomaly_occurrences WHERE owner = ?1 AND repo = ?2 AND notification_pending = 1) WHERE owner = ?1 AND repo = ?2 AND last_seen_at <= ?3",
                         params![owner, repo, now],
                     )?;
                 }
             }
 
+            let mut pending = Vec::new();
+            for key in requested_keys {
+                let Some((owner, repo)) = key.split_once('/') else {
+                    continue;
+                };
+                let mut stmt = tx.prepare(
+                    "SELECT state, last_error, occurrence_count FROM notification_anomaly_occurrences WHERE owner = ?1 AND repo = ?2 AND notification_pending = 1 ORDER BY created_at, id",
+                )?;
+                let rows = stmt.query_map(params![owner, repo], |row| {
+                    Ok(NotificationAnomalyObservation {
+                        owner: owner.to_string(),
+                        repo: repo.to_string(),
+                        state: row.get(0)?,
+                        last_error: row.get(1)?,
+                        occurrence_count: row.get(2)?,
+                    })
+                })?;
+                pending.extend(rows.collect::<rusqlite::Result<Vec<_>>>()?);
+            }
+
             tx.commit()?;
-            Ok(newly_active)
+            Ok(pending)
         })
         .await
         .context("reconcile notification anomaly states")
@@ -546,8 +708,12 @@ impl Db {
             let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
             for (owner, repo, state, occurrence_count) in items {
                 tx.execute(
-                    "UPDATE notification_anomaly_states SET notification_pending = 0, notification_batch_id = NULL, notification_sent_channels_json = '[]' WHERE owner = ?1 AND repo = ?2 AND state = ?3 AND occurrence_count = ?4",
+                    "UPDATE notification_anomaly_occurrences SET notification_pending = 0, sent_channels_json = '[]' WHERE owner = ?1 AND repo = ?2 AND state = ?3 AND occurrence_count = ?4",
                     params![owner, repo, state, occurrence_count],
+                )?;
+                tx.execute(
+                    "UPDATE notification_anomaly_states SET notification_pending = EXISTS(SELECT 1 FROM notification_anomaly_occurrences WHERE owner = ?1 AND repo = ?2 AND notification_pending = 1), notification_batch_id = NULL, notification_sent_channels_json = '[]' WHERE owner = ?1 AND repo = ?2",
+                    params![owner, repo],
                 )?;
             }
             tx.commit()?;
@@ -557,6 +723,66 @@ impl Db {
         .context("mark notification anomaly states notified")
     }
 
+    pub(crate) async fn mark_notification_anomaly_occurrences_item_persisted(
+        &self,
+        items: &[(String, String, String, i64)],
+        notification_item_id: &str,
+    ) -> anyhow::Result<()> {
+        let items = items.to_vec();
+        let notification_item_id = notification_item_id.to_string();
+        self.call(move |conn| {
+            let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
+            for (owner, repo, state, occurrence_count) in items {
+                tx.execute(
+                    "UPDATE notification_anomaly_occurrences SET notification_item_id = ?5 WHERE owner = ?1 AND repo = ?2 AND state = ?3 AND occurrence_count = ?4 AND notification_pending = 1",
+                    params![owner, repo, state, occurrence_count, notification_item_id],
+                )?;
+            }
+            tx.commit()?;
+            Ok(())
+        })
+        .await
+        .context("mark notification anomaly occurrence item persisted")
+    }
+
+    pub(crate) async fn list_pending_notification_anomaly_occurrences(
+        &self,
+        items: &[(String, String, String, i64)],
+    ) -> anyhow::Result<Vec<NotificationAnomalyOccurrence>> {
+        let items = items.to_vec();
+        self.call(move |conn| {
+            let mut result = Vec::new();
+            for (owner, repo, state, occurrence_count) in items {
+                let mut stmt = conn.prepare(
+                    "SELECT state, last_error, occurrence_count, batch_id, notification_item_id, sent_channels_json FROM notification_anomaly_occurrences WHERE owner = ?1 AND repo = ?2 AND state = ?3 AND occurrence_count = ?4 AND notification_pending = 1 ORDER BY created_at, id",
+                )?;
+                let rows = stmt.query_map(
+                    params![owner, repo, state, occurrence_count],
+                    |row| {
+                        let raw_channels: String = row.get(5)?;
+                        Ok(NotificationAnomalyOccurrence {
+                            observation: NotificationAnomalyObservation {
+                                owner: owner.clone(),
+                                repo: repo.clone(),
+                                state: row.get(0)?,
+                                last_error: row.get(1)?,
+                                occurrence_count: row.get(2)?,
+                            },
+                            batch_id: row.get(3)?,
+                            notification_item_id: row.get(4)?,
+                            sent_channels: serde_json::from_str(&raw_channels).unwrap_or_default(),
+                        })
+                    },
+                )?;
+                result.extend(rows.collect::<rusqlite::Result<Vec<_>>>()?);
+            }
+            Ok(result)
+        })
+        .await
+        .context("list pending notification anomaly occurrences")
+    }
+
+    #[allow(dead_code)]
     pub(crate) async fn list_notification_anomaly_sent_channels(
         &self,
         items: &[(String, String, String, i64)],
@@ -567,7 +793,7 @@ impl Db {
             for (owner, repo, state, occurrence_count) in items {
                 let Some(raw) = conn
                     .query_row(
-                        "SELECT notification_sent_channels_json FROM notification_anomaly_states WHERE owner = ?1 AND repo = ?2 AND state = ?3 AND occurrence_count = ?4",
+                        "SELECT sent_channels_json FROM notification_anomaly_occurrences WHERE owner = ?1 AND repo = ?2 AND state = ?3 AND occurrence_count = ?4 ORDER BY created_at DESC, id DESC LIMIT 1",
                         params![owner, repo, state, occurrence_count],
                         |row| row.get::<_, String>(0),
                     )
@@ -599,24 +825,24 @@ impl Db {
             for (owner, repo, state, occurrence_count) in items {
                 let existing = tx
                     .query_row(
-                        "SELECT notification_sent_channels_json FROM notification_anomaly_states WHERE owner = ?1 AND repo = ?2 AND state = ?3 AND occurrence_count = ?4",
+                        "SELECT sent_channels_json FROM notification_anomaly_occurrences WHERE owner = ?1 AND repo = ?2 AND state = ?3 AND occurrence_count = ?4 ORDER BY created_at DESC, id DESC LIMIT 1",
                         params![owner, repo, state, occurrence_count],
                         |row| row.get::<_, String>(0),
                     )
                     .optional()?;
                 let mut channels = existing
                     .as_deref()
-                    .and_then(|raw| serde_json::from_str::<std::collections::BTreeSet<String>>(raw).ok())
+                    .and_then(|raw| serde_json::from_str::<BTreeSet<String>>(raw).ok())
                     .unwrap_or_default();
                 channels.extend(successful_channels.iter().cloned());
                 if complete {
                     tx.execute(
-                        "UPDATE notification_anomaly_states SET notification_pending = 0, notification_batch_id = NULL, notification_sent_channels_json = '[]' WHERE owner = ?1 AND repo = ?2 AND state = ?3 AND occurrence_count = ?4",
+                        "UPDATE notification_anomaly_occurrences SET notification_pending = 0, sent_channels_json = '[]' WHERE owner = ?1 AND repo = ?2 AND state = ?3 AND occurrence_count = ?4",
                         params![owner, repo, state, occurrence_count],
                     )?;
                 } else {
                     tx.execute(
-                        "UPDATE notification_anomaly_states SET notification_sent_channels_json = ?5 WHERE owner = ?1 AND repo = ?2 AND state = ?3 AND occurrence_count = ?4",
+                        "UPDATE notification_anomaly_occurrences SET sent_channels_json = ?5 WHERE owner = ?1 AND repo = ?2 AND state = ?3 AND occurrence_count = ?4 AND notification_pending = 1",
                         params![
                             owner,
                             repo,
@@ -626,6 +852,10 @@ impl Db {
                         ],
                     )?;
                 }
+                tx.execute(
+                    "UPDATE notification_anomaly_states SET notification_pending = EXISTS(SELECT 1 FROM notification_anomaly_occurrences WHERE owner = ?1 AND repo = ?2 AND notification_pending = 1), notification_batch_id = CASE WHEN EXISTS(SELECT 1 FROM notification_anomaly_occurrences WHERE owner = ?1 AND repo = ?2 AND notification_pending = 1) THEN (SELECT batch_id FROM notification_anomaly_occurrences WHERE owner = ?1 AND repo = ?2 AND notification_pending = 1 ORDER BY created_at DESC, id DESC LIMIT 1) ELSE NULL END, notification_sent_channels_json = '[]' WHERE owner = ?1 AND repo = ?2",
+                    params![owner, repo],
+                )?;
             }
             tx.commit()?;
             Ok(())
@@ -634,6 +864,7 @@ impl Db {
         .context("record notification anomaly delivery")
     }
 
+    #[allow(dead_code)]
     pub(crate) async fn list_notification_anomaly_batch_ids(
         &self,
         items: &[(String, String, String, i64)],
@@ -642,13 +873,13 @@ impl Db {
         self.call(move |conn| {
             let mut result = HashMap::new();
             let mut stmt = conn.prepare(
-                "SELECT owner, repo, notification_batch_id FROM notification_anomaly_states",
+                "SELECT owner, repo, batch_id FROM notification_anomaly_occurrences WHERE notification_pending = 1 ORDER BY created_at, id",
             )?;
             let rows = stmt.query_map([], |row| {
                 Ok((
                     row.get::<_, String>(0)?,
                     row.get::<_, String>(1)?,
-                    row.get::<_, Option<String>>(2)?,
+                    row.get::<_, String>(2)?,
                 ))
             })?;
             for row in rows {
@@ -656,7 +887,6 @@ impl Db {
                 if keys
                     .iter()
                     .any(|(key_owner, key_repo, _, _)| key_owner == &owner && key_repo == &repo)
-                    && let Some(batch_id) = batch_id
                 {
                     result.insert(format!("{owner}/{repo}"), batch_id);
                 }

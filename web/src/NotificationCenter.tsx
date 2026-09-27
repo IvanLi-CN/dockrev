@@ -31,6 +31,7 @@ const COLD_START_TARGET = 'dockrevNotificationTarget'
 const CLICK_MESSAGE = 'DOCKREV_NOTIFICATION_CLICK'
 const CLICK_ACK = 'DOCKREV_NOTIFICATION_CLICK_ACK'
 const PUSH_MESSAGE = 'DOCKREV_NOTIFICATION_PUSH'
+const PUSH_ACK = 'DOCKREV_NOTIFICATION_PUSH_ACK'
 
 type NotificationBroadcast = {
   type: 'unread-count'
@@ -46,7 +47,7 @@ type NotificationContextValue = {
   error: string | null
   open: () => void
   close: () => void
-  refresh: (withItems?: boolean) => Promise<void>
+  refresh: (withItems?: boolean) => Promise<boolean>
   nextCursor: string | null
   loadMore: () => Promise<void>
   read: (item: NotificationItem) => Promise<void>
@@ -85,7 +86,7 @@ export function NotificationProvider(props: { children: ReactNode }) {
   const [isOpen, setIsOpen] = useState(false)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
-  const syncRef = useRef<Promise<void> | null>(null)
+  const syncRef = useRef<Promise<boolean> | null>(null)
   const loadMoreRef = useRef<Promise<void> | null>(null)
   const syncInvalidatedRef = useRef(false)
   const mutationRevisionRef = useRef(0)
@@ -102,7 +103,7 @@ export function NotificationProvider(props: { children: ReactNode }) {
   }, [])
 
   const sync = useCallback(
-    async (withItems = false): Promise<void> => {
+    async (withItems = false): Promise<boolean> => {
       if (syncRef.current) return syncRef.current
       const mutationRevision = mutationRevisionRef.current
       const task = (async () => {
@@ -110,6 +111,7 @@ export function NotificationProvider(props: { children: ReactNode }) {
         if (withItems) listRevisionRef.current = listRevision
         setLoading(true)
         setError(null)
+        let succeeded = true
         try {
           if (withItems || isOpenRef.current) {
             const response = await getNotificationInbox({ limit: 50 })
@@ -120,7 +122,7 @@ export function NotificationProvider(props: { children: ReactNode }) {
             ) {
               syncInvalidatedRef.current = false
               window.setTimeout(() => void sync(isOpenRef.current), 0)
-              return
+              return false
             }
             setItems(response.items)
             itemsLoadedRef.current = true
@@ -132,19 +134,21 @@ export function NotificationProvider(props: { children: ReactNode }) {
             if (syncInvalidatedRef.current || mutationRevision !== mutationRevisionRef.current) {
               syncInvalidatedRef.current = false
               window.setTimeout(() => void sync(isOpenRef.current), 0)
-              return
+              return false
             }
             applyUnreadCount(response.unreadCount)
           }
         } catch (cause) {
+          succeeded = false
           setError(cause instanceof Error ? cause.message : '通知同步失败')
         } finally {
           setLoading(false)
         }
+        return succeeded
       })()
       syncRef.current = task
       try {
-        await task
+        return await task
       } finally {
         if (syncRef.current === task) syncRef.current = null
       }
@@ -300,6 +304,8 @@ export function NotificationProvider(props: { children: ReactNode }) {
       const data = event.data
       if (data?.type === PUSH_MESSAGE) {
         void sync(isOpenRef.current)
+          .then((ok) => event.ports?.[0]?.postMessage({ type: PUSH_ACK, ok }))
+          .catch(() => event.ports?.[0]?.postMessage({ type: PUSH_ACK, ok: false }))
         return
       }
       if (!data || data.type !== CLICK_MESSAGE) return
