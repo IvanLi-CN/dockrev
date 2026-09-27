@@ -753,13 +753,15 @@ pub(crate) async fn complete_check_job(
                         .await;
                     }
                     Ok(Some(None)) => {
+                        // Legacy outbox rows predate the persisted decision;
+                        // preserve their original replay behavior instead of dropping them.
                         notification_replay::dispatch_check_notification(
                             state,
                             job_id,
                             reason,
                             finished_at,
                             &notify_summary,
-                            false,
+                            true,
                         )
                         .await;
                     }

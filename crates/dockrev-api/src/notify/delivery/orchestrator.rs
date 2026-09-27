@@ -164,10 +164,13 @@ pub(crate) async fn send_ghcr_webhook_anomaly_with_badge(
     now_rfc3339: &str,
     event: GhcrWebhookAnomalyEvent<'_>,
     badge: Option<(&str, u64)>,
+    event_enabled_override: Option<bool>,
     skip_channels: &std::collections::BTreeSet<String>,
 ) -> anyhow::Result<Value> {
     let settings = state.db.get_notification_settings().await?;
-    if !is_event_enabled(&settings, NotificationEventKind::GhcrWebhookAnomaly) {
+    if !event_enabled_override
+        .unwrap_or_else(|| is_event_enabled(&settings, NotificationEventKind::GhcrWebhookAnomaly))
+    {
         return Ok(Value::Object(serde_json::Map::new()));
     }
 

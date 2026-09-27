@@ -71,7 +71,7 @@ pub(crate) async fn replay_pending_check_notifications(state: &Arc<AppState>) {
             .map(|dispatch| (dispatch.finished_at.clone(), dispatch.job_id.clone()));
         let mut processed_any = false;
         for dispatch in pending {
-            if dispatch.event_enabled != Some(true) {
+            if dispatch.event_enabled == Some(false) {
                 if let Err(error) = state
                     .db
                     .mark_check_notification_dispatch_processed(
@@ -96,7 +96,7 @@ pub(crate) async fn replay_pending_check_notifications(state: &Arc<AppState>) {
                 &dispatch.reason,
                 &dispatch.finished_at,
                 &dispatch.summary,
-                true,
+                dispatch.event_enabled.unwrap_or(true),
             )
             .await
             {

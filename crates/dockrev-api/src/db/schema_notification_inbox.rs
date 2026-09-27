@@ -253,6 +253,10 @@ pub(super) fn apply_migration_0039_add_notification_dispatch_decision_marker(
         "ALTER TABLE notification_dispatch_outbox ADD COLUMN event_decision_known INTEGER NOT NULL DEFAULT 0",
         [],
     )?;
+    tx.execute(
+        "UPDATE notification_dispatch_outbox SET event_decision_known = 1",
+        [],
+    )?;
     record_migration_tx(&tx, id)?;
     tx.commit()?;
     Ok(())

@@ -18,12 +18,12 @@ pub(super) fn enqueue_check_notification_tx(
     reason: &str,
     finished_at: &str,
     summary: &serde_json::Value,
-    event_enabled: bool,
+    event_enabled: Option<bool>,
 ) -> anyhow::Result<()> {
     tx.execute(
         r#"
 INSERT INTO notification_dispatch_outbox (job_id, reason, finished_at, summary_json, event_enabled, event_decision_known)
-VALUES (?1, ?2, ?3, ?4, ?5, 1)
+VALUES (?1, ?2, ?3, ?4, ?5, ?6)
 ON CONFLICT(job_id) DO NOTHING
 "#,
         params![
@@ -31,7 +31,8 @@ ON CONFLICT(job_id) DO NOTHING
             reason,
             finished_at,
             serde_json::to_string(summary)?,
-            event_enabled
+            event_enabled.unwrap_or(true),
+            event_enabled.is_some(),
         ],
     )?;
     Ok(())

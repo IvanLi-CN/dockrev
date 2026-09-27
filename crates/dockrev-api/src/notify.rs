@@ -606,6 +606,7 @@ pub async fn notify_ghcr_webhook_anomaly(
                 now_rfc3339,
                 group_event,
                 Some((&item.item.id, item.unread_count)),
+                Some(true),
                 &previously_sent_channels.unwrap_or_default(),
             ),
         )

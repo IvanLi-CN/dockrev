@@ -141,17 +141,18 @@ WHERE id IN (
                         .as_ref()
                         .is_some_and(|(job_type, _, _)| job_type == "check")
                 {
-                    let event_enabled = tx
-                        .query_row(
-                            "SELECT event_new_version_enabled FROM notification_settings LIMIT 1",
-                            [],
-                            |row| row.get::<_, i64>(0),
-                        )
-                        .optional()
-                        .ok()
-                        .flatten()
-                        .unwrap_or(0)
-                        != 0;
+                    let event_enabled = match tx.query_row(
+                        "SELECT event_new_version_enabled FROM notification_settings LIMIT 1",
+                        [],
+                        |row| row.get::<_, i64>(0),
+                    ) {
+                        Ok(value) => Some(value != 0),
+                        Err(rusqlite::Error::QueryReturnedNoRows) => Some(true),
+                        Err(error) => {
+                            tracing::warn!(error = %error, "failed to read new-version notification setting");
+                            None
+                        }
+                    };
                     new_version_discoveries::record_new_version_discoveries_from_summary_conn(
                         &tx,
                         &job_id,
@@ -171,17 +172,18 @@ WHERE id IN (
                     )?;
                 }
                 if let Some(notification) = notification.as_ref() {
-                    let event_enabled = tx
-                        .query_row(
-                            "SELECT event_update_enabled FROM notification_settings LIMIT 1",
-                            [],
-                            |row| row.get::<_, i64>(0),
-                        )
-                        .optional()
-                        .ok()
-                        .flatten()
-                        .unwrap_or(0)
-                        != 0;
+                    let event_enabled = match tx.query_row(
+                        "SELECT event_update_enabled FROM notification_settings LIMIT 1",
+                        [],
+                        |row| row.get::<_, i64>(0),
+                    ) {
+                        Ok(value) => value != 0,
+                        Err(rusqlite::Error::QueryReturnedNoRows) => true,
+                        Err(error) => {
+                            tracing::warn!(error = %error, "failed to read update notification setting; preserving notification");
+                            true
+                        }
+                    };
                     if event_enabled {
                         super::notification_items::insert_notification_item_tx(&tx, notification)?;
                     }
