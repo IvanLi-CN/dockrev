@@ -85,8 +85,9 @@ pub(super) fn append_management_entity_if_missing(
 pub(crate) use jobs::JobListFilters;
 pub(crate) use lifecycle_events::{ServiceLifecycleEventInput, ServiceLifecycleEventRow};
 pub(crate) use service_operations::{
-    AcceptedStateCasOutcome, AutoPolicyEnqueueGuard, ServiceAcceptedState,
-    ServiceAcceptedStateSettlement, ServiceOperationAcquireOutcome, ServiceOperationTarget,
+    AcceptedStateCasOutcome, AutoPolicyEnqueueGuard, SelectedServiceOperationBaseline,
+    ServiceAcceptedState, ServiceAcceptedStateSettlement, ServiceOperationAcquireOutcome,
+    ServiceOperationTarget,
 };
 pub(crate) use update_stops::UpdateStopRequestOutcome;
 

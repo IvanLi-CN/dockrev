@@ -6,6 +6,22 @@ pub(crate) struct ServiceOperationTarget {
     pub(crate) stack_id: String,
 }
 
+#[derive(Clone, Copy)]
+struct ServiceOperationBaseline<'a> {
+    current_digest: &'a str,
+    image_reference: Option<&'a str>,
+    configured_tag: Option<&'a str>,
+    accepted_state_generation: Option<i64>,
+}
+
+#[derive(Clone, Copy)]
+pub(crate) struct SelectedServiceOperationBaseline<'a> {
+    pub(crate) current_digest: &'a str,
+    pub(crate) image_reference: &'a str,
+    pub(crate) configured_tag: &'a str,
+    pub(crate) accepted_state_generation: i64,
+}
+
 #[derive(Clone, Debug)]
 pub(crate) struct AutoPolicyEnqueueGuard {
     pub(crate) pending_id: String,
@@ -255,8 +271,6 @@ WHERE id = ?1
             initial_log,
             None,
             None,
-            None,
-            None,
         )
         .await
     }
@@ -266,9 +280,7 @@ WHERE id = ?1
         job: JobListItem,
         targets: Vec<ServiceOperationTarget>,
         initial_log: Option<JobLogLine>,
-        expected_current_digest: Option<&str>,
-        expected_service_image: Option<(&str, &str)>,
-        expected_accepted_state_generation: Option<i64>,
+        expected_baseline: Option<ServiceOperationBaseline<'_>>,
         auto_policy_guard: Option<&AutoPolicyEnqueueGuard>,
     ) -> anyhow::Result<ServiceOperationAcquireOutcome> {
         let event_job_id = job.id.clone();
@@ -277,9 +289,16 @@ WHERE id = ?1
         let event_service_id = job.service_id.clone();
         let event_type = job.r#type.as_str().to_string();
         let job_id = job.id.clone();
-        let expected_current_digest = expected_current_digest.map(str::to_string);
-        let expected_service_image =
-            expected_service_image.map(|(image_ref, tag)| (image_ref.to_string(), tag.to_string()));
+        let expected_current_digest =
+            expected_baseline.map(|baseline| baseline.current_digest.to_string());
+        let expected_service_image = expected_baseline.and_then(|baseline| {
+            Some((
+                baseline.image_reference?.to_string(),
+                baseline.configured_tag?.to_string(),
+            ))
+        });
+        let expected_accepted_state_generation =
+            expected_baseline.and_then(|baseline| baseline.accepted_state_generation);
         let auto_policy_guard = auto_policy_guard.cloned();
         let outcome = self
             .call(move |conn| {
@@ -785,9 +804,12 @@ WHERE id = ?1 AND accepted_state_generation = ?2 AND accepted_state_generation %
                 job,
                 targets,
                 initial_log,
-                Some(expected_current_digest),
-                None,
-                None,
+                Some(ServiceOperationBaseline {
+                    current_digest: expected_current_digest,
+                    image_reference: None,
+                    configured_tag: None,
+                    accepted_state_generation: None,
+                }),
                 None,
             )
             .await?
@@ -806,19 +828,19 @@ WHERE id = ?1 AND accepted_state_generation = ?2 AND accepted_state_generation %
         job: JobListItem,
         targets: Vec<ServiceOperationTarget>,
         initial_log: Option<JobLogLine>,
-        expected_current_digest: &str,
-        expected_image_ref: &str,
-        expected_image_tag: &str,
-        expected_accepted_state_generation: i64,
+        baseline: SelectedServiceOperationBaseline<'_>,
     ) -> anyhow::Result<ServiceOperationAcquireOutcome> {
         match self
             .insert_service_operation_job_with_accepted_state_if_unblocked_inner(
                 job,
                 targets,
                 initial_log,
-                Some(expected_current_digest),
-                Some((expected_image_ref, expected_image_tag)),
-                Some(expected_accepted_state_generation),
+                Some(ServiceOperationBaseline {
+                    current_digest: baseline.current_digest,
+                    image_reference: Some(baseline.image_reference),
+                    configured_tag: Some(baseline.configured_tag),
+                    accepted_state_generation: Some(baseline.accepted_state_generation),
+                }),
                 None,
             )
             .await?
@@ -843,9 +865,12 @@ WHERE id = ?1 AND accepted_state_generation = ?2 AND accepted_state_generation %
             job,
             targets,
             initial_log,
-            Some(&guard.expected_current_digest),
-            None,
-            None,
+            Some(ServiceOperationBaseline {
+                current_digest: &guard.expected_current_digest,
+                image_reference: None,
+                configured_tag: None,
+                accepted_state_generation: None,
+            }),
             Some(&guard),
         )
         .await
@@ -1205,10 +1230,12 @@ INSERT INTO services (
                     stack_id,
                 }],
                 None,
-                baseline_digest,
-                "ghcr.io/acme/web:stable",
-                "stable",
-                accepted_state_generation,
+                SelectedServiceOperationBaseline {
+                    current_digest: baseline_digest,
+                    image_reference: "ghcr.io/acme/web:stable",
+                    configured_tag: "stable",
+                    accepted_state_generation,
+                },
             )
             .await
             .unwrap();

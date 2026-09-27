@@ -409,10 +409,12 @@ async fn enqueue_update_job_with_start_and_targets(
                         job_db,
                         operation_targets,
                         initial_log,
-                        &expected_current_digest,
-                        &image_reference,
-                        &configured_tag,
-                        expected_generation,
+                        crate::db::SelectedServiceOperationBaseline {
+                            current_digest: &expected_current_digest,
+                            image_reference: &image_reference,
+                            configured_tag: &configured_tag,
+                            accepted_state_generation: expected_generation,
+                        },
                     )
                     .await
             } else {
