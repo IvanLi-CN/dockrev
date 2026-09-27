@@ -1,3 +1,13 @@
+use anyhow::Result;
+
+pub(super) fn ensure_service_resource_latest_samples_schema(
+    conn: &rusqlite::Connection,
+) -> Result<()> {
+    conn.execute_batch(CREATE_SERVICE_RESOURCE_LATEST_SAMPLES_TABLE_SQL)?;
+    conn.execute_batch(BACKFILL_SERVICE_RESOURCE_LATEST_SAMPLES_SQL)?;
+    Ok(())
+}
+
 pub(super) const CREATE_SERVICE_RESOURCE_LATEST_SAMPLES_TABLE_SQL: &str = r#"
 CREATE TABLE IF NOT EXISTS service_resource_latest_samples (
   service_id TEXT PRIMARY KEY NOT NULL REFERENCES services(id) ON DELETE CASCADE,

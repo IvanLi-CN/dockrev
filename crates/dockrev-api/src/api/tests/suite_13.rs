@@ -991,9 +991,16 @@ services:
         }
     });
 
-    super::operations::maybe_notify_check_new_versions(&state, &job_id, "webhook", now, &summary)
-        .await
-        .unwrap();
+    super::operations::maybe_notify_check_new_versions(
+        &state,
+        &job_id,
+        "webhook",
+        now,
+        &summary,
+        true,
+    )
+    .await
+    .unwrap();
 
     let payload = tokio::time::timeout(Duration::from_secs(2), rx.recv())
         .await
@@ -1144,4 +1151,3 @@ services:
     }));
     server.abort();
 }
-

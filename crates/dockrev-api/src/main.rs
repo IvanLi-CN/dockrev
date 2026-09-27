@@ -49,6 +49,7 @@ mod ui;
 mod update_stop;
 mod updater;
 
+use anyhow::Context as _;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
 async fn recover_managed_override_transactions(state: &std::sync::Arc<state::AppState>) {
@@ -304,6 +305,54 @@ async fn main() -> anyhow::Result<()> {
             .reopen_auto_update_pending_for_recovered_jobs(&recovered, &now)
             .await?;
     }
+    let notification_replay_guard = std::sync::Arc::new(tokio::sync::Mutex::new(()));
+    let startup_replay_state = state.clone();
+    let startup_replay_now = now.clone();
+    let startup_replay_guard = notification_replay_guard.clone();
+    tokio::spawn(async move {
+        let replay = async {
+            let _guard = startup_replay_guard.lock().await;
+            api::replay_pending_check_notifications(&startup_replay_state).await;
+            notify::replay_pending_ghcr_webhook_anomalies(
+                &startup_replay_state,
+                &startup_replay_now,
+            )
+            .await
+        };
+        if let Err(err) = tokio::time::timeout(std::time::Duration::from_secs(240), replay)
+            .await
+            .context("startup notification replay timed out")
+            .and_then(|result| result)
+        {
+            tracing::warn!(error = %err, "failed to replay startup notifications");
+        }
+    });
+    let notification_replay_state = state.clone();
+    let notification_replay_guard = notification_replay_guard.clone();
+    tokio::spawn(async move {
+        loop {
+            tokio::time::sleep(std::time::Duration::from_secs(60)).await;
+            let replay_now = time::OffsetDateTime::now_utc()
+                .format(&time::format_description::well_known::Rfc3339)
+                .unwrap_or_else(|_| "1970-01-01T00:00:00Z".to_string());
+            let replay = async {
+                let _guard = notification_replay_guard.lock().await;
+                api::replay_pending_check_notifications(&notification_replay_state).await;
+                notify::replay_pending_ghcr_webhook_anomalies(
+                    &notification_replay_state,
+                    &replay_now,
+                )
+                .await
+            };
+            if let Err(err) = tokio::time::timeout(std::time::Duration::from_secs(240), replay)
+                .await
+                .context("periodic notification replay timed out")
+                .and_then(|result| result)
+            {
+                tracing::warn!(error = %err, "failed to replay periodic notifications");
+            }
+        }
+    });
     let evidence_db = state.db.clone();
     let evidence_db_path = state.config.db_path.clone();
     tokio::spawn(async move {

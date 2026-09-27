@@ -1,14 +1,62 @@
 use super::*;
 
-pub(crate) async fn send_new_versions(
+struct WebPushDeliveryReport {
+    successful_subscriptions: Vec<String>,
+    error: Option<String>,
+}
+
+fn web_push_subscription_key(endpoint: &str) -> String {
+    format!("webPush:{endpoint}")
+}
+
+fn require_web_push_success(report: WebPushDeliveryReport) -> anyhow::Result<()> {
+    match report.error {
+        Some(error) => Err(anyhow::anyhow!(error)),
+        None => Ok(()),
+    }
+}
+
+fn web_push_log_result(result: &anyhow::Result<WebPushDeliveryReport>) -> anyhow::Result<()> {
+    match result {
+        Ok(report) => match report.error.as_deref() {
+            Some(error) => Err(anyhow::anyhow!(error.to_string())),
+            None => Ok(()),
+        },
+        Err(error) => Err(anyhow::anyhow!(error.to_string())),
+    }
+}
+
+fn web_push_result_value(result: anyhow::Result<WebPushDeliveryReport>) -> Value {
+    match result {
+        Ok(report) => {
+            let mut value = json!({
+                "ok": report.error.is_none(),
+                "successfulSubscriptions": report.successful_subscriptions,
+            });
+            if let Some(error) = report.error {
+                value["error"] = Value::String(error);
+            }
+            value
+        }
+        Err(error) => json!({"ok": false, "error": error.to_string()}),
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(crate) async fn send_new_versions_with_badge(
     state: &AppState,
     check_job_id: &str,
     now_rfc3339: &str,
     services_checked: u32,
     discovered_services: &[NewVersionDiscoveredService],
+    badge: Option<(&str, u64)>,
+    event_enabled_override: Option<bool>,
+    skip_channels: &std::collections::BTreeSet<String>,
 ) -> anyhow::Result<Value> {
     let settings = state.db.get_notification_settings().await?;
-    if !is_event_enabled(&settings, NotificationEventKind::NewVersionDiscovered) {
+    if !event_enabled_override
+        .unwrap_or_else(|| is_event_enabled(&settings, NotificationEventKind::NewVersionDiscovered))
+    {
         return Ok(Value::Object(serde_json::Map::new()));
     }
 
@@ -20,7 +68,7 @@ pub(crate) async fn send_new_versions(
 
     let mut results = serde_json::Map::new();
 
-    if settings.webhook_enabled {
+    if settings.webhook_enabled && !skip_channels.contains("webhook") {
         let r = async {
             let payload = build_new_version_payload_v2(
                 state,
@@ -40,7 +88,7 @@ pub(crate) async fn send_new_versions(
         results.insert("webhook".to_string(), result_value(r));
     }
 
-    if settings.telegram_enabled {
+    if settings.telegram_enabled && !skip_channels.contains("telegram") {
         let r = async {
             let payload = build_new_version_payload_v2(
                 state,
@@ -65,7 +113,7 @@ pub(crate) async fn send_new_versions(
         results.insert("telegram".to_string(), telegram_result_value(r));
     }
 
-    if settings.email_enabled {
+    if settings.email_enabled && !skip_channels.contains("email") {
         let r = async {
             let payload = build_new_version_payload_v2(
                 state,
@@ -84,7 +132,7 @@ pub(crate) async fn send_new_versions(
         results.insert("email".to_string(), result_value(r));
     }
 
-    if settings.webpush_enabled {
+    if settings.webpush_enabled && !skip_channels.contains("webPush") {
         let r = async {
             let payload = build_new_version_payload_v2(
                 state,
@@ -96,30 +144,37 @@ pub(crate) async fn send_new_versions(
                 discovered_services,
             )
             .await?;
-            let web_push_payload = to_web_push_new_version_value(&payload)?;
-            send_web_push(
+            let web_push_payload = to_web_push_new_version_value_with_badge(&payload, badge)?;
+            send_web_push_with_progress(
                 state,
                 settings.webpush_vapid_private_key.as_deref(),
                 settings.webpush_vapid_subject.as_deref(),
                 &web_push_payload,
+                skip_channels,
             )
             .await
         }
         .await;
-        log_result(state, Some(check_job_id), now_rfc3339, "webPush", &r).await;
-        results.insert("webPush".to_string(), result_value(r));
+        let log_r = web_push_log_result(&r);
+        log_result(state, Some(check_job_id), now_rfc3339, "webPush", &log_r).await;
+        results.insert("webPush".to_string(), web_push_result_value(r));
     }
 
     Ok(Value::Object(results))
 }
 
-pub(crate) async fn send_ghcr_webhook_anomaly(
+pub(crate) async fn send_ghcr_webhook_anomaly_with_badge(
     state: &AppState,
     now_rfc3339: &str,
     event: GhcrWebhookAnomalyEvent<'_>,
+    badge: Option<(&str, u64)>,
+    event_enabled_override: Option<bool>,
+    skip_channels: &std::collections::BTreeSet<String>,
 ) -> anyhow::Result<Value> {
     let settings = state.db.get_notification_settings().await?;
-    if !is_event_enabled(&settings, NotificationEventKind::GhcrWebhookAnomaly) {
+    if !event_enabled_override
+        .unwrap_or_else(|| is_event_enabled(&settings, NotificationEventKind::GhcrWebhookAnomaly))
+    {
         return Ok(Value::Object(serde_json::Map::new()));
     }
 
@@ -131,7 +186,7 @@ pub(crate) async fn send_ghcr_webhook_anomaly(
 
     let mut results = serde_json::Map::new();
 
-    if settings.webhook_enabled {
+    if settings.webhook_enabled && !skip_channels.contains("webhook") {
         let r = async {
             let payload = build_ghcr_webhook_anomaly_payload_v2(
                 state,
@@ -149,7 +204,7 @@ pub(crate) async fn send_ghcr_webhook_anomaly(
         results.insert("webhook".to_string(), result_value(r));
     }
 
-    if settings.telegram_enabled {
+    if settings.telegram_enabled && !skip_channels.contains("telegram") {
         let r = async {
             let payload = build_ghcr_webhook_anomaly_payload_v2(
                 state,
@@ -172,7 +227,7 @@ pub(crate) async fn send_ghcr_webhook_anomaly(
         results.insert("telegram".to_string(), telegram_result_value(r));
     }
 
-    if settings.email_enabled {
+    if settings.email_enabled && !skip_channels.contains("email") {
         let r = async {
             let payload = build_ghcr_webhook_anomaly_payload_v2(
                 state,
@@ -189,7 +244,7 @@ pub(crate) async fn send_ghcr_webhook_anomaly(
         results.insert("email".to_string(), result_value(r));
     }
 
-    if settings.webpush_enabled {
+    if settings.webpush_enabled && !skip_channels.contains("webPush") {
         let r = async {
             let payload = build_ghcr_webhook_anomaly_payload_v2(
                 state,
@@ -199,18 +254,21 @@ pub(crate) async fn send_ghcr_webhook_anomaly(
                 event,
             )
             .await?;
-            let web_push_payload = to_web_push_ghcr_webhook_anomaly_value(&payload)?;
-            send_web_push(
+            let web_push_payload =
+                to_web_push_ghcr_webhook_anomaly_value_with_badge(&payload, badge)?;
+            send_web_push_with_progress(
                 state,
                 settings.webpush_vapid_private_key.as_deref(),
                 settings.webpush_vapid_subject.as_deref(),
                 &web_push_payload,
+                skip_channels,
             )
             .await
         }
         .await;
-        log_result(state, Some(event.job_id), now_rfc3339, "webPush", &r).await;
-        results.insert("webPush".to_string(), result_value(r));
+        let log_r = web_push_log_result(&r);
+        log_result(state, Some(event.job_id), now_rfc3339, "webPush", &log_r).await;
+        results.insert("webPush".to_string(), web_push_result_value(r));
     }
 
     Ok(Value::Object(results))
@@ -223,9 +281,22 @@ pub(crate) async fn send_all(
     payload: Option<&Value>,
     mode: NotifySendMode,
 ) -> anyhow::Result<Value> {
+    send_all_with_badge(state, job_id, now_rfc3339, payload, mode, None, None).await
+}
+
+pub(crate) async fn send_all_with_badge(
+    state: &AppState,
+    job_id: Option<&str>,
+    now_rfc3339: &str,
+    payload: Option<&Value>,
+    mode: NotifySendMode,
+    badge: Option<(&str, u64)>,
+    event_enabled_override: Option<bool>,
+) -> anyhow::Result<Value> {
     let settings = state.db.get_notification_settings().await?;
     if matches!(mode, NotifySendMode::Default)
-        && !is_event_enabled(&settings, NotificationEventKind::Update)
+        && !event_enabled_override
+            .unwrap_or_else(|| is_event_enabled(&settings, NotificationEventKind::Update))
     {
         return Ok(Value::Object(serde_json::Map::new()));
     }
@@ -419,15 +490,20 @@ pub(crate) async fn send_all(
                     summary,
                 )
                 .await?;
-                let web_push_payload =
-                    to_web_push_job_value(&job_payload, error_excerpt.as_deref())?;
-                send_web_push(
+                let web_push_payload = to_web_push_job_value_with_badge(
+                    &job_payload,
+                    error_excerpt.as_deref(),
+                    badge,
+                )?;
+                send_web_push_with_progress(
                     state,
                     settings.webpush_vapid_private_key.as_deref(),
                     settings.webpush_vapid_subject.as_deref(),
                     &web_push_payload,
+                    &std::collections::BTreeSet::new(),
                 )
                 .await
+                .and_then(require_web_push_success)
             }
             NotifySendMode::Test { channel, message } => {
                 let test_payload = build_test_payload_v2(
@@ -439,13 +515,15 @@ pub(crate) async fn send_all(
                     &test_url,
                 );
                 let web_push_payload = to_web_push_value(&test_payload)?;
-                send_web_push(
+                send_web_push_with_progress(
                     state,
                     settings.webpush_vapid_private_key.as_deref(),
                     settings.webpush_vapid_subject.as_deref(),
                     &web_push_payload,
+                    &std::collections::BTreeSet::new(),
                 )
                 .await
+                .and_then(require_web_push_success)
             }
         };
         log_result(state, job_id, now_rfc3339, "webPush", &r).await;
@@ -663,54 +741,118 @@ pub(crate) fn parse_smtp_dsn(smtp_url: &str) -> anyhow::Result<(String, Mailbox,
     Ok((url.to_string(), from, to))
 }
 
-async fn send_web_push(
+async fn send_web_push_with_progress(
     state: &AppState,
     vapid_private_key: Option<&str>,
     vapid_subject: Option<&str>,
     payload: &Value,
-) -> anyhow::Result<()> {
+    skip_subscriptions: &std::collections::BTreeSet<String>,
+) -> anyhow::Result<WebPushDeliveryReport> {
     let private_key = vapid_private_key.context("webPush.vapidPrivateKey missing")?;
     let subject = vapid_subject.unwrap_or("mailto:dockrev@localhost");
 
     let subs = state.db.list_web_push_subscriptions().await?;
     if subs.is_empty() {
-        return Err(anyhow::anyhow!("no web push subscriptions"));
+        return Ok(WebPushDeliveryReport {
+            successful_subscriptions: Vec::new(),
+            error: Some("no web push subscriptions".to_string()),
+        });
     }
 
     let client = HyperWebPushClient::new();
     let content = serde_json::to_vec(payload)?;
 
-    let mut sent = 0u32;
-    for (endpoint, p256dh, auth) in subs {
-        let subscription = SubscriptionInfo::new(endpoint, p256dh, auth);
-        let mut sig_builder =
-            VapidSignatureBuilder::from_base64(private_key, &subscription).context("vapid key")?;
-        sig_builder.add_claim("sub", subject);
-        let signature = sig_builder.build().context("build vapid signature")?;
+    let mut pending = subs
+        .into_iter()
+        .filter(|(endpoint, _, _)| {
+            !skip_subscriptions.contains(&web_push_subscription_key(endpoint))
+        })
+        .collect::<Vec<_>>();
+    if pending.is_empty() {
+        return Ok(WebPushDeliveryReport {
+            successful_subscriptions: Vec::new(),
+            error: None,
+        });
+    }
+    let attempted = pending.len();
+    let mut successful_subscriptions = Vec::new();
+    let mut first_error = None;
+    let mut final_retryable_failures = 0;
+    for attempt in 0..2 {
+        let mut retry = Vec::new();
+        for (endpoint, p256dh, auth) in pending {
+            let retry_subscription = (endpoint.clone(), p256dh.clone(), auth.clone());
+            let subscription = SubscriptionInfo::new(endpoint, p256dh, auth);
+            let prepared = (|| -> anyhow::Result<_> {
+                let mut sig_builder =
+                    VapidSignatureBuilder::from_base64(private_key, &subscription)
+                        .context("vapid key")?;
+                sig_builder.add_claim("sub", subject);
+                let signature = sig_builder.build().context("build vapid signature")?;
 
-        let mut builder = WebPushMessageBuilder::new(&subscription);
-        builder.set_payload(ContentEncoding::Aes128Gcm, &content);
-        builder.set_urgency(Urgency::Normal);
-        builder.set_ttl(60);
-        builder.set_vapid_signature(signature);
+                let mut builder = WebPushMessageBuilder::new(&subscription);
+                builder.set_payload(ContentEncoding::Aes128Gcm, &content);
+                builder.set_urgency(Urgency::Normal);
+                builder.set_ttl(60);
+                builder.set_vapid_signature(signature);
+                Ok(builder.build()?)
+            })();
 
-        match client.send(builder.build()?).await {
-            Ok(()) => sent += 1,
-            Err(WebPushError::EndpointNotValid(_)) | Err(WebPushError::EndpointNotFound(_)) => {
-                let _ = state
-                    .db
-                    .delete_web_push_subscription(&subscription.endpoint)
-                    .await;
+            match prepared {
+                Err(error) => {
+                    if first_error.is_none() {
+                        first_error =
+                            Some(format!("web push payload construction failed: {error}"));
+                    }
+                    if attempt == 0 {
+                        retry.push(retry_subscription);
+                    } else {
+                        final_retryable_failures += 1;
+                    }
+                }
+                Ok(message) => match client.send(message).await {
+                    Ok(()) => {
+                        successful_subscriptions
+                            .push(web_push_subscription_key(&subscription.endpoint));
+                    }
+                    Err(WebPushError::EndpointNotValid(_))
+                    | Err(WebPushError::EndpointNotFound(_)) => {
+                        let _ = state
+                            .db
+                            .delete_web_push_subscription(&subscription.endpoint)
+                            .await;
+                    }
+                    Err(e) => {
+                        if first_error.is_none() {
+                            first_error = Some(format!("web push send failed: {}", e));
+                        }
+                        if attempt == 0 {
+                            retry.push(retry_subscription);
+                        } else {
+                            final_retryable_failures += 1;
+                        }
+                    }
+                },
             }
-            Err(e) => {
-                return Err(anyhow::anyhow!("web push send failed: {}", e));
-            }
+        }
+        pending = retry;
+        if pending.is_empty() {
+            break;
         }
     }
 
-    if sent == 0 {
-        return Err(anyhow::anyhow!("web push: no successful sends"));
-    }
-
-    Ok(())
+    let error = if !pending.is_empty()
+        || final_retryable_failures > 0
+        || (successful_subscriptions.is_empty() && attempted > 0)
+    {
+        Some(first_error.unwrap_or_else(|| "web push: no successful sends".to_string()))
+    } else {
+        None
+    };
+    successful_subscriptions.sort();
+    successful_subscriptions.dedup();
+    Ok(WebPushDeliveryReport {
+        successful_subscriptions,
+        error,
+    })
 }

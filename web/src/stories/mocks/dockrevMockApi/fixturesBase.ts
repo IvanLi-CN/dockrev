@@ -21,6 +21,7 @@ export function baseEmpty(): Fixture {
     discoveredProjects: [],
     settings: makeDefaultSettings(),
     notifications: makeDefaultNotifications(),
+    notificationReadAll: false,
     githubPackagesSettings: makeDefaultGitHubPackagesSettings(),
     githubPackagesRepos: [],
     serviceSettingsById: {},

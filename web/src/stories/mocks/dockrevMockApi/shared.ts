@@ -48,6 +48,10 @@ export type DockrevApiScenario =
   | 'cleanup-console-apply-slow'
   | 'cleanup-console-unknown-volume-only'
   | 'default'
+  | 'notification-empty'
+  | 'notification-error'
+  | 'notification-all-read'
+  | 'notification-single'
   | 'dashboard-demo'
   | 'dashboard-demo-slow-update'
   | 'dashboard-demo-hydrated-update'
@@ -468,6 +472,7 @@ export type Fixture = {
   discoveredProjects: DiscoveredProject[]
   settings: SettingsResponse
   notifications: NotificationConfig
+  notificationReadAll: boolean
   githubPackagesSettings: GitHubPackagesSettingsResponse
   githubPackagesRepos: GitHubPackagesRepo[]
   serviceSettingsById: Record<string, ServiceSettings>

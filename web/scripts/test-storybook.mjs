@@ -1148,6 +1148,29 @@ async function runInteractive({ baseUrl, browser }) {
     return page;
   };
 
+  // Exercise the notification inbox mutation against the real Storybook browser harness.
+  {
+    const page = await openStory("components-notificationcenter--desktop");
+    try {
+      const markAllRead = page.getByRole("button", { name: "全部标记已读" });
+      await markAllRead.waitFor({ timeout: 10_000 });
+      await page.waitForFunction(
+        () => {
+          const button = document.querySelector(
+            'button[aria-label="全部标记已读"]',
+          );
+          return button instanceof HTMLButtonElement && !button.disabled;
+        },
+        null,
+        { timeout: 10_000 },
+      );
+      await markAllRead.click();
+      await page.getByText("0 条未读", { exact: true }).waitFor({ timeout: 10_000 });
+    } finally {
+      await page.close().catch(() => {});
+    }
+  }
+
   // Management SSE recovery must replace a failed source and keep protocol-invalid data connected.
   {
     const page = await openStory("pages-interactiveapp--management-sse-recovery");

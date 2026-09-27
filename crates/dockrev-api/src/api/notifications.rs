@@ -1,5 +1,107 @@
 use super::*;
 
+#[derive(Debug, Default, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(super) struct NotificationInboxQuery {
+    pub limit: Option<usize>,
+    pub cursor: Option<String>,
+}
+
+pub(super) async fn get_notification_inbox(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Query(query): Query<NotificationInboxQuery>,
+) -> Result<Json<NotificationInboxResponse>, ApiError> {
+    let _user = require_user(&state, &headers).await?;
+    let now = now_rfc3339().map_err(map_internal)?;
+    let page = state
+        .db
+        .list_notification_items(query.limit.unwrap_or(50), query.cursor.as_deref(), &now)
+        .await
+        .map_err(|error| {
+            if error.to_string().contains("invalid notification cursor") {
+                ApiError::invalid_argument("invalid notification cursor")
+            } else {
+                map_internal(error)
+            }
+        })?;
+    Ok(Json(notification_inbox_response(page)))
+}
+
+pub(super) async fn get_notification_unread_count(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+) -> Result<Json<NotificationUnreadCountResponse>, ApiError> {
+    let _user = require_user(&state, &headers).await?;
+    let now = now_rfc3339().map_err(map_internal)?;
+    let unread_count = state
+        .db
+        .count_notification_items(&now)
+        .await
+        .map_err(map_internal)?;
+    Ok(Json(NotificationUnreadCountResponse { unread_count }))
+}
+
+pub(super) async fn mark_notification_read(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Path(notification_id): Path<String>,
+) -> Result<Json<NotificationReadResponse>, ApiError> {
+    let _user = require_user(&state, &headers).await?;
+    let now = now_rfc3339().map_err(map_internal)?;
+    let result = state
+        .db
+        .mark_notification_item_read(&notification_id, &now)
+        .await
+        .map_err(map_internal)?
+        .ok_or_else(|| ApiError::not_found("notification item not found"))?;
+    Ok(Json(NotificationReadResponse {
+        notification_id: result.notification_id,
+        read_at: result.read_at,
+        unread_count: result.unread_count,
+    }))
+}
+
+pub(super) async fn mark_all_notifications_read(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+) -> Result<Json<NotificationReadAllResponse>, ApiError> {
+    let _user = require_user(&state, &headers).await?;
+    let now = now_rfc3339().map_err(map_internal)?;
+    let result = state
+        .db
+        .mark_all_notification_items_read(&now)
+        .await
+        .map_err(map_internal)?;
+    Ok(Json(NotificationReadAllResponse {
+        read_at: result.read_at,
+        unread_count: result.unread_count,
+    }))
+}
+
+fn notification_inbox_response(
+    page: crate::db::NotificationInboxPage,
+) -> NotificationInboxResponse {
+    NotificationInboxResponse {
+        items: page.items.into_iter().map(notification_item).collect(),
+        next_cursor: page.next_cursor,
+        unread_count: page.unread_count,
+    }
+}
+
+fn notification_item(item: crate::db::NotificationItemRow) -> NotificationItem {
+    NotificationItem {
+        id: item.id,
+        kind: item.kind,
+        title: item.title,
+        body: item.body,
+        url: item.target_url,
+        source_job_id: item.source_job_id,
+        created_at: item.created_at,
+        read_at: item.read_at,
+    }
+}
+
 pub(super) async fn get_notifications(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,

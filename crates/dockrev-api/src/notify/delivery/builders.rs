@@ -343,7 +343,11 @@ pub(crate) async fn build_ghcr_webhook_anomaly_payload_v2(
     channel: &'static str,
     event: GhcrWebhookAnomalyEvent<'_>,
 ) -> anyhow::Result<GhcrWebhookAnomalyPayloadV2> {
-    let job_url = best_effort_url(public_base_url, &format!("queue/{}", event.job_id));
+    let job_url = if event.status == "replay" && event.job_id == "replay" {
+        best_effort_url(public_base_url, "")
+    } else {
+        best_effort_url(public_base_url, &format!("queue/{}", event.job_id))
+    };
     let settings_url = best_effort_url(public_base_url, "settings");
     let primary_url = job_url.clone();
     let total_anomalies = event.counts.total();

@@ -1,5 +1,47 @@
 use super::*;
 
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct NotificationItem {
+    pub id: String,
+    pub kind: String,
+    pub title: String,
+    pub body: String,
+    pub url: String,
+    pub source_job_id: Option<String>,
+    pub created_at: String,
+    pub read_at: Option<String>,
+}
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct NotificationInboxResponse {
+    pub items: Vec<NotificationItem>,
+    pub next_cursor: Option<String>,
+    pub unread_count: u64,
+}
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct NotificationUnreadCountResponse {
+    pub unread_count: u64,
+}
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct NotificationReadResponse {
+    pub notification_id: String,
+    pub read_at: String,
+    pub unread_count: u64,
+}
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct NotificationReadAllResponse {
+    pub read_at: String,
+    pub unread_count: u64,
+}
+
 #[derive(Clone, Debug)]
 pub struct NotificationSettings {
     pub email_enabled: bool,

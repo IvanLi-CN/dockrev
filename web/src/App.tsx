@@ -54,6 +54,7 @@ import {
 } from "./deployCheck";
 import { TopbarUserIdentity } from "./components/TopbarUserIdentity";
 import { GitHubReleaseDrawer } from "./components/GitHubReleaseDrawer";
+import { NotificationCenter, NotificationProvider } from "./NotificationCenter";
 import {
   CLOSED_GITHUB_RELEASE_DRAWER_STATE,
   RELEASE_DRAWER_LOCATION_EVENT,
@@ -495,50 +496,58 @@ export default function App() {
 
   if (authFailure) {
     return (
-      <AppShell
-        route={route}
-        title={resolvedHead.title}
-        pageSubtitle={resolvedHead.pageSubtitle}
-        topActions={null}
-        authIdentity={authIdentity}
-      >
-        <ManagementEventsStatusBanner />
-        <UnauthorizedPage authDetails={authFailure} />
-      </AppShell>
+      <NotificationProvider>
+        <AppShell
+          route={route}
+          title={resolvedHead.title}
+          pageSubtitle={resolvedHead.pageSubtitle}
+          topActions={null}
+          authIdentity={authIdentity}
+        >
+          <ManagementEventsStatusBanner />
+          <UnauthorizedPage authDetails={authFailure} />
+        </AppShell>
+      </NotificationProvider>
     );
   }
 
   if (route.name === "deploy-check") {
     return (
-      <>
-        <DeployWelcomePage />
-        <PwaUpdateBubble />
-      </>
+      <NotificationProvider>
+        <>
+          <DeployWelcomePage />
+          <PwaUpdateBubble />
+        </>
+      </NotificationProvider>
     );
   }
 
   if (deployCheckGate !== "pass") {
     return (
-      <div className="deployGateLoading" role="status" aria-live="polite">
-        {deployCheckGate === "loading"
-          ? "正在验证部署检查…"
-          : "部署检查未通过，正在打开故障门禁…"}
-      </div>
+      <NotificationProvider>
+        <div className="deployGateLoading" role="status" aria-live="polite">
+          {deployCheckGate === "loading"
+            ? "正在验证部署检查…"
+            : "部署检查未通过，正在打开故障门禁…"}
+        </div>
+      </NotificationProvider>
     );
   }
 
   return (
-    <>
-      <AppShell
-        route={route}
-        title={resolvedHead.title}
-        pageSubtitle={resolvedHead.pageSubtitle}
-        topActions={topActions}
-        topbarContent={topbarContent}
-        contextNavigation={contextNavigation}
-        contextNavigationTitle={route.name === "services" || route.name === "stack" || route.name === "service" ? "服务导航" : "页面内导航"}
-        authIdentity={authIdentity}
-      >
+    <NotificationProvider>
+      <>
+        <AppShell
+          route={route}
+          title={resolvedHead.title}
+          pageSubtitle={resolvedHead.pageSubtitle}
+          topActions={topActions}
+          notificationCenter={<NotificationCenter />}
+          topbarContent={topbarContent}
+          contextNavigation={contextNavigation}
+          contextNavigationTitle={route.name === "services" || route.name === "stack" || route.name === "service" ? "服务导航" : "页面内导航"}
+          authIdentity={authIdentity}
+        >
         <ManagementEventsStatusBanner />
         {route.name === "overview" ? (
           <OverviewPage
@@ -605,16 +614,17 @@ export default function App() {
             onTopbarContent={setTopbarContent}
           />
         ) : null}
-      </AppShell>
-      <GitHubReleaseDrawer
-        open={releaseDrawerState.open}
-        serviceId={releaseDrawerState.serviceId}
-        version={releaseDrawerState.version}
-        onOpenChange={(open) => {
-          if (open) return;
-          closeGitHubReleaseDrawer("replace");
-        }}
-      />
-    </>
+        </AppShell>
+        <GitHubReleaseDrawer
+          open={releaseDrawerState.open}
+          serviceId={releaseDrawerState.serviceId}
+          version={releaseDrawerState.version}
+          onOpenChange={(open) => {
+            if (open) return;
+            closeGitHubReleaseDrawer("replace");
+          }}
+        />
+      </>
+    </NotificationProvider>
   );
 }

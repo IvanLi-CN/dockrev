@@ -6,6 +6,7 @@ const STATUS_FAILED: &str = "failed";
 const STATUS_SUPERSEDED: &str = "superseded";
 const ACTIVE_INDEX_NAME: &str = "idx_new_version_notifications_active_service_digest";
 const TARGET_BATCH_SIZE: usize = 200;
+const DELIVERY_CLAIM_TTL_MINUTES: i64 = 5;
 
 pub(crate) type NotificationTargetKey = (String, String, String, String);
 pub(super) type StableCandidateDisplayTags = std::collections::BTreeSet<String>;
@@ -155,8 +156,132 @@ fn is_active_notification_conflict(err: &rusqlite::Error) -> bool {
     }
 }
 
+fn reserve_new_version_notification_tx(
+    tx: &rusqlite::Transaction<'_>,
+    pending: &NewVersionNotificationPending,
+) -> anyhow::Result<NewVersionNotificationReserveResult> {
+    let candidate_digest = normalize_candidate_digest(Some(&pending.candidate_digest))
+        .ok_or_else(|| rusqlite::Error::InvalidParameterName("candidate_digest".into()))?;
+    let previous = tx
+        .query_row(
+            r#"
+SELECT job_id, sent_channels_json
+FROM new_version_notifications
+WHERE service_id = ?1
+  AND candidate_digest = ?2
+  AND status = ?3
+ORDER BY created_at DESC, id DESC
+LIMIT 1
+"#,
+            params![pending.service_id, candidate_digest, STATUS_FAILED],
+            |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)),
+        )
+        .optional()?;
+    let (job_id, sent_channels_json) = match previous {
+        Some((job_id, raw)) => (
+            job_id,
+            serde_json::to_string(&serde_json::from_str::<Vec<String>>(&raw).unwrap_or_default())?,
+        ),
+        None => (pending.job_id.clone(), "[]".to_string()),
+    };
+    let insert = tx.execute(
+        r#"
+INSERT INTO new_version_notifications (
+  id,
+  service_id,
+  job_id,
+  reason,
+  image_ref,
+  image_tag,
+  current_tag,
+  current_display_tag,
+  candidate_tag,
+  candidate_display_tag,
+  candidate_digest,
+  status,
+  sent_channels_json,
+  created_at
+) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)
+"#,
+        params![
+            pending.id,
+            pending.service_id,
+            job_id,
+            pending.reason,
+            pending.image_ref,
+            pending.image_tag,
+            pending.current_tag,
+            pending.current_display_tag,
+            pending.candidate_tag,
+            pending.candidate_display_tag,
+            candidate_digest,
+            STATUS_PENDING,
+            sent_channels_json,
+            pending.created_at,
+        ],
+    );
+
+    match insert {
+        Ok(_) => Ok(NewVersionNotificationReserveResult::Reserved(
+            pending.id.clone(),
+        )),
+        Err(err) if is_active_notification_conflict(&err) => {
+            let existing = tx
+                .query_row(
+                    "SELECT id, status FROM new_version_notifications WHERE service_id = ?1 AND candidate_digest = ?2 AND status IN (?3, ?4)",
+                    params![pending.service_id, candidate_digest, STATUS_PENDING, STATUS_SENT],
+                    |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)),
+                )
+                .optional()?;
+            match existing {
+                Some((id, status)) if status == STATUS_PENDING => {
+                    Ok(NewVersionNotificationReserveResult::AlreadyPending(id))
+                }
+                _ => Ok(NewVersionNotificationReserveResult::SkippedDuplicate),
+            }
+        }
+        Err(err) => Err(err.into()),
+    }
+}
+
 fn normalize_candidate_digest(candidate_digest: Option<&str>) -> Option<String> {
     candidate_digest.and_then(crate::snapshot_worker::normalize_digest)
+}
+
+fn delivery_claim_expiry(now: &str) -> anyhow::Result<String> {
+    Ok(
+        (time::OffsetDateTime::parse(now, &time::format_description::well_known::Rfc3339)?
+            + time::Duration::minutes(DELIVERY_CLAIM_TTL_MINUTES))
+        .format(&time::format_description::well_known::Rfc3339)?,
+    )
+}
+
+fn try_claim_new_version_notification_tx(
+    tx: &rusqlite::Transaction<'_>,
+    notification_id: &str,
+    claim_token: &str,
+    claim_expires_at: &str,
+    now: &str,
+) -> rusqlite::Result<bool> {
+    Ok(tx.execute(
+        r#"
+UPDATE new_version_notifications
+SET delivery_claim_token = ?2, delivery_claim_expires_at = ?3
+WHERE id = ?1
+  AND status = ?4
+  AND (
+    delivery_claim_token IS NULL
+    OR delivery_claim_expires_at <= ?5
+  )
+"#,
+        params![
+            notification_id,
+            claim_token,
+            claim_expires_at,
+            STATUS_PENDING,
+            now
+        ],
+    )? > 0)
 }
 
 pub(super) fn reconcile_service_new_version_notifications_tx(
@@ -176,11 +301,11 @@ SET
   status = ?2,
   superseded_at = COALESCE(superseded_at, ?3)
 WHERE service_id = ?1
-  AND status IN (?4, ?5)
+  AND status IN (?4, ?5, ?6)
   AND (
-    image_ref != ?6
-    OR image_tag != ?7
-    OR candidate_digest != ?8
+    image_ref != ?7
+    OR image_tag != ?8
+    OR candidate_digest != ?9
   )
 "#,
             params![
@@ -189,6 +314,7 @@ WHERE service_id = ?1
                 now,
                 STATUS_PENDING,
                 STATUS_SENT,
+                STATUS_FAILED,
                 image_ref,
                 image_tag,
                 candidate_digest,
@@ -202,7 +328,7 @@ SET
   status = ?2,
   superseded_at = COALESCE(superseded_at, ?3)
 WHERE service_id = ?1
-  AND status IN (?4, ?5)
+  AND status IN (?4, ?5, ?6)
 "#,
             params![
                 service_id,
@@ -210,6 +336,7 @@ WHERE service_id = ?1
                 now,
                 STATUS_PENDING,
                 STATUS_SENT,
+                STATUS_FAILED,
             ],
         )
     }
@@ -229,6 +356,7 @@ impl Db {
         .context("list stable candidate display tags for notification targets")
     }
 
+    #[allow(dead_code)]
     pub async fn reserve_new_version_notification(
         &self,
         pending: &NewVersionNotificationPending,
@@ -236,60 +364,166 @@ impl Db {
         let pending = pending.clone();
         self.call(move |conn| {
             let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
-            let candidate_digest = normalize_candidate_digest(Some(&pending.candidate_digest))
-                .ok_or_else(|| rusqlite::Error::InvalidParameterName("candidate_digest".into()))?;
-            let insert = tx.execute(
-                r#"
-INSERT INTO new_version_notifications (
-  id,
-  service_id,
-  job_id,
-  reason,
-  image_ref,
-  image_tag,
-  current_tag,
-  current_display_tag,
-  candidate_tag,
-  candidate_display_tag,
-  candidate_digest,
-  status,
-  sent_channels_json,
-  created_at
-) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)
-"#,
-                params![
-                    pending.id,
-                    pending.service_id,
-                    pending.job_id,
-                    pending.reason,
-                    pending.image_ref,
-                    pending.image_tag,
-                    pending.current_tag,
-                    pending.current_display_tag,
-                    pending.candidate_tag,
-                    pending.candidate_display_tag,
-                    candidate_digest,
-                    STATUS_PENDING,
-                    "[]",
-                    pending.created_at,
-                ],
-            );
-
-            match insert {
-                Ok(_) => {
-                    tx.commit()?;
-                    Ok(NewVersionNotificationReserveResult::Reserved(pending.id))
-                }
-                Err(err) if is_active_notification_conflict(&err) => {
-                    Ok(NewVersionNotificationReserveResult::SkippedDuplicate)
-                }
-                Err(err) => Err(err.into()),
-            }
+            let result = reserve_new_version_notification_tx(&tx, &pending)?;
+            tx.commit()?;
+            Ok(result)
         })
         .await
         .context("reserve new version notification")
     }
 
+    pub async fn reserve_new_version_notifications_with_item(
+        &self,
+        pendings: &[NewVersionNotificationPending],
+        draft: &super::NotificationItemDraft,
+    ) -> anyhow::Result<Option<(Vec<(String, String, String)>, String, u64)>> {
+        let pendings = pendings.to_vec();
+        let draft = draft.clone();
+        let claim_token = crate::ids::new_notification_id();
+        let claim_expires_at = delivery_claim_expiry(&draft.created_at)?;
+        self.call(move |conn| {
+            let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
+            let mut reservations = Vec::new();
+            let mut claim_blocked = false;
+            for pending in &pendings {
+                match reserve_new_version_notification_tx(&tx, pending)? {
+                    NewVersionNotificationReserveResult::Reserved(id) => {
+                        if try_claim_new_version_notification_tx(
+                            &tx,
+                            &id,
+                            &claim_token,
+                            &claim_expires_at,
+                            &draft.created_at,
+                        )? {
+                            reservations.push((id, pending.id.clone(), claim_token.clone()));
+                        }
+                    }
+                    NewVersionNotificationReserveResult::AlreadyPending(id) => {
+                        let notification_item_identity = tx
+                            .query_row(
+                                "SELECT item.identity_key FROM new_version_notifications notification JOIN notification_items item ON item.id = notification.notification_item_id WHERE notification.id = ?1",
+                                params![id],
+                                |row| row.get::<_, String>(0),
+                            )
+                            .optional()?;
+                        if notification_item_identity
+                            .as_deref()
+                            .is_none_or(|identity| identity == draft.identity_key)
+                        {
+                            if try_claim_new_version_notification_tx(
+                                &tx,
+                                &id,
+                                &claim_token,
+                                &claim_expires_at,
+                                &draft.created_at,
+                            )? {
+                                reservations.push((id, pending.id.clone(), claim_token.clone()));
+                            } else {
+                                claim_blocked = true;
+                            }
+                        }
+                    }
+                    NewVersionNotificationReserveResult::SkippedDuplicate => {}
+                }
+            }
+            if reservations.is_empty() {
+                if claim_blocked {
+                    return Err(anyhow::anyhow!("new-version notification delivery claim is held"));
+                }
+                tx.commit()?;
+                return Ok(None);
+            }
+
+            tx.execute(
+                r#"
+INSERT INTO notification_items (
+  id, kind, identity_key, title, body, target_url, source_job_id, created_at
+) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
+ON CONFLICT(identity_key) DO NOTHING
+"#,
+                params![
+                    draft.id,
+                    draft.kind,
+                    draft.identity_key,
+                    draft.title,
+                    draft.body,
+                    draft.target_url,
+                    draft.source_job_id,
+                    draft.created_at,
+                ],
+            )?;
+            let item_id = tx.query_row(
+                "SELECT id FROM notification_items WHERE identity_key = ?1",
+                params![draft.identity_key],
+                |row| row.get::<_, String>(0),
+            )?;
+            let unread_count = tx.query_row(
+                "SELECT COUNT(*) FROM notification_items WHERE read_at IS NULL",
+                [],
+                |row| row.get::<_, u64>(0),
+            )?;
+            let reserved_ids = reservations
+                .iter()
+                .map(|(record_id, _, _)| record_id.clone())
+                .collect::<Vec<_>>();
+            let placeholders = std::iter::repeat_n("?", reserved_ids.len())
+                .collect::<Vec<_>>()
+                .join(",");
+            tx.execute(
+                &format!(
+                    "UPDATE new_version_notifications SET notification_item_id = ?1 WHERE id IN ({placeholders})"
+                ),
+                rusqlite::params_from_iter(
+                    std::iter::once(&item_id).chain(reserved_ids.iter()),
+                ),
+            )?;
+            tx.commit()?;
+            Ok(Some((reservations, item_id, unread_count)))
+        })
+        .await
+        .context("reserve new version notifications with item")
+    }
+
+    pub async fn find_new_version_notification_batch_job_id(
+        &self,
+        candidates: &[(String, String)],
+    ) -> anyhow::Result<Option<String>> {
+        let candidates = candidates.to_vec();
+        self.call(move |conn| {
+            if candidates.is_empty() {
+                return Ok(None);
+            }
+            let mut stmt = conn.prepare(
+                    "SELECT job_id FROM new_version_notifications WHERE service_id = ?1 AND candidate_digest = ?2 AND status IN (?3, ?4, ?5) ORDER BY created_at ASC, id ASC LIMIT 1",
+            )?;
+            let mut batch_job_id = None;
+            for (service_id, candidate_digest) in candidates {
+                let digest = normalize_candidate_digest(Some(&candidate_digest))
+                    .ok_or_else(|| rusqlite::Error::InvalidParameterName("candidate_digest".into()))?;
+                let Some(job_id) = stmt
+                    .query_row(
+                        params![service_id, digest, STATUS_PENDING, STATUS_SENT, STATUS_FAILED],
+                        |row| row.get::<_, String>(0),
+                    )
+                    .optional()?
+                else {
+                    return Ok(None);
+                };
+                if batch_job_id
+                    .as_ref()
+                    .is_some_and(|existing| existing != &job_id)
+                {
+                    return Ok(None);
+                }
+                batch_job_id = Some(job_id);
+            }
+            Ok(batch_job_id)
+        })
+        .await
+        .context("find new version notification batch job id")
+    }
+
+    #[allow(dead_code)]
     pub async fn finalize_new_version_notification(
         &self,
         notification_id: &str,
@@ -297,10 +531,29 @@ INSERT INTO new_version_notifications (
         last_error: Option<&str>,
         now: &str,
     ) -> anyhow::Result<bool> {
+        self.finalize_new_version_notification_with_claim(
+            notification_id,
+            sent_channels,
+            last_error,
+            now,
+            None,
+        )
+        .await
+    }
+
+    pub async fn finalize_new_version_notification_with_claim(
+        &self,
+        notification_id: &str,
+        sent_channels: &[String],
+        last_error: Option<&str>,
+        now: &str,
+        claim_token: Option<&str>,
+    ) -> anyhow::Result<bool> {
         let notification_id = notification_id.to_string();
         let sent_channels = sent_channels.to_vec();
         let last_error = last_error.map(ToString::to_string);
         let now = now.to_string();
+        let claim_token = claim_token.map(ToString::to_string);
         self.call(move |conn| {
             let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
             let service_digest = super::canonical_digest_sql("s.candidate_digest");
@@ -342,7 +595,7 @@ WHERE n.id = ?1
                 (STATUS_SUPERSEDED, existing_superseded_at)
             } else if still_current {
                 (
-                    if sent_channels.is_empty() {
+                    if sent_channels.is_empty() || last_error.is_some() {
                         STATUS_FAILED
                     } else {
                         STATUS_SENT
@@ -364,8 +617,11 @@ SET
   sent_channels_json = ?3,
   sent_at = ?4,
   superseded_at = ?5,
-  last_error = ?6
+  last_error = ?6,
+  delivery_claim_token = NULL,
+  delivery_claim_expires_at = NULL
 WHERE id = ?1 AND status IN (?7, ?8)
+  AND (?9 IS NULL OR delivery_claim_token = ?9)
 "#,
                 params![
                     notification_id,
@@ -376,6 +632,7 @@ WHERE id = ?1 AND status IN (?7, ?8)
                     last_error,
                     STATUS_PENDING,
                     STATUS_SUPERSEDED,
+                    claim_token,
                 ],
             )?;
             tx.commit()?;
@@ -383,6 +640,64 @@ WHERE id = ?1 AND status IN (?7, ?8)
         })
         .await
         .context("finalize new version notification")
+    }
+
+    pub async fn list_new_version_notification_sent_channels(
+        &self,
+        notification_ids: &[String],
+    ) -> anyhow::Result<std::collections::HashMap<String, Vec<String>>> {
+        let notification_ids = notification_ids.to_vec();
+        self.call(move |conn| {
+            if notification_ids.is_empty() {
+                return Ok(std::collections::HashMap::new());
+            }
+            let placeholders = std::iter::repeat_n("?", notification_ids.len())
+                .collect::<Vec<_>>()
+                .join(",");
+            let mut stmt = conn.prepare(&format!(
+                "SELECT id, sent_channels_json FROM new_version_notifications WHERE id IN ({placeholders})"
+            ))?;
+            let rows = stmt.query_map(
+                rusqlite::params_from_iter(notification_ids.iter()),
+                |row| {
+                    let sent_channels_json: String = row.get(1)?;
+                    Ok((
+                        row.get::<_, String>(0)?,
+                        serde_json::from_str::<Vec<String>>(&sent_channels_json)
+                            .unwrap_or_default(),
+                    ))
+                },
+            )?;
+            Ok(rows.collect::<rusqlite::Result<std::collections::HashMap<_, _>>>()?)
+        })
+        .await
+        .context("list new version notification sent channels")
+    }
+
+    #[allow(dead_code)]
+    pub async fn list_new_version_notification_job_ids(
+        &self,
+        notification_ids: &[String],
+    ) -> anyhow::Result<std::collections::HashMap<String, String>> {
+        let notification_ids = notification_ids.to_vec();
+        self.call(move |conn| {
+            if notification_ids.is_empty() {
+                return Ok(std::collections::HashMap::new());
+            }
+            let placeholders = std::iter::repeat_n("?", notification_ids.len())
+                .collect::<Vec<_>>()
+                .join(",");
+            let mut stmt = conn.prepare(&format!(
+                "SELECT id, job_id FROM new_version_notifications WHERE id IN ({placeholders})"
+            ))?;
+            let rows = stmt
+                .query_map(rusqlite::params_from_iter(notification_ids.iter()), |row| {
+                    Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+                })?;
+            Ok(rows.collect::<rusqlite::Result<std::collections::HashMap<_, _>>>()?)
+        })
+        .await
+        .context("list new version notification job ids")
     }
 
     #[allow(dead_code)]
@@ -509,572 +824,5 @@ ORDER BY created_at ASC, id ASC
 }
 
 #[cfg(test)]
-mod tests {
-    use std::{collections::BTreeMap, path::Path};
-
-    use super::*;
-    use crate::{
-        api::types::{BackupRetention, ComposeConfig, StackBackupConfig},
-        db::ComposeServiceSpec,
-        models::{ServiceSeed, StackRecord},
-    };
-
-    fn pending(id: &str, service_id: &str, digest: &str) -> NewVersionNotificationPending {
-        NewVersionNotificationPending {
-            id: id.to_string(),
-            service_id: service_id.to_string(),
-            job_id: "chk_1".to_string(),
-            reason: "schedule".to_string(),
-            image_ref: "ghcr.io/acme/web".to_string(),
-            image_tag: "latest".to_string(),
-            current_tag: "latest".to_string(),
-            current_display_tag: "1.0.0".to_string(),
-            candidate_tag: "latest".to_string(),
-            candidate_display_tag: "1.1.0".to_string(),
-            candidate_digest: digest.to_string(),
-            created_at: "2026-03-09T00:00:00Z".to_string(),
-        }
-    }
-
-    async fn seed_service(db: &Db, service_id: &str, candidate_digest: Option<&str>) {
-        let now = "2026-03-09T00:00:00Z";
-        let stack = StackRecord {
-            id: "stack_1".to_string(),
-            name: "demo".to_string(),
-            archived: false,
-            compose: ComposeConfig {
-                kind: "compose".to_string(),
-                compose_files: vec!["/tmp/demo.yml".to_string()],
-                env_file: None,
-            },
-            backup: StackBackupConfig {
-                targets: Vec::new(),
-                retention: BackupRetention::default(),
-            },
-            services: Vec::new(),
-        };
-        let seeds = vec![ServiceSeed {
-            id: service_id.to_string(),
-            name: "web".to_string(),
-            image_ref: "ghcr.io/acme/web".to_string(),
-            image_tag: "latest".to_string(),
-            homepage: None,
-            update_guard: None,
-            auto_rollback: false,
-            backup_bind_paths: BTreeMap::new(),
-            backup_volume_names: BTreeMap::new(),
-        }];
-        db.insert_stack(&stack, &seeds, now).await.unwrap();
-        if let Some(candidate_digest) = candidate_digest {
-            db.update_service_check_result(
-                service_id,
-                Some("sha256:old".to_string()),
-                Some("1.0.0".to_string()),
-                Some("[\"1.0.0\"]".to_string()),
-                Some("latest".to_string()),
-                Some("1.1.0".to_string()),
-                Some(candidate_digest.to_string()),
-                Some("match".to_string()),
-                Some("[\"linux/amd64\"]".to_string()),
-                None,
-                None,
-                now,
-                now,
-            )
-            .await
-            .unwrap();
-        }
-    }
-
-    #[tokio::test]
-    async fn reserve_skips_duplicate_active_digest() {
-        let db = Db::open(Path::new(":memory:")).await.unwrap();
-        let first = pending("nvn_1", "svc_1", "sha256:new");
-        let second = pending("nvn_2", "svc_1", "sha256:new");
-
-        let first_result = db.reserve_new_version_notification(&first).await.unwrap();
-        let second_result = db.reserve_new_version_notification(&second).await.unwrap();
-
-        assert_eq!(
-            first_result,
-            NewVersionNotificationReserveResult::Reserved("nvn_1".to_string())
-        );
-        assert_eq!(
-            second_result,
-            NewVersionNotificationReserveResult::SkippedDuplicate
-        );
-    }
-
-    #[tokio::test]
-    async fn reserve_canonicalizes_equivalent_active_digests() {
-        let db = Db::open(Path::new(":memory:")).await.unwrap();
-        let first = pending("nvn_1", "svc_1", "ABC");
-        let second = pending("nvn_2", "svc_1", "sha256:abc");
-
-        assert_eq!(
-            db.reserve_new_version_notification(&first).await.unwrap(),
-            NewVersionNotificationReserveResult::Reserved("nvn_1".to_string())
-        );
-        assert_eq!(
-            db.reserve_new_version_notification(&second).await.unwrap(),
-            NewVersionNotificationReserveResult::SkippedDuplicate
-        );
-
-        let rows = db
-            .list_new_version_notifications_for_service("svc_1")
-            .await
-            .unwrap();
-        assert_eq!(rows.len(), 1);
-        assert_eq!(rows[0].candidate_digest, "sha256:abc");
-    }
-
-    #[tokio::test]
-    async fn concurrent_reserve_only_allows_one_active_record() {
-        let db = Db::open(Path::new(":memory:")).await.unwrap();
-        let first = pending("nvn_1", "svc_1", "sha256:new");
-        let second = pending("nvn_2", "svc_1", "sha256:new");
-
-        let db_a = db.clone();
-        let db_b = db.clone();
-        let (first_result, second_result) = tokio::join!(
-            db_a.reserve_new_version_notification(&first),
-            db_b.reserve_new_version_notification(&second),
-        );
-
-        let first_result = first_result.unwrap();
-        let second_result = second_result.unwrap();
-        let winners = [first_result, second_result]
-            .into_iter()
-            .filter(|result| matches!(result, NewVersionNotificationReserveResult::Reserved(_)))
-            .count();
-        assert_eq!(winners, 1);
-    }
-
-    #[tokio::test]
-    async fn failed_record_does_not_hold_active_slot() {
-        let db = Db::open(Path::new(":memory:")).await.unwrap();
-        seed_service(&db, "svc_1", Some("sha256:new")).await;
-        let first = pending("nvn_1", "svc_1", "sha256:new");
-        let second = pending("nvn_2", "svc_1", "sha256:new");
-
-        let reserved = db.reserve_new_version_notification(&first).await.unwrap();
-        assert_eq!(
-            reserved,
-            NewVersionNotificationReserveResult::Reserved("nvn_1".to_string())
-        );
-        let finalized = db
-            .finalize_new_version_notification(
-                "nvn_1",
-                &[],
-                Some("webhook failed"),
-                "2026-03-09T00:01:00Z",
-            )
-            .await
-            .unwrap();
-        assert!(finalized);
-
-        let retried = db.reserve_new_version_notification(&second).await.unwrap();
-        assert_eq!(
-            retried,
-            NewVersionNotificationReserveResult::Reserved("nvn_2".to_string())
-        );
-    }
-
-    #[tokio::test]
-    async fn reconcile_supersedes_pending_rows_and_finalize_preserves_audit() {
-        let db = Db::open(Path::new(":memory:")).await.unwrap();
-        let first = pending("nvn_1", "svc_1", "sha256:old");
-        let second = pending("nvn_2", "svc_1", "sha256:old");
-
-        let reserved = db.reserve_new_version_notification(&first).await.unwrap();
-        assert_eq!(
-            reserved,
-            NewVersionNotificationReserveResult::Reserved("nvn_1".to_string())
-        );
-
-        let changed = db
-            .reconcile_service_new_version_notifications(
-                "svc_1",
-                "ghcr.io/acme/web",
-                "latest",
-                Some("sha256:new"),
-                "2026-03-09T00:02:00Z",
-            )
-            .await
-            .unwrap();
-        assert_eq!(changed, 1);
-
-        let finalized = db
-            .finalize_new_version_notification(
-                "nvn_1",
-                &["webhook".to_string()],
-                None,
-                "2026-03-09T00:03:00Z",
-            )
-            .await
-            .unwrap();
-        assert!(finalized);
-
-        let retried = db.reserve_new_version_notification(&second).await.unwrap();
-        assert_eq!(
-            retried,
-            NewVersionNotificationReserveResult::Reserved("nvn_2".to_string())
-        );
-
-        let rows = db
-            .list_new_version_notifications_for_service("svc_1")
-            .await
-            .unwrap();
-        assert_eq!(rows[0].status, STATUS_SUPERSEDED);
-        assert_eq!(
-            rows[0].superseded_at.as_deref(),
-            Some("2026-03-09T00:02:00Z")
-        );
-        assert_eq!(rows[0].sent_at.as_deref(), Some("2026-03-09T00:03:00Z"));
-        assert_eq!(rows[0].sent_channels, vec!["webhook".to_string()]);
-        assert_eq!(rows[1].status, STATUS_PENDING);
-    }
-
-    #[tokio::test]
-    async fn reconcile_supersedes_old_active_rows() {
-        let db = Db::open(Path::new(":memory:")).await.unwrap();
-        seed_service(&db, "svc_1", Some("sha256:old")).await;
-        let first = pending("nvn_1", "svc_1", "sha256:old");
-
-        let reserved = db.reserve_new_version_notification(&first).await.unwrap();
-        assert_eq!(
-            reserved,
-            NewVersionNotificationReserveResult::Reserved("nvn_1".to_string())
-        );
-        let finalized = db
-            .finalize_new_version_notification(
-                "nvn_1",
-                &["webhook".to_string()],
-                None,
-                "2026-03-09T00:01:00Z",
-            )
-            .await
-            .unwrap();
-        assert!(finalized);
-
-        let changed = db
-            .reconcile_service_new_version_notifications(
-                "svc_1",
-                "ghcr.io/acme/web",
-                "latest",
-                Some("sha256:new"),
-                "2026-03-09T00:02:00Z",
-            )
-            .await
-            .unwrap();
-        assert_eq!(changed, 1);
-
-        let rows = db
-            .list_new_version_notifications_for_service("svc_1")
-            .await
-            .unwrap();
-        assert_eq!(rows[0].status, STATUS_SUPERSEDED);
-        assert_eq!(
-            rows[0].superseded_at.as_deref(),
-            Some("2026-03-09T00:02:00Z")
-        );
-    }
-
-    #[tokio::test]
-    async fn reconcile_without_candidate_supersedes_active_rows_and_allows_reuse() {
-        let db = Db::open(Path::new(":memory:")).await.unwrap();
-        seed_service(&db, "svc_1", Some("sha256:old")).await;
-        let first = pending("nvn_1", "svc_1", "sha256:old");
-        let second = pending("nvn_2", "svc_1", "sha256:old");
-
-        let reserved = db.reserve_new_version_notification(&first).await.unwrap();
-        assert_eq!(
-            reserved,
-            NewVersionNotificationReserveResult::Reserved("nvn_1".to_string())
-        );
-        let finalized = db
-            .finalize_new_version_notification(
-                "nvn_1",
-                &["webhook".to_string()],
-                None,
-                "2026-03-09T00:01:00Z",
-            )
-            .await
-            .unwrap();
-        assert!(finalized);
-
-        let changed = db
-            .reconcile_service_new_version_notifications(
-                "svc_1",
-                "ghcr.io/acme/web",
-                "latest",
-                None,
-                "2026-03-09T00:02:00Z",
-            )
-            .await
-            .unwrap();
-        assert_eq!(changed, 1);
-
-        let retried = db.reserve_new_version_notification(&second).await.unwrap();
-        assert_eq!(
-            retried,
-            NewVersionNotificationReserveResult::Reserved("nvn_2".to_string())
-        );
-
-        let rows = db
-            .list_new_version_notifications_for_service("svc_1")
-            .await
-            .unwrap();
-        assert_eq!(rows[0].status, STATUS_SUPERSEDED);
-        assert_eq!(rows[1].status, STATUS_PENDING);
-    }
-
-    #[tokio::test]
-    async fn sync_stack_from_compose_keeps_active_rows_for_unchanged_services() {
-        let db = Db::open(Path::new(":memory:")).await.unwrap();
-        seed_service(&db, "svc_1", Some("sha256:old")).await;
-        let first = pending("nvn_1", "svc_1", "sha256:old");
-        let second = pending("nvn_2", "svc_1", "sha256:old");
-
-        let reserved = db.reserve_new_version_notification(&first).await.unwrap();
-        assert_eq!(
-            reserved,
-            NewVersionNotificationReserveResult::Reserved("nvn_1".to_string())
-        );
-        let finalized = db
-            .finalize_new_version_notification(
-                "nvn_1",
-                &["webhook".to_string()],
-                None,
-                "2026-03-09T00:01:00Z",
-            )
-            .await
-            .unwrap();
-        assert!(finalized);
-
-        db.sync_stack_from_compose(
-            "stack_1",
-            &["/tmp/demo.yml".to_string()],
-            &[ComposeServiceSpec {
-                name: "web".to_string(),
-                image_ref: "ghcr.io/acme/web".to_string(),
-                image_tag: "latest".to_string(),
-                homepage: None,
-                update_guard: None,
-                backup_bind_paths: Vec::new(),
-                backup_volume_names: Vec::new(),
-            }],
-            "2026-03-09T00:02:00Z",
-        )
-        .await
-        .unwrap();
-
-        let retried = db.reserve_new_version_notification(&second).await.unwrap();
-        assert_eq!(
-            retried,
-            NewVersionNotificationReserveResult::SkippedDuplicate
-        );
-
-        let rows = db
-            .list_new_version_notifications_for_service("svc_1")
-            .await
-            .unwrap();
-        assert_eq!(rows.len(), 1);
-        assert_eq!(rows[0].status, STATUS_SENT);
-        assert_eq!(rows[0].superseded_at, None);
-    }
-
-    #[tokio::test]
-    async fn sync_stack_from_compose_supersedes_active_rows_when_baseline_changes() {
-        let db = Db::open(Path::new(":memory:")).await.unwrap();
-        seed_service(&db, "svc_1", Some("sha256:old")).await;
-        let first = pending("nvn_1", "svc_1", "sha256:old");
-        let second = pending("nvn_2", "svc_1", "sha256:old");
-
-        let reserved = db.reserve_new_version_notification(&first).await.unwrap();
-        assert_eq!(
-            reserved,
-            NewVersionNotificationReserveResult::Reserved("nvn_1".to_string())
-        );
-        let finalized = db
-            .finalize_new_version_notification(
-                "nvn_1",
-                &["webhook".to_string()],
-                None,
-                "2026-03-09T00:01:00Z",
-            )
-            .await
-            .unwrap();
-        assert!(finalized);
-
-        db.sync_stack_from_compose(
-            "stack_1",
-            &["/tmp/demo.yml".to_string()],
-            &[ComposeServiceSpec {
-                name: "web".to_string(),
-                image_ref: "ghcr.io/acme/web-next".to_string(),
-                image_tag: "stable".to_string(),
-                homepage: None,
-                update_guard: None,
-                backup_bind_paths: Vec::new(),
-                backup_volume_names: Vec::new(),
-            }],
-            "2026-03-09T00:02:00Z",
-        )
-        .await
-        .unwrap();
-
-        let retried = db.reserve_new_version_notification(&second).await.unwrap();
-        assert_eq!(
-            retried,
-            NewVersionNotificationReserveResult::Reserved("nvn_2".to_string())
-        );
-
-        let rows = db
-            .list_new_version_notifications_for_service("svc_1")
-            .await
-            .unwrap();
-        assert_eq!(rows[0].status, STATUS_SUPERSEDED);
-        assert_eq!(
-            rows[0].superseded_at.as_deref(),
-            Some("2026-03-09T00:02:00Z")
-        );
-        assert_eq!(rows[1].status, STATUS_PENDING);
-
-        let target = db
-            .list_current_new_version_notification_targets(&["svc_1".to_string()])
-            .await
-            .unwrap();
-        assert_eq!(target.len(), 1);
-        assert_eq!(target[0].image_ref, "ghcr.io/acme/web-next");
-        assert_eq!(target[0].image_tag, "stable");
-        assert_eq!(target[0].candidate_digest, None);
-    }
-
-    #[tokio::test]
-    async fn list_stable_candidate_display_tags_batches_large_target_sets() {
-        let db = Db::open(Path::new(":memory:")).await.unwrap();
-        seed_service(&db, "svc_1", Some("sha256:seed")).await;
-
-        let mut targets = Vec::new();
-        for idx in 0..450 {
-            let digest = format!("sha256:{idx:064x}");
-            let mut row = pending(&format!("nvn_{idx}"), "svc_1", &digest);
-            row.candidate_display_tag = format!("1.{}.0", idx + 1);
-            db.reserve_new_version_notification(&row).await.unwrap();
-            targets.push((
-                "svc_1".to_string(),
-                "ghcr.io/acme/web".to_string(),
-                "latest".to_string(),
-                digest,
-            ));
-        }
-
-        let resolved = db
-            .list_stable_candidate_display_tags_for_notification_targets(&targets)
-            .await
-            .unwrap();
-
-        assert_eq!(resolved.len(), 450);
-        assert_eq!(
-            resolved.get(&(
-                "svc_1".to_string(),
-                "ghcr.io/acme/web".to_string(),
-                "latest".to_string(),
-                format!("sha256:{:064x}", 0)
-            )),
-            Some(&std::collections::BTreeSet::from(["1.1.0".to_string()]))
-        );
-        assert_eq!(
-            resolved.get(&(
-                "svc_1".to_string(),
-                "ghcr.io/acme/web".to_string(),
-                "latest".to_string(),
-                format!("sha256:{:064x}", 449)
-            )),
-            Some(&std::collections::BTreeSet::from(["1.450.0".to_string()]))
-        );
-    }
-
-    #[tokio::test]
-    async fn list_stable_candidate_display_tags_keeps_repo_track_provenance_separate() {
-        let db = Db::open(Path::new(":memory:")).await.unwrap();
-        seed_service(&db, "svc_1", Some("sha256:seed")).await;
-
-        let digest = "sha256:shared".to_string();
-        let mut web = pending("nvn_web", "svc_1", &digest);
-        web.image_ref = "ghcr.io/acme/web".to_string();
-        web.image_tag = "latest".to_string();
-        web.candidate_display_tag = "1.16.2".to_string();
-        db.reserve_new_version_notification(&web).await.unwrap();
-
-        db.sync_stack_from_compose(
-            "stack_1",
-            &["/tmp/demo.yml".to_string()],
-            &[ComposeServiceSpec {
-                name: "web".to_string(),
-                image_ref: "ghcr.io/acme/worker".to_string(),
-                image_tag: "stable".to_string(),
-                homepage: None,
-                update_guard: None,
-                backup_bind_paths: Vec::new(),
-                backup_volume_names: Vec::new(),
-            }],
-            "2026-03-09T00:02:00Z",
-        )
-        .await
-        .unwrap();
-
-        let mut worker = pending("nvn_worker", "svc_1", &digest);
-        worker.image_ref = "ghcr.io/acme/worker".to_string();
-        worker.image_tag = "stable".to_string();
-        worker.candidate_display_tag = "2.0.0".to_string();
-        db.reserve_new_version_notification(&worker).await.unwrap();
-
-        let mut unrequested = pending("nvn_unrequested", "svc_1", "sha256:unrequested");
-        unrequested.image_ref = "ghcr.io/acme/unrequested".to_string();
-        unrequested.image_tag = "edge".to_string();
-        unrequested.candidate_display_tag = "3.0.0".to_string();
-        db.reserve_new_version_notification(&unrequested)
-            .await
-            .unwrap();
-
-        let resolved = db
-            .list_stable_candidate_display_tags_for_notification_targets(&[
-                (
-                    "svc_1".to_string(),
-                    "ghcr.io/acme/web".to_string(),
-                    "latest".to_string(),
-                    digest.clone(),
-                ),
-                (
-                    "svc_1".to_string(),
-                    "ghcr.io/acme/worker".to_string(),
-                    "stable".to_string(),
-                    digest.clone(),
-                ),
-            ])
-            .await
-            .unwrap();
-
-        assert_eq!(resolved.len(), 2);
-        assert_eq!(
-            resolved.get(&(
-                "svc_1".to_string(),
-                "ghcr.io/acme/web".to_string(),
-                "latest".to_string(),
-                digest.clone()
-            )),
-            Some(&std::collections::BTreeSet::from(["1.16.2".to_string()]))
-        );
-        assert_eq!(
-            resolved.get(&(
-                "svc_1".to_string(),
-                "ghcr.io/acme/worker".to_string(),
-                "stable".to_string(),
-                digest
-            )),
-            Some(&std::collections::BTreeSet::from(["2.0.0".to_string()]))
-        );
-    }
-}
+#[path = "new_version_notifications_tests.rs"]
+mod tests;

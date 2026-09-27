@@ -5,10 +5,12 @@ use std::collections::HashSet;
 use crate::service_check;
 mod lifecycle;
 mod lifecycle_snapshot;
+mod notification_replay;
 mod progress_persistence;
 mod transitions;
 pub(crate) use lifecycle::*;
 pub(crate) use lifecycle_snapshot::LifecycleSnapshotCoordinator;
+pub(crate) use notification_replay::replay_pending_check_notifications;
 pub(crate) use progress_persistence::*;
 pub(crate) use transitions::*;
 
@@ -651,6 +653,7 @@ pub(super) async fn maybe_notify_check_new_versions(
     reason: &str,
     finished_at: &str,
     summary: &serde_json::Value,
+    event_enabled: bool,
 ) -> anyhow::Result<()> {
     let Some(notification_reason) = new_version_notification_reason(reason, summary) else {
         return Ok(());
@@ -675,13 +678,14 @@ pub(super) async fn maybe_notify_check_new_versions(
         .and_then(|v| v.as_u64())
         .unwrap_or_default()
         .min(u32::MAX as u64) as u32;
-    notify::notify_new_versions_discovered(
+    notify::notify_new_versions_discovered_for_replay(
         state.as_ref(),
         job_id,
         notification_reason,
         finished_at,
         services_checked,
         &discovered_services,
+        event_enabled,
     )
     .await
 }
@@ -700,7 +704,15 @@ pub(crate) async fn complete_check_job(
             let summary = merge_job_summary(summary, extra_summary.as_ref());
             if let Err(e) = state
                 .db
-                .finish_job(job_id, "success", finished_at, &summary)
+                .finish_job_with_archive_and_settlement_and_notification(
+                    job_id,
+                    "success",
+                    finished_at,
+                    &summary,
+                    None,
+                    None,
+                    None,
+                )
                 .await
             {
                 tracing::error!(job_id = %job_id, error = %e, "failed to finish check job");
@@ -728,20 +740,39 @@ pub(crate) async fn complete_check_job(
                         "failed to evaluate auto update policies"
                     );
                 }
-                if let Err(e) = maybe_notify_check_new_versions(
-                    state,
-                    job_id,
-                    reason,
-                    finished_at,
-                    &notify_summary,
-                )
-                .await
-                {
-                    tracing::warn!(
-                        job_id = %job_id,
-                        error = %e,
-                        "failed to send discovered-version notification"
-                    );
+                match state.db.check_notification_event_enabled(job_id).await {
+                    Ok(Some(Some(event_enabled))) => {
+                        notification_replay::dispatch_check_notification(
+                            state,
+                            job_id,
+                            reason,
+                            finished_at,
+                            &notify_summary,
+                            event_enabled,
+                        )
+                        .await;
+                    }
+                    Ok(Some(None)) => {
+                        // Legacy outbox rows predate the persisted decision;
+                        // preserve their original replay behavior instead of dropping them.
+                        notification_replay::dispatch_check_notification(
+                            state,
+                            job_id,
+                            reason,
+                            finished_at,
+                            &notify_summary,
+                            true,
+                        )
+                        .await;
+                    }
+                    Ok(None) => {}
+                    Err(e) => {
+                        tracing::warn!(
+                            job_id = %job_id,
+                            error = %e,
+                            "failed to read check notification event decision"
+                        );
+                    }
                 }
             }
         }
