@@ -65,10 +65,13 @@ def workflow_runs_for_pr(
     result: list[dict[str, Any]] = []
     page = 1
     while True:
+        query = ["per_page=100", f"page={page}"]
+        if source_sha is not None:
+            query.append(f"head_sha={urllib.parse.quote(source_sha, safe='')}")
         runs = api_json(
             api_root,
             token,
-            f"/repos/{owner}/{name}/actions/workflows/{workflow_file}/runs?per_page=100&page={page}",
+            f"/repos/{owner}/{name}/actions/workflows/{workflow_file}/runs?{'&'.join(query)}",
         ).get("workflow_runs", [])
         result.extend(
             run for run in runs
@@ -788,7 +791,14 @@ def load_github_completion(
     version_file = version_at_commit(api_root, token, repository, head_sha)
     check_sha = source_check_sha if mode == "version-only-release-pr" else source_sha
     check_pr_number = pr_number
-    ci_runs = workflow_runs_for_pr(api_root, token, repository, "ci-pr.yml", check_pr_number)
+    ci_runs = workflow_runs_for_pr(
+        api_root,
+        token,
+        repository,
+        "ci-pr.yml",
+        check_pr_number,
+        source_sha=check_sha,
+    )
     gate_sha = source_check_sha if mode == "version-only-release-pr" else source_sha
     label_runs = workflow_runs_for_pr(
         api_root,
@@ -796,7 +806,7 @@ def load_github_completion(
         repository,
         "label-gate.yml",
         pr_number,
-        gate_sha,
+        source_sha=gate_sha,
         required_event="pull_request_target",
     )
     ci_run = next((run for run in ci_runs if run.get("head_sha") == check_sha), None)
