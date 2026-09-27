@@ -379,50 +379,6 @@ fn candidate_digest_is_valid(candidate_digest: &str) -> bool {
     crate::snapshot_worker::normalize_digest_identity(candidate_digest).is_some()
 }
 
-fn candidate_settlement_state_with_version(
-    candidate: &notify::NewVersionDiscoveredService,
-    digest_bound_version: Option<&str>,
-) -> (&'static str, Option<String>, Option<String>) {
-    if candidate.candidate_digest.trim().is_empty() {
-        return (
-            "unresolved",
-            None,
-            Some("missing_candidate_evidence".to_string()),
-        );
-    }
-    if !candidate_digest_is_valid(&candidate.candidate_digest) {
-        return (
-            "unresolved",
-            None,
-            Some("invalid_candidate_digest".to_string()),
-        );
-    }
-    let resolved_version = resolved_candidate_version(candidate).or_else(|| {
-        digest_bound_version
-            .filter(|version| crate::ignore::is_strict_semver(version))
-            .map(str::to_string)
-    });
-    if let Some(version) = resolved_version {
-        return (
-            "ready",
-            Some(version),
-            Some("digest_bound_version".to_string()),
-        );
-    }
-    if candidate.candidate_tag.trim().is_empty() {
-        return (
-            "unresolved",
-            None,
-            Some("missing_candidate_evidence".to_string()),
-        );
-    }
-    (
-        "awaiting_inference",
-        None,
-        Some("version_inference_pending".to_string()),
-    )
-}
-
 fn update_request_from_job(job: &api::types::JobListItem) -> anyhow::Result<TriggerUpdateRequest> {
     let mode = job
         .summary_json
