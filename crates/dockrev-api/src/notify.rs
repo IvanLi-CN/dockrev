@@ -446,25 +446,9 @@ pub async fn notify_ghcr_webhook_anomaly(
     event: GhcrWebhookAnomalyEvent<'_>,
     event_enabled_override: Option<bool>,
 ) -> anyhow::Result<()> {
-    let event_enabled = match event_enabled_override {
-        Some(enabled) => enabled,
-        None => {
-            state
-                .db
-                .get_notification_settings()
-                .await?
-                .event_ghcr_webhook_anomaly_enabled
-        }
-    };
-    if !event_enabled {
-        if event_enabled_override.is_none() {
-            state
-                .db
-                .mark_all_notification_anomaly_states_notified()
-                .await?;
-        }
-        return Ok(());
-    }
+    // The event decision is persisted during reconciliation; keep this
+    // argument for callers that still pass the decision explicitly.
+    let _ = event_enabled_override;
     let pending_occurrences = state
         .db
         .list_all_pending_notification_anomaly_occurrences()
@@ -472,6 +456,9 @@ pub async fn notify_ghcr_webhook_anomaly(
     if pending_occurrences.is_empty() {
         return Ok(());
     }
+    // A pending occurrence represents an already accepted event decision. The
+    // current toggle only suppresses new occurrences; it must not discard or
+    // strand an occurrence accepted while the toggle was enabled.
     let mut groups =
         std::collections::BTreeMap::<String, Vec<crate::db::NotificationAnomalyOccurrence>>::new();
     for occurrence in pending_occurrences {

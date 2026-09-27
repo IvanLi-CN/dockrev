@@ -232,6 +232,41 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn disabling_anomaly_notifications_preserves_accepted_pending_occurrences() {
+        let db = Db::open(std::path::Path::new(":memory:")).await.unwrap();
+        let scope = vec!["acme/api".to_string()];
+
+        db.reconcile_notification_anomaly_states_with_enabled(
+            &scope,
+            &[observation("missing")],
+            "2026-09-26T00:00:00Z",
+            Some(true),
+            None,
+            "success",
+        )
+        .await
+        .unwrap();
+        db.reconcile_notification_anomaly_states_with_enabled(
+            &scope,
+            &[observation("missing")],
+            "2026-09-26T00:01:00Z",
+            Some(false),
+            None,
+            "success",
+        )
+        .await
+        .unwrap();
+
+        let pending = db
+            .list_all_pending_notification_anomaly_occurrences()
+            .await
+            .unwrap();
+        assert_eq!(pending.len(), 1);
+        assert_eq!(pending[0].observation.state, "missing");
+        assert_eq!(pending[0].observation.occurrence_count, 1);
+    }
+
+    #[tokio::test]
     async fn new_anomaly_in_a_later_audit_gets_a_new_batch() {
         let db = Db::open(std::path::Path::new(":memory:")).await.unwrap();
         let first = db
@@ -658,22 +693,6 @@ impl Db {
                     .map(|item| format!("{}/{}", item.owner, item.repo)),
             );
 
-            if !notification_enabled {
-                for key in &requested_keys {
-                    let Some((owner, repo)) = key.split_once('/') else {
-                        continue;
-                    };
-                    tx.execute(
-                        "UPDATE notification_anomaly_occurrences SET notification_pending = 0, sent_channels_json = '[]', delivery_claim_token = NULL, delivery_claim_expires_at = NULL WHERE owner = ?1 AND repo = ?2 AND notification_pending = 1",
-                        params![owner, repo],
-                    )?;
-                    tx.execute(
-                        "UPDATE notification_anomaly_states SET notification_pending = 0, notification_batch_id = NULL, notification_sent_channels_json = '[]' WHERE owner = ?1 AND repo = ?2",
-                        params![owner, repo],
-                    )?;
-                }
-            }
-
             for observation in &observations {
                 let previous = tx
                     .query_row(
@@ -753,7 +772,7 @@ impl Db {
                             )?;
                         }
                         tx.execute(
-                            "UPDATE notification_anomaly_states SET state = ?3, active = 1, occurrence_count = ?4, last_error = ?5, last_seen_at = ?6, notification_pending = CASE WHEN ?8 != 0 THEN EXISTS(SELECT 1 FROM notification_anomaly_occurrences WHERE owner = ?1 AND repo = ?2 AND notification_pending = 1) ELSE 0 END, notification_batch_id = CASE WHEN ?8 != 0 THEN ?7 ELSE NULL END WHERE owner = ?1 AND repo = ?2 AND last_seen_at <= ?6",
+                            "UPDATE notification_anomaly_states SET state = ?3, active = 1, occurrence_count = ?4, last_error = ?5, last_seen_at = ?6, notification_pending = EXISTS(SELECT 1 FROM notification_anomaly_occurrences WHERE owner = ?1 AND repo = ?2 AND notification_pending = 1), notification_batch_id = (SELECT batch_id FROM notification_anomaly_occurrences WHERE owner = ?1 AND repo = ?2 AND notification_pending = 1 ORDER BY created_at DESC, id DESC LIMIT 1) WHERE owner = ?1 AND repo = ?2 AND last_seen_at <= ?6",
                             params![
                                 observation.owner,
                                 observation.repo,
@@ -761,8 +780,6 @@ impl Db {
                                 occurrence_count,
                                 observation.last_error,
                                 now,
-                                occurrence_batch_id,
-                                notification_pending,
                             ],
                         )?;
                         (occurrence_count, occurrence_batch_id)
@@ -820,8 +837,8 @@ impl Db {
                         }
                     }
                     tx.execute(
-                        "UPDATE notification_anomaly_states SET active = 0, last_seen_at = ?3, notification_pending = CASE WHEN ?4 != 0 THEN EXISTS(SELECT 1 FROM notification_anomaly_occurrences WHERE owner = ?1 AND repo = ?2 AND notification_pending = 1) ELSE 0 END, notification_batch_id = CASE WHEN ?4 != 0 THEN notification_batch_id ELSE NULL END WHERE owner = ?1 AND repo = ?2 AND last_seen_at <= ?3",
-                        params![owner, repo, now, notification_pending],
+                        "UPDATE notification_anomaly_states SET active = 0, last_seen_at = ?3, notification_pending = EXISTS(SELECT 1 FROM notification_anomaly_occurrences WHERE owner = ?1 AND repo = ?2 AND notification_pending = 1), notification_batch_id = CASE WHEN EXISTS(SELECT 1 FROM notification_anomaly_occurrences WHERE owner = ?1 AND repo = ?2 AND notification_pending = 1) THEN notification_batch_id ELSE NULL END WHERE owner = ?1 AND repo = ?2 AND last_seen_at <= ?3",
+                        params![owner, repo, now],
                     )?;
                 }
             }
@@ -876,24 +893,6 @@ impl Db {
         })
         .await
         .context("mark notification anomaly states notified")
-    }
-
-    pub(crate) async fn mark_all_notification_anomaly_states_notified(&self) -> anyhow::Result<()> {
-        self.call(|conn| {
-            let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
-            tx.execute(
-                "UPDATE notification_anomaly_occurrences SET notification_pending = 0, sent_channels_json = '[]', delivery_claim_token = NULL, delivery_claim_expires_at = NULL WHERE notification_pending = 1",
-                [],
-            )?;
-            tx.execute(
-                "UPDATE notification_anomaly_states SET notification_pending = 0, notification_batch_id = NULL, notification_sent_channels_json = '[]'",
-                [],
-            )?;
-            tx.commit()?;
-            Ok(())
-        })
-        .await
-        .context("mark all notification anomaly states notified")
     }
 
     pub(crate) async fn mark_notification_anomaly_occurrences_item_persisted(
