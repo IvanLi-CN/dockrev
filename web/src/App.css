@@ -1,4 +1,5 @@
 .appShell {
+  --app-shell-topbar-height: 68px;
   height: 100%;
   min-height: 100vh;
   min-height: 100dvh;
@@ -132,7 +133,7 @@
 
 .notificationDrawer {
   position: fixed;
-  top: 68px;
+  top: var(--app-shell-topbar-height);
   right: 20px;
   z-index: 30;
   display: flex;
@@ -2041,6 +2042,7 @@ html[data-theme="light"] .brandLogoForLight {
 
 @media (max-width: 960px) {
   .appShell {
+    --app-shell-topbar-height: 66px;
     grid-template-columns: minmax(0, 1fr);
     grid-template-areas: "top" "main";
   }
@@ -2066,10 +2068,14 @@ html[data-theme="light"] .brandLogoForLight {
   }
 
   .notificationDrawer {
-    top: 60px;
+    top: var(--app-shell-topbar-height);
     right: 12px;
     width: calc(100vw - 24px);
-    max-height: calc(100dvh - 72px);
+    max-height: calc(100dvh - var(--app-shell-topbar-height) - 12px);
+  }
+
+  .appShellWithDetailSidebar {
+    --app-shell-topbar-height: 56px;
   }
 }
 

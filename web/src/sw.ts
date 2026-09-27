@@ -96,17 +96,22 @@ async function authoritativePushUnreadCount(data: PushNotificationData): Promise
 
 async function waitForPushBadgeClaim(client: WindowClient, notificationId: string): Promise<boolean> {
   if (typeof MessageChannel === 'undefined') return false
-  const channel = new MessageChannel()
-  const claimed = await waitForServiceWorkerAck(
-    (receive) => {
-      channel.port1.onmessage = (message) => receive(message.data)
-      client.postMessage({ type: PUSH_MESSAGE, notificationId }, [channel.port2])
-    },
-    isPushBadgeAcknowledged,
-    1000,
-  )
-  channel.port1.close()
-  return claimed
+  let channel: MessageChannel | null = null
+  try {
+    channel = new MessageChannel()
+    return await waitForServiceWorkerAck(
+      (receive) => {
+        channel!.port1.onmessage = (message) => receive(message.data)
+        client.postMessage({ type: PUSH_MESSAGE, notificationId }, [channel!.port2])
+      },
+      isPushBadgeAcknowledged,
+      1000,
+    )
+  } catch {
+    return false
+  } finally {
+    channel?.port1.close()
+  }
 }
 
 async function applyPushBadge(data: PushNotificationData): Promise<void> {
@@ -181,34 +186,45 @@ self.addEventListener('push', (event) => {
 
 async function waitForNotificationClickAck(client: WindowClient, notificationId: string, url: string): Promise<boolean> {
   if (typeof MessageChannel === 'undefined') return false
-  const channel = new MessageChannel()
+  let channel: MessageChannel | null = null
   const requestId = `notification-click-${Date.now()}-${Math.random()}`
-  const confirmed = await waitForServiceWorkerAck(
-    (receive) => {
-      channel.port1.onmessage = (message) => receive(message.data)
-      client.postMessage(
-        { type: 'DOCKREV_NOTIFICATION_CLICK', notificationId, url, requestId },
-        [channel.port2],
-      )
-    },
-    isNotificationClickAcknowledged,
-    2500,
-  )
-  channel.port1.close()
-  if (!confirmed) {
-    const cancelChannel = new MessageChannel()
-    await waitForServiceWorkerAck(
+  let confirmed = false
+  try {
+    channel = new MessageChannel()
+    confirmed = await waitForServiceWorkerAck(
       (receive) => {
-        cancelChannel.port1.onmessage = (message) => receive(message.data)
+        channel!.port1.onmessage = (message) => receive(message.data)
         client.postMessage(
-          { type: CLICK_CANCEL, requestId },
-          [cancelChannel.port2],
+          { type: 'DOCKREV_NOTIFICATION_CLICK', notificationId, url, requestId },
+          [channel!.port2],
         )
       },
-      isNotificationClickCancelAcknowledged,
-      250,
+      isNotificationClickAcknowledged,
+      2500,
     )
-    cancelChannel.port1.close()
+  } catch {
+    confirmed = false
+  } finally {
+    channel?.port1.close()
+  }
+  if (!confirmed) {
+    try {
+      const cancelChannel = new MessageChannel()
+      await waitForServiceWorkerAck(
+        (receive) => {
+          cancelChannel.port1.onmessage = (message) => receive(message.data)
+          client.postMessage(
+            { type: CLICK_CANCEL, requestId },
+            [cancelChannel.port2],
+          )
+        },
+        isNotificationClickCancelAcknowledged,
+        250,
+      )
+      cancelChannel.port1.close()
+    } catch {
+      // A restricted MessageChannel already caused the fallback path; there is no acknowledgement to cancel.
+    }
   }
   return confirmed
 }

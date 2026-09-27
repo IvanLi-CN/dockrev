@@ -852,6 +852,92 @@ INSERT INTO new_version_notifications (
     let _ = std::fs::remove_file(db_path.with_extension("sqlite3-shm"));
 }
 
+#[test]
+fn anomaly_occurrence_migration_backfills_pending_legacy_states() {
+    let mut conn = rusqlite::Connection::open_in_memory().unwrap();
+    conn.execute_batch(
+        r#"
+CREATE TABLE schema_migrations (id TEXT PRIMARY KEY NOT NULL, applied_at TEXT NOT NULL);
+CREATE TABLE notification_anomaly_states (
+  owner TEXT NOT NULL,
+  repo TEXT NOT NULL,
+  state TEXT NOT NULL,
+  active INTEGER NOT NULL,
+  occurrence_count INTEGER NOT NULL,
+  last_error TEXT,
+  last_seen_at TEXT NOT NULL,
+  notification_pending INTEGER NOT NULL DEFAULT 0,
+  notification_batch_id TEXT,
+  notification_sent_channels_json TEXT NOT NULL DEFAULT '[]',
+  PRIMARY KEY (owner, repo)
+);
+INSERT INTO notification_anomaly_states (
+  owner, repo, state, active, occurrence_count, last_error, last_seen_at,
+  notification_pending, notification_batch_id, notification_sent_channels_json
+) VALUES
+  ('acme', 'api', 'timeout', 1, 3, 'upstream timeout', '2026-04-30T00:00:00Z', 1, 'legacy-batch', '["webhook"]'),
+  ('acme', 'web', 'rate_limit', 1, 2, 'rate limited', '2026-04-30T00:01:00Z', 1, NULL, '[]'),
+  ('acme', 'worker', 'timeout', 0, 1, NULL, '2026-04-30T00:02:00Z', 0, NULL, '[]');
+"#,
+    )
+    .unwrap();
+
+    super::schema_notification_inbox::apply_migration_0033_add_notification_anomaly_occurrences(
+        &mut conn,
+    )
+    .unwrap();
+
+    let rows = conn
+        .prepare(
+            "SELECT owner, repo, state, last_error, occurrence_count, batch_id, notification_pending, sent_channels_json, created_at FROM notification_anomaly_occurrences ORDER BY repo",
+        )
+        .unwrap()
+        .query_map([], |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, String>(2)?,
+                row.get::<_, Option<String>>(3)?,
+                row.get::<_, i64>(4)?,
+                row.get::<_, String>(5)?,
+                row.get::<_, i64>(6)?,
+                row.get::<_, String>(7)?,
+                row.get::<_, String>(8)?,
+            ))
+        })
+        .unwrap()
+        .collect::<Result<Vec<_>, _>>()
+        .unwrap();
+
+    assert_eq!(
+        rows,
+        vec![
+            (
+                "acme".to_string(),
+                "api".to_string(),
+                "timeout".to_string(),
+                Some("upstream timeout".to_string()),
+                3,
+                "legacy-batch".to_string(),
+                1,
+                "[\"webhook\"]".to_string(),
+                "2026-04-30T00:00:00Z".to_string(),
+            ),
+            (
+                "acme".to_string(),
+                "web".to_string(),
+                "rate_limit".to_string(),
+                Some("rate limited".to_string()),
+                2,
+                "migration-0033:acme/web".to_string(),
+                1,
+                "[]".to_string(),
+                "2026-04-30T00:01:00Z".to_string(),
+            ),
+        ]
+    );
+}
+
 #[tokio::test]
 async fn hydration_migration_survives_equivalent_legacy_candidate_rows() {
     let current_digest = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";

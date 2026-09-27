@@ -181,6 +181,43 @@ CREATE INDEX IF NOT EXISTS idx_notification_anomaly_occurrences_pending
   ON notification_anomaly_occurrences (notification_pending, owner, repo, created_at, id);
 CREATE INDEX IF NOT EXISTS idx_notification_anomaly_occurrences_item
   ON notification_anomaly_occurrences (notification_item_id);
+
+INSERT INTO notification_anomaly_occurrences (
+  id,
+  owner,
+  repo,
+  state,
+  last_error,
+  occurrence_count,
+  batch_id,
+  notification_pending,
+  notification_item_id,
+  sent_channels_json,
+  created_at
+)
+SELECT
+  lower(hex(randomblob(16))),
+  state.owner,
+  state.repo,
+  state.state,
+  state.last_error,
+  state.occurrence_count,
+  COALESCE(state.notification_batch_id, 'migration-0033:' || state.owner || '/' || state.repo),
+  1,
+  NULL,
+  state.notification_sent_channels_json,
+  state.last_seen_at
+FROM notification_anomaly_states state
+WHERE state.notification_pending = 1
+  AND NOT EXISTS (
+    SELECT 1
+    FROM notification_anomaly_occurrences occurrence
+    WHERE occurrence.owner = state.owner
+      AND occurrence.repo = state.repo
+      AND occurrence.state = state.state
+      AND occurrence.occurrence_count = state.occurrence_count
+      AND occurrence.notification_pending = 1
+  );
 "#,
     )?;
     record_migration_tx(&tx, id)?;
