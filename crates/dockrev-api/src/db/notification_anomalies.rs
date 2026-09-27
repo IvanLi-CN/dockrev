@@ -144,7 +144,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn pending_anomaly_batch_is_reused_when_audit_adds_another_repo() {
+    async fn new_anomaly_in_a_later_audit_gets_a_new_batch() {
         let db = Db::open(std::path::Path::new(":memory:")).await.unwrap();
         let first = db
             .reconcile_notification_anomaly_states(
@@ -204,7 +204,7 @@ mod tests {
             .unwrap();
 
         assert_eq!(first_batch.get("acme/api"), second_batch.get("acme/api"));
-        assert_eq!(second_batch.get("acme/api"), second_batch.get("acme/web"));
+        assert_ne!(first_batch.get("acme/api"), second_batch.get("acme/web"));
     }
 
     #[tokio::test]
@@ -497,15 +497,9 @@ impl Db {
         let now = now.to_string();
         self.call(move |conn| {
             let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
-            let reusable_batch_id = tx
-                .query_row(
-                    "SELECT batch_id FROM notification_anomaly_occurrences WHERE notification_pending = 1 ORDER BY created_at, id LIMIT 1",
-                    [],
-                    |row| row.get::<_, String>(0),
-                )
-                .optional()?;
-            let mut new_batch_id = None;
-            let mut changed_batch_id = None;
+            // One audit invocation owns one batch. Existing pending occurrences
+            // keep their original batch so retries do not mutate an earlier item.
+            let audit_batch_id = crate::ids::new_notification_id();
             let mut requested_keys = scope_keys.iter().cloned().collect::<BTreeSet<_>>();
             requested_keys.extend(
                 observations
@@ -533,11 +527,7 @@ impl Db {
 
                 let (occurrence_count, occurrence_batch_id) = match previous {
                     None => {
-                        let batch_id = reusable_batch_id.clone().unwrap_or_else(|| {
-                            new_batch_id
-                                .get_or_insert_with(crate::ids::new_notification_id)
-                                .clone()
-                        });
+                        let batch_id = audit_batch_id.clone();
                         insert_occurrence(
                             &tx,
                             &observation.owner,
@@ -565,23 +555,12 @@ impl Db {
                             previous_count
                         };
                         let occurrence_batch_id = if changed {
-                            changed_batch_id
-                                .get_or_insert_with(crate::ids::new_notification_id)
-                                .clone()
+                            audit_batch_id.clone()
                         } else if pending {
                             previous_batch_id
-                                .or_else(|| reusable_batch_id.clone())
-                                .unwrap_or_else(|| {
-                                    new_batch_id
-                                        .get_or_insert_with(crate::ids::new_notification_id)
-                                        .clone()
-                                })
+                                .unwrap_or_else(|| audit_batch_id.clone())
                         } else {
-                            previous_batch_id.unwrap_or_else(|| {
-                                new_batch_id
-                                    .get_or_insert_with(crate::ids::new_notification_id)
-                                    .clone()
-                            })
+                            previous_batch_id.unwrap_or_else(|| audit_batch_id.clone())
                         };
                         let pending_occurrence_exists = tx.query_row(
                             "SELECT EXISTS(SELECT 1 FROM notification_anomaly_occurrences WHERE owner = ?1 AND repo = ?2 AND state = ?3 AND occurrence_count = ?4 AND notification_pending = 1)",
@@ -649,9 +628,7 @@ impl Db {
                         )? != 0;
                         if pending && !pending_occurrence_exists {
                             let batch_id = batch_id.unwrap_or_else(|| {
-                                new_batch_id
-                                    .get_or_insert_with(crate::ids::new_notification_id)
-                                    .clone()
+                                audit_batch_id.clone()
                             });
                             insert_occurrence(
                                 &tx,

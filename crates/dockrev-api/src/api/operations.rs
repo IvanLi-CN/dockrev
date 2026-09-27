@@ -686,6 +686,52 @@ pub(super) async fn maybe_notify_check_new_versions(
     .await
 }
 
+pub(crate) async fn replay_pending_check_notifications(state: &Arc<AppState>) {
+    let pending = match state.db.list_pending_check_notification_dispatches().await {
+        Ok(items) => items,
+        Err(error) => {
+            tracing::warn!(error = %error, "failed to load pending check notification dispatches");
+            return;
+        }
+    };
+
+    for dispatch in pending {
+        match maybe_notify_check_new_versions(
+            state,
+            &dispatch.job_id,
+            &dispatch.reason,
+            &dispatch.finished_at,
+            &dispatch.summary,
+        )
+        .await
+        {
+            Ok(()) => {
+                if let Err(error) = state
+                    .db
+                    .mark_check_notification_dispatch_processed(
+                        &dispatch.job_id,
+                        &dispatch.finished_at,
+                    )
+                    .await
+                {
+                    tracing::warn!(
+                        job_id = %dispatch.job_id,
+                        error = %error,
+                        "failed to mark check notification dispatch processed"
+                    );
+                }
+            }
+            Err(error) => {
+                tracing::warn!(
+                    job_id = %dispatch.job_id,
+                    error = %error,
+                    "failed to replay check notification dispatch"
+                );
+            }
+        }
+    }
+}
+
 pub(crate) async fn complete_check_job(
     state: &Arc<AppState>,
     job_id: &str,
@@ -736,7 +782,7 @@ pub(crate) async fn complete_check_job(
                         "failed to evaluate auto update policies"
                     );
                 }
-                if let Err(e) = maybe_notify_check_new_versions(
+                match maybe_notify_check_new_versions(
                     state,
                     job_id,
                     reason,
@@ -745,11 +791,26 @@ pub(crate) async fn complete_check_job(
                 )
                 .await
                 {
-                    tracing::warn!(
-                        job_id = %job_id,
-                        error = %e,
-                        "failed to send discovered-version notification"
-                    );
+                    Ok(()) => {
+                        if let Err(e) = state
+                            .db
+                            .mark_check_notification_dispatch_processed(job_id, finished_at)
+                            .await
+                        {
+                            tracing::warn!(
+                                job_id = %job_id,
+                                error = %e,
+                                "failed to mark check notification dispatch processed"
+                            );
+                        }
+                    }
+                    Err(e) => {
+                        tracing::warn!(
+                            job_id = %job_id,
+                            error = %e,
+                            "failed to send discovered-version notification"
+                        );
+                    }
                 }
             }
         }

@@ -146,7 +146,7 @@ pub(crate) async fn send_new_versions_with_badge(
                 settings.webpush_vapid_private_key.as_deref(),
                 settings.webpush_vapid_subject.as_deref(),
                 &web_push_payload,
-                &std::collections::BTreeSet::new(),
+                skip_channels,
             )
             .await
             .and_then(require_web_push_success)

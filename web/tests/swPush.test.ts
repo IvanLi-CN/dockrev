@@ -1,6 +1,7 @@
 import { describe, expect, test } from 'bun:test'
 import {
   PUSH_ACK,
+  PUSH_BADGE_FETCH_TIMEOUT_MS,
   PUSH_BADGE_TIMEOUT_MS,
   PUSH_MESSAGE,
   isPushBadgeAcknowledged,
@@ -23,5 +24,7 @@ describe('service worker push contract', () => {
     expect(isPushBadgeAcknowledged({ type: PUSH_ACK, ok: false })).toBe(false)
     expect(isPushBadgeAcknowledged({ type: 'other', ok: true })).toBe(false)
     expect(PUSH_BADGE_TIMEOUT_MS).toBeGreaterThan(0)
+    expect(PUSH_BADGE_FETCH_TIMEOUT_MS).toBeGreaterThan(0)
+    expect(PUSH_BADGE_FETCH_TIMEOUT_MS).toBeLessThan(PUSH_BADGE_TIMEOUT_MS)
   })
 })

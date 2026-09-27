@@ -285,6 +285,50 @@ async fn finishing_a_job_can_persist_its_notification_in_the_same_transaction() 
     );
 }
 
+#[tokio::test]
+async fn finishing_a_check_job_enqueues_notification_dispatch_in_the_same_transaction() {
+    let db = Db::open(Path::new(":memory:")).await.unwrap();
+    db.insert_job(job(
+        "check-notification-outbox",
+        JobType::Check,
+        "running",
+        "2026-09-27T00:00:00Z",
+    ))
+    .await
+    .unwrap();
+
+    db.finish_job(
+        "check-notification-outbox",
+        "success",
+        "2026-09-27T00:01:00Z",
+        &serde_json::json!({"newVersions": []}),
+    )
+    .await
+    .unwrap();
+
+    let pending = db
+        .list_pending_check_notification_dispatches()
+        .await
+        .unwrap();
+    assert_eq!(pending.len(), 1);
+    assert_eq!(pending[0].job_id, "check-notification-outbox");
+    assert_eq!(pending[0].reason, "test");
+    assert_eq!(pending[0].summary["newVersions"], serde_json::json!([]));
+
+    db.mark_check_notification_dispatch_processed(
+        "check-notification-outbox",
+        "2026-09-27T00:02:00Z",
+    )
+    .await
+    .unwrap();
+    assert!(
+        db.list_pending_check_notification_dispatches()
+            .await
+            .unwrap()
+            .is_empty()
+    );
+}
+
 #[test]
 fn slow_job_claim_warning_is_thresholded_and_rate_limited_by_type() {
     let warned_at_by_type = Mutex::new(BTreeMap::new());

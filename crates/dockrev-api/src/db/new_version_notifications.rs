@@ -6,6 +6,7 @@ const STATUS_FAILED: &str = "failed";
 const STATUS_SUPERSEDED: &str = "superseded";
 const ACTIVE_INDEX_NAME: &str = "idx_new_version_notifications_active_service_digest";
 const TARGET_BATCH_SIZE: usize = 200;
+const DELIVERY_CLAIM_TTL_MINUTES: i64 = 5;
 
 pub(crate) type NotificationTargetKey = (String, String, String, String);
 pub(super) type StableCandidateDisplayTags = std::collections::BTreeSet<String>;
@@ -247,6 +248,42 @@ fn normalize_candidate_digest(candidate_digest: Option<&str>) -> Option<String> 
     candidate_digest.and_then(crate::snapshot_worker::normalize_digest)
 }
 
+fn delivery_claim_expiry(now: &str) -> anyhow::Result<String> {
+    Ok(
+        (time::OffsetDateTime::parse(now, &time::format_description::well_known::Rfc3339)?
+            + time::Duration::minutes(DELIVERY_CLAIM_TTL_MINUTES))
+        .format(&time::format_description::well_known::Rfc3339)?,
+    )
+}
+
+fn try_claim_new_version_notification_tx(
+    tx: &rusqlite::Transaction<'_>,
+    notification_id: &str,
+    claim_token: &str,
+    claim_expires_at: &str,
+    now: &str,
+) -> rusqlite::Result<bool> {
+    Ok(tx.execute(
+        r#"
+UPDATE new_version_notifications
+SET delivery_claim_token = ?2, delivery_claim_expires_at = ?3
+WHERE id = ?1
+  AND status = ?4
+  AND (
+    delivery_claim_token IS NULL
+    OR delivery_claim_expires_at <= ?5
+  )
+"#,
+        params![
+            notification_id,
+            claim_token,
+            claim_expires_at,
+            STATUS_PENDING,
+            now
+        ],
+    )? > 0)
+}
+
 pub(super) fn reconcile_service_new_version_notifications_tx(
     tx: &rusqlite::Transaction<'_>,
     service_id: &str,
@@ -337,16 +374,26 @@ impl Db {
         &self,
         pendings: &[NewVersionNotificationPending],
         draft: &super::NotificationItemDraft,
-    ) -> anyhow::Result<Option<(Vec<(String, String)>, String, u64)>> {
+    ) -> anyhow::Result<Option<(Vec<(String, String, String)>, String, u64)>> {
         let pendings = pendings.to_vec();
         let draft = draft.clone();
+        let claim_token = crate::ids::new_notification_id();
+        let claim_expires_at = delivery_claim_expiry(&draft.created_at)?;
         self.call(move |conn| {
             let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
             let mut reservations = Vec::new();
             for pending in &pendings {
                 match reserve_new_version_notification_tx(&tx, pending)? {
                     NewVersionNotificationReserveResult::Reserved(id) => {
-                        reservations.push((id, pending.id.clone()));
+                        if try_claim_new_version_notification_tx(
+                            &tx,
+                            &id,
+                            &claim_token,
+                            &claim_expires_at,
+                            &draft.created_at,
+                        )? {
+                            reservations.push((id, pending.id.clone(), claim_token.clone()));
+                        }
                     }
                     NewVersionNotificationReserveResult::AlreadyPending(id) => {
                         let notification_item_identity = tx
@@ -359,8 +406,15 @@ impl Db {
                         if notification_item_identity
                             .as_deref()
                             .is_none_or(|identity| identity == draft.identity_key)
+                            && try_claim_new_version_notification_tx(
+                                &tx,
+                                &id,
+                                &claim_token,
+                                &claim_expires_at,
+                                &draft.created_at,
+                            )?
                         {
-                            reservations.push((id, pending.id.clone()));
+                            reservations.push((id, pending.id.clone(), claim_token.clone()));
                         }
                     }
                     NewVersionNotificationReserveResult::SkippedDuplicate => {}
@@ -401,7 +455,7 @@ ON CONFLICT(identity_key) DO NOTHING
             )?;
             let reserved_ids = reservations
                 .iter()
-                .map(|(record_id, _)| record_id.clone())
+                .map(|(record_id, _, _)| record_id.clone())
                 .collect::<Vec<_>>();
             let placeholders = std::iter::repeat_n("?", reserved_ids.len())
                 .collect::<Vec<_>>()
@@ -431,7 +485,7 @@ ON CONFLICT(identity_key) DO NOTHING
                 return Ok(None);
             }
             let mut stmt = conn.prepare(
-            "SELECT job_id FROM new_version_notifications WHERE service_id = ?1 AND candidate_digest = ?2 AND status IN (?3, ?4) ORDER BY created_at ASC, id ASC LIMIT 1",
+                    "SELECT job_id FROM new_version_notifications WHERE service_id = ?1 AND candidate_digest = ?2 AND status IN (?3, ?4, ?5) ORDER BY created_at ASC, id ASC LIMIT 1",
             )?;
             let mut batch_job_id = None;
             for (service_id, candidate_digest) in candidates {
@@ -439,7 +493,7 @@ ON CONFLICT(identity_key) DO NOTHING
                     .ok_or_else(|| rusqlite::Error::InvalidParameterName("candidate_digest".into()))?;
                 let Some(job_id) = stmt
                     .query_row(
-                        params![service_id, digest, STATUS_PENDING, STATUS_SENT],
+                        params![service_id, digest, STATUS_PENDING, STATUS_SENT, STATUS_FAILED],
                         |row| row.get::<_, String>(0),
                     )
                     .optional()?
@@ -460,6 +514,7 @@ ON CONFLICT(identity_key) DO NOTHING
         .context("find new version notification batch job id")
     }
 
+    #[allow(dead_code)]
     pub async fn finalize_new_version_notification(
         &self,
         notification_id: &str,
@@ -467,10 +522,29 @@ ON CONFLICT(identity_key) DO NOTHING
         last_error: Option<&str>,
         now: &str,
     ) -> anyhow::Result<bool> {
+        self.finalize_new_version_notification_with_claim(
+            notification_id,
+            sent_channels,
+            last_error,
+            now,
+            None,
+        )
+        .await
+    }
+
+    pub async fn finalize_new_version_notification_with_claim(
+        &self,
+        notification_id: &str,
+        sent_channels: &[String],
+        last_error: Option<&str>,
+        now: &str,
+        claim_token: Option<&str>,
+    ) -> anyhow::Result<bool> {
         let notification_id = notification_id.to_string();
         let sent_channels = sent_channels.to_vec();
         let last_error = last_error.map(ToString::to_string);
         let now = now.to_string();
+        let claim_token = claim_token.map(ToString::to_string);
         self.call(move |conn| {
             let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
             let service_digest = super::canonical_digest_sql("s.candidate_digest");
@@ -534,8 +608,11 @@ SET
   sent_channels_json = ?3,
   sent_at = ?4,
   superseded_at = ?5,
-  last_error = ?6
+  last_error = ?6,
+  delivery_claim_token = NULL,
+  delivery_claim_expires_at = NULL
 WHERE id = ?1 AND status IN (?7, ?8)
+  AND (?9 IS NULL OR delivery_claim_token = ?9)
 "#,
                 params![
                     notification_id,
@@ -546,6 +623,7 @@ WHERE id = ?1 AND status IN (?7, ?8)
                     last_error,
                     STATUS_PENDING,
                     STATUS_SUPERSEDED,
+                    claim_token,
                 ],
             )?;
             tx.commit()?;
@@ -907,6 +985,34 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn concurrent_item_reservation_allows_only_one_delivery_claim() {
+        let db = Db::open(Path::new(":memory:")).await.unwrap();
+        let first = pending("nvn_1", "svc_1", "sha256:new");
+        let second = pending("nvn_2", "svc_1", "sha256:new");
+        let draft = crate::db::NotificationItemDraft {
+            id: "item_1".to_string(),
+            kind: "new_version_discovered".to_string(),
+            identity_key: "new_version_discovered:chk_1".to_string(),
+            title: "发现新版本".to_string(),
+            body: "body".to_string(),
+            target_url: "/queue/chk_1".to_string(),
+            source_job_id: Some("chk_1".to_string()),
+            created_at: "2026-03-09T00:00:00Z".to_string(),
+        };
+        let db_a = db.clone();
+        let db_b = db.clone();
+        let first_items = vec![first];
+        let second_items = vec![second];
+        let (first_result, second_result) = tokio::join!(
+            db_a.reserve_new_version_notifications_with_item(&first_items, &draft),
+            db_b.reserve_new_version_notifications_with_item(&second_items, &draft),
+        );
+
+        let results = [first_result.unwrap(), second_result.unwrap()];
+        assert_eq!(results.iter().filter(|result| result.is_some()).count(), 1);
+    }
+
+    #[tokio::test]
     async fn pending_reservation_with_item_is_retried_after_delivery_crash() {
         let db = Db::open(Path::new(":memory:")).await.unwrap();
         let first = pending("nvn_1", "svc_1", "sha256:new");
@@ -927,6 +1033,15 @@ mod tests {
             .await
             .unwrap()
             .unwrap();
+        db.call(|conn| {
+            conn.execute(
+                "UPDATE new_version_notifications SET delivery_claim_expires_at = '2026-03-09T00:00:00Z' WHERE id = 'nvn_1'",
+                [],
+            )?;
+            Ok(())
+        })
+        .await
+        .unwrap();
         let retry_result = db
             .reserve_new_version_notifications_with_item(&[second], &draft)
             .await
@@ -934,10 +1049,9 @@ mod tests {
             .unwrap();
 
         assert_eq!(first_result.0.len(), 1);
-        assert_eq!(
-            retry_result.0,
-            vec![("nvn_1".to_string(), "nvn_2".to_string())]
-        );
+        assert_eq!(retry_result.0.len(), 1);
+        assert_eq!(retry_result.0[0].0, "nvn_1");
+        assert_eq!(retry_result.0[0].1, "nvn_2");
         assert_eq!(first_result.1, retry_result.1);
     }
 
@@ -1010,6 +1124,65 @@ mod tests {
         assert_eq!(
             retried,
             NewVersionNotificationReserveResult::Reserved("nvn_2".to_string())
+        );
+    }
+
+    #[tokio::test]
+    async fn failed_record_reuses_its_batch_identity_for_retry() {
+        let db = Db::open(Path::new(":memory:")).await.unwrap();
+        seed_service(&db, "svc_1", Some("sha256:new")).await;
+        let first = pending("nvn_1", "svc_1", "sha256:new");
+        let mut second = pending("nvn_2", "svc_1", "sha256:new");
+        second.job_id = "chk_2".to_string();
+        let first_draft = crate::db::NotificationItemDraft {
+            id: "item_1".to_string(),
+            kind: "new_version_discovered".to_string(),
+            identity_key: "new_version_discovered:chk_1".to_string(),
+            title: "发现新版本".to_string(),
+            body: "body".to_string(),
+            target_url: "/queue/chk_1".to_string(),
+            source_job_id: Some("chk_1".to_string()),
+            created_at: "2026-03-09T00:00:00Z".to_string(),
+        };
+
+        db.reserve_new_version_notifications_with_item(&[first], &first_draft)
+            .await
+            .unwrap()
+            .unwrap();
+        db.finalize_new_version_notification(
+            "nvn_1",
+            &[],
+            Some("delivery failed"),
+            "2026-03-09T00:01:00Z",
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(
+            db.find_new_version_notification_batch_job_id(&[(
+                "svc_1".to_string(),
+                "sha256:new".to_string()
+            )])
+            .await
+            .unwrap()
+            .as_deref(),
+            Some("chk_1")
+        );
+        let retry = db
+            .reserve_new_version_notifications_with_item(&[second], &first_draft)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(retry.0.len(), 1);
+        assert_eq!(retry.1, "item_1");
+        assert_eq!(retry.2, 1);
+        assert_eq!(
+            db.list_notification_items(50, None, "2026-03-09T00:02:00Z")
+                .await
+                .unwrap()
+                .items
+                .len(),
+            1
         );
     }
 

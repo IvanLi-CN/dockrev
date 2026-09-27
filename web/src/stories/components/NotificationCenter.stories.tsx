@@ -43,3 +43,23 @@ export const Mobile: Story = {
     viewport: { defaultViewport: 'dockrevMobile' },
   },
 }
+
+export const ZeroUnread: Story = {
+  render: renderCenter,
+  parameters: { dockrevApiScenario: 'notification-empty' },
+}
+
+export const SingleUnread: Story = {
+  render: renderCenter,
+  parameters: { dockrevApiScenario: 'notification-single' },
+}
+
+export const AllRead: Story = {
+  render: renderCenter,
+  parameters: { dockrevApiScenario: 'notification-all-read' },
+}
+
+export const Error: Story = {
+  render: renderCenter,
+  parameters: { dockrevApiScenario: 'notification-error' },
+}

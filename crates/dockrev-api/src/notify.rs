@@ -253,10 +253,14 @@ pub async fn notify_new_versions_discovered(
 
     let reserved = reservations
         .into_iter()
-        .filter_map(|(record_id, pending_id)| {
-            services_by_pending_id
-                .remove(&pending_id)
-                .map(|service| ReservedNewVersionNotification { record_id, service })
+        .filter_map(|(record_id, pending_id, claim_token)| {
+            services_by_pending_id.remove(&pending_id).map(|service| {
+                ReservedNewVersionNotification {
+                    record_id,
+                    claim_token,
+                    service,
+                }
+            })
         })
         .collect::<Vec<_>>();
 
@@ -278,11 +282,12 @@ pub async fn notify_new_versions_discovered(
         } else {
             state
                 .db
-                .finalize_new_version_notification(
+                .finalize_new_version_notification_with_claim(
                     &item.record_id,
                     &[],
                     None,
                     &dispatch_now_rfc3339,
+                    Some(&item.claim_token),
                 )
                 .await?;
         }
@@ -358,11 +363,12 @@ pub async fn notify_new_versions_discovered(
                     .unwrap_or_default();
                 let _ = state
                     .db
-                    .finalize_new_version_notification(
+                    .finalize_new_version_notification_with_claim(
                         &item.record_id,
                         &sent_channels,
                         Some(err_text.as_str()),
                         &dispatch_now_rfc3339,
+                        Some(&item.claim_token),
                     )
                     .await;
             }
@@ -388,11 +394,12 @@ pub async fn notify_new_versions_discovered(
         let sent_channels = sent_channels.into_iter().collect::<Vec<_>>();
         let _ = state
             .db
-            .finalize_new_version_notification(
+            .finalize_new_version_notification_with_claim(
                 &item.record_id,
                 &sent_channels,
                 last_error.as_deref(),
                 &dispatch_now_rfc3339,
+                Some(&item.claim_token),
             )
             .await?;
     }
@@ -761,6 +768,7 @@ fn should_send_channel(
 #[derive(Clone, Debug)]
 struct ReservedNewVersionNotification {
     record_id: String,
+    claim_token: String,
     service: NewVersionDiscoveredService,
 }
 

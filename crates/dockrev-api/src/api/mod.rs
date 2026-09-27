@@ -58,6 +58,8 @@ pub(crate) mod services;
 mod stacks;
 mod webhooks;
 
+pub(crate) use operations::replay_pending_check_notifications;
+
 use cleanup_routes::*;
 use discovery_routes::*;
 use github_packages::*;

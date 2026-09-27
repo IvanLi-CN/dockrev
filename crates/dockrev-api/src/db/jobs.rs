@@ -572,6 +572,12 @@ WHERE id IN (
                         &finished_at,
                         &summary_json,
                     )?;
+                    super::notification_outbox::enqueue_check_notification_tx(
+                        &tx,
+                        &job_id,
+                        &finished_at,
+                        &summary_json,
+                    )?;
                 }
                 if let Some(notification) = notification.as_ref() {
                     super::notification_items::insert_notification_item_tx(&tx, notification)?;

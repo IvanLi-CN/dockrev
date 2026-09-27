@@ -4,10 +4,41 @@ export function handleNotificationInboxRoutes(ctx: MockRouteContext): Response |
   const { method, nowIso, json, urlPath } = ctx
 
   if (method === 'GET' && urlPath === '/api/notifications/unread-count') {
+    if (ctx.scenario === 'notification-empty' || ctx.scenario === 'notification-all-read') {
+      return json({ unreadCount: 0 })
+    }
+    if (ctx.scenario === 'notification-error') {
+      return json({ message: '通知服务暂时不可用' }, { status: 503 })
+    }
+    if (ctx.scenario === 'notification-single') {
+      return json({ unreadCount: 1 })
+    }
     return json({ unreadCount: 3 })
   }
 
   if (method === 'GET' && urlPath === '/api/notifications/inbox') {
+    if (ctx.scenario === 'notification-error') {
+      return json({ message: '通知服务暂时不可用' }, { status: 503 })
+    }
+    if (ctx.scenario === 'notification-empty' || ctx.scenario === 'notification-all-read') {
+      return json({ items: [], nextCursor: null, unreadCount: 0 })
+    }
+    if (ctx.scenario === 'notification-single') {
+      return json({
+        items: [{
+          id: 'story-notification-single',
+          kind: 'job_finished',
+          title: '任务已成功',
+          body: '更新任务已完成，点击查看执行详情。',
+          url: '/queue/job_story_single',
+          sourceJobId: 'job_story_single',
+          createdAt: nowIso(-3 * 60_000),
+          readAt: null,
+        }],
+        nextCursor: null,
+        unreadCount: 1,
+      })
+    }
     return json({
       items: [
         {

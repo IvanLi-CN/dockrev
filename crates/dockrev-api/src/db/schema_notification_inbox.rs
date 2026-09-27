@@ -9,6 +9,8 @@ pub(super) fn apply_migrations(conn: &mut rusqlite::Connection) -> anyhow::Resul
     apply_migration_0031_add_new_version_notification_item(conn)?;
     apply_migration_0032_add_notification_anomaly_delivery(conn)?;
     apply_migration_0033_add_notification_anomaly_occurrences(conn)?;
+    apply_migration_0034_add_notification_dispatch_outbox(conn)?;
+    apply_migration_0035_add_new_version_delivery_claim(conn)?;
     Ok(())
 }
 
@@ -175,6 +177,54 @@ CREATE INDEX IF NOT EXISTS idx_notification_anomaly_occurrences_pending
   ON notification_anomaly_occurrences (notification_pending, owner, repo, created_at, id);
 CREATE INDEX IF NOT EXISTS idx_notification_anomaly_occurrences_item
   ON notification_anomaly_occurrences (notification_item_id);
+"#,
+    )?;
+    record_migration_tx(&tx, id)?;
+    tx.commit()?;
+    Ok(())
+}
+
+pub(super) fn apply_migration_0034_add_notification_dispatch_outbox(
+    conn: &mut rusqlite::Connection,
+) -> anyhow::Result<()> {
+    let id = "0034_add_notification_dispatch_outbox";
+    if migration_applied(conn, id)? {
+        return Ok(());
+    }
+
+    let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
+    tx.execute_batch(
+        r#"
+CREATE TABLE IF NOT EXISTS notification_dispatch_outbox (
+  job_id TEXT PRIMARY KEY NOT NULL,
+  finished_at TEXT NOT NULL,
+  summary_json TEXT NOT NULL,
+  processed_at TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_notification_dispatch_outbox_pending
+  ON notification_dispatch_outbox(processed_at, finished_at, job_id);
+"#,
+    )?;
+    record_migration_tx(&tx, id)?;
+    tx.commit()?;
+    Ok(())
+}
+
+pub(super) fn apply_migration_0035_add_new_version_delivery_claim(
+    conn: &mut rusqlite::Connection,
+) -> anyhow::Result<()> {
+    let id = "0035_add_new_version_delivery_claim";
+    if migration_applied(conn, id)? {
+        return Ok(());
+    }
+
+    let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
+    tx.execute_batch(
+        r#"
+ALTER TABLE new_version_notifications ADD COLUMN delivery_claim_token TEXT;
+ALTER TABLE new_version_notifications ADD COLUMN delivery_claim_expires_at TEXT;
+CREATE INDEX IF NOT EXISTS idx_new_version_notifications_delivery_claim
+  ON new_version_notifications(delivery_claim_expires_at);
 "#,
     )?;
     record_migration_tx(&tx, id)?;

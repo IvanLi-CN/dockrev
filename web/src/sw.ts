@@ -6,6 +6,7 @@ import { NavigationRoute, registerRoute } from 'workbox-routing'
 import { DYNAMIC_PAGE_TEMPLATES, DYNAMIC_SEGMENT_PATTERN, RESERVED_PREFIXES, STATIC_PAGE_PATHS } from './routeContract'
 import {
   PUSH_BADGE_TIMEOUT_MS,
+  PUSH_BADGE_FETCH_TIMEOUT_MS,
   PUSH_MESSAGE,
   isPushBadgeAcknowledged,
   type PushNotificationData,
@@ -63,10 +64,16 @@ self.addEventListener('message', (event) => {
 })
 
 async function authoritativePushUnreadCount(data: PushNotificationData): Promise<number | null> {
+  const controller = new AbortController()
+  const timeout = setTimeout(() => controller.abort(), PUSH_BADGE_FETCH_TIMEOUT_MS)
   try {
     const response = await fetch(
       new URL(`${appBasePath || ''}/api/notifications/unread-count`, self.registration.scope),
-      { credentials: 'include', headers: { Accept: 'application/json' } },
+      {
+        credentials: 'include',
+        headers: { Accept: 'application/json' },
+        signal: controller.signal,
+      },
     )
     if (response.ok) {
       const payload = (await response.json()) as { unreadCount?: unknown }
@@ -76,6 +83,8 @@ async function authoritativePushUnreadCount(data: PushNotificationData): Promise
     }
   } catch {
     // Fall back to the signed absolute payload when the service is unreachable.
+  } finally {
+    clearTimeout(timeout)
   }
   return validPushUnreadCount(data)
 }

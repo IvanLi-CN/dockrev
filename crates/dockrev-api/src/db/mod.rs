@@ -22,6 +22,7 @@ mod new_version_discoveries;
 mod new_version_notifications;
 mod notification_anomalies;
 mod notification_items;
+mod notification_outbox;
 mod repo_links;
 mod resource_usage;
 mod schema;

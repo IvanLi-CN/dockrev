@@ -304,6 +304,7 @@ async fn main() -> anyhow::Result<()> {
             .reopen_auto_update_pending_for_recovered_jobs(&recovered, &now)
             .await?;
     }
+    api::replay_pending_check_notifications(&state).await;
     let evidence_db = state.db.clone();
     let evidence_db_path = state.config.db_path.clone();
     tokio::spawn(async move {

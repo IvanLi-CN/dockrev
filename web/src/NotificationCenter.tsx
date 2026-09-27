@@ -88,9 +88,9 @@ export function NotificationProvider(props: { children: ReactNode }) {
   const [error, setError] = useState<string | null>(null)
   const syncRef = useRef<Promise<boolean> | null>(null)
   const loadMoreRef = useRef<Promise<void> | null>(null)
-  const syncInvalidatedRef = useRef(false)
   const mutationRevisionRef = useRef(0)
   const listRevisionRef = useRef(0)
+  const unreadCountRef = useRef(0)
   const isOpenRef = useRef(false)
   const itemsLoadedRef = useRef(false)
   const nextCursorRef = useRef<string | null>(null)
@@ -98,12 +98,23 @@ export function NotificationProvider(props: { children: ReactNode }) {
 
   const applyUnreadCount = useCallback((value: number) => {
     const nextCount = clampUnreadCount(value)
+    unreadCountRef.current = nextCount
     setUnreadCount(nextCount)
     setNotificationBadge(nextCount)
   }, [])
 
+  const applyServerUnreadCount = useCallback(
+    (value: number, shouldBroadcast: boolean) => {
+      const nextCount = clampUnreadCount(value)
+      const changed = nextCount !== unreadCountRef.current
+      applyUnreadCount(nextCount)
+      if (shouldBroadcast && changed) broadcastUnreadCount(nextCount)
+    },
+    [applyUnreadCount],
+  )
+
   const sync = useCallback(
-    async (withItems = false): Promise<boolean> => {
+    async (withItems = false, shouldBroadcast = true): Promise<boolean> => {
       if (syncRef.current) return syncRef.current
       const mutationRevision = mutationRevisionRef.current
       const task = (async () => {
@@ -116,11 +127,9 @@ export function NotificationProvider(props: { children: ReactNode }) {
           if (withItems || isOpenRef.current) {
             const response = await getNotificationInbox({ limit: 50 })
             if (
-              syncInvalidatedRef.current ||
               mutationRevision !== mutationRevisionRef.current ||
               listRevision !== listRevisionRef.current
             ) {
-              syncInvalidatedRef.current = false
               window.setTimeout(() => void sync(isOpenRef.current), 0)
               return false
             }
@@ -128,15 +137,14 @@ export function NotificationProvider(props: { children: ReactNode }) {
             itemsLoadedRef.current = true
             nextCursorRef.current = response.nextCursor ?? null
             setNextCursor(response.nextCursor ?? null)
-            applyUnreadCount(response.unreadCount)
+            applyServerUnreadCount(response.unreadCount, shouldBroadcast)
           } else {
             const response = await getNotificationUnreadCount()
-            if (syncInvalidatedRef.current || mutationRevision !== mutationRevisionRef.current) {
-              syncInvalidatedRef.current = false
+            if (mutationRevision !== mutationRevisionRef.current) {
               window.setTimeout(() => void sync(isOpenRef.current), 0)
               return false
             }
-            applyUnreadCount(response.unreadCount)
+            applyServerUnreadCount(response.unreadCount, shouldBroadcast)
           }
         } catch (cause) {
           succeeded = false
@@ -153,7 +161,7 @@ export function NotificationProvider(props: { children: ReactNode }) {
         if (syncRef.current === task) syncRef.current = null
       }
     },
-    [applyUnreadCount],
+    [applyServerUnreadCount],
   )
 
   const open = useCallback(() => {
@@ -217,7 +225,7 @@ export function NotificationProvider(props: { children: ReactNode }) {
         nextCursorRef.current = response.nextCursor ?? null
         setNextCursor(response.nextCursor ?? null)
         if (mutationRevision === mutationRevisionRef.current) {
-          applyUnreadCount(response.unreadCount)
+          applyServerUnreadCount(response.unreadCount, true)
         }
       } catch (cause) {
         setError(cause instanceof Error ? cause.message : '通知同步失败')
@@ -231,7 +239,7 @@ export function NotificationProvider(props: { children: ReactNode }) {
     } finally {
       if (loadMoreRef.current === task) loadMoreRef.current = null
     }
-  }, [applyUnreadCount])
+  }, [applyServerUnreadCount])
 
   useEffect(() => {
     void sync(false)
@@ -263,15 +271,14 @@ export function NotificationProvider(props: { children: ReactNode }) {
     const channel = new BroadcastChannel(BROADCAST_CHANNEL_NAME)
     const onMessage = (event: MessageEvent<NotificationBroadcast>) => {
       if (event.data?.type !== 'unread-count') return
-      if (syncRef.current) syncInvalidatedRef.current = true
-      void sync(isOpenRef.current)
+      applyUnreadCount(event.data.unreadCount)
     }
     channel.addEventListener('message', onMessage)
     return () => {
       channel.removeEventListener('message', onMessage)
       channel.close()
     }
-  }, [sync])
+  }, [applyUnreadCount])
 
   const acknowledgeClick = useCallback(
     async (notificationId: string, target: string, port?: MessagePort): Promise<boolean> => {
