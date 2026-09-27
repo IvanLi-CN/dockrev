@@ -456,34 +456,22 @@ pub async fn notify_ghcr_webhook_anomaly(
     now_rfc3339: &str,
     event: GhcrWebhookAnomalyEvent<'_>,
 ) -> anyhow::Result<()> {
-    if event.counts.total() == 0 {
-        return Ok(());
-    }
     let settings = state.db.get_notification_settings().await?;
-    let anomaly_state_keys = event
-        .repos
-        .iter()
-        .map(|repo| {
-            (
-                repo.owner.clone(),
-                repo.repo.clone(),
-                repo.state.clone(),
-                repo.occurrence_count,
-            )
-        })
-        .collect::<Vec<_>>();
     if !is_event_enabled(&settings, NotificationEventKind::GhcrWebhookAnomaly) {
         state
             .db
-            .mark_notification_anomaly_states_notified(&anomaly_state_keys)
+            .mark_all_notification_anomaly_states_notified()
             .await?;
         return Ok(());
     }
-    let target_url = notification_target_url(state, &format!("queue/{}", event.job_id)).await?;
     let pending_occurrences = state
         .db
-        .list_pending_notification_anomaly_occurrences(&anomaly_state_keys)
+        .list_all_pending_notification_anomaly_occurrences()
         .await?;
+    if pending_occurrences.is_empty() {
+        return Ok(());
+    }
+    let target_url = notification_target_url(state, &format!("queue/{}", event.job_id)).await?;
     let mut groups =
         std::collections::BTreeMap::<String, Vec<crate::db::NotificationAnomalyOccurrence>>::new();
     for occurrence in pending_occurrences {
@@ -494,6 +482,14 @@ pub async fn notify_ghcr_webhook_anomaly(
     }
 
     for (batch_id, occurrences) in groups {
+        let claim_token = crate::ids::new_notification_id();
+        if !state
+            .db
+            .try_claim_notification_anomaly_batch(&batch_id, &claim_token, now_rfc3339)
+            .await?
+        {
+            continue;
+        }
         let anomaly_repos = occurrences
             .iter()
             .map(|occurrence| GhcrWebhookAnomalyRepo {
@@ -580,10 +576,11 @@ pub async fn notify_ghcr_webhook_anomaly(
         .await?;
         state
             .db
-            .record_notification_anomaly_delivery(
+            .record_notification_anomaly_delivery_with_claim(
                 &group_keys,
                 &successful_delivery_channels(&results),
                 failed_delivery_error(&results).is_none(),
+                Some(&claim_token),
             )
             .await?;
     }

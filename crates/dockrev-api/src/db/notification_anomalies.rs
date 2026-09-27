@@ -21,6 +21,16 @@ pub(crate) struct NotificationAnomalyOccurrence {
     pub sent_channels: Vec<String>,
 }
 
+const ANOMALY_DELIVERY_CLAIM_TTL_MINUTES: i64 = 5;
+
+fn anomaly_delivery_claim_expiry(now: &str) -> anyhow::Result<String> {
+    Ok(
+        (time::OffsetDateTime::parse(now, &time::format_description::well_known::Rfc3339)?
+            + time::Duration::minutes(ANOMALY_DELIVERY_CLAIM_TTL_MINUTES))
+        .format(&time::format_description::well_known::Rfc3339)?,
+    )
+}
+
 #[cfg(test)]
 #[allow(clippy::items_after_test_module)]
 mod tests {
@@ -141,6 +151,40 @@ mod tests {
             .unwrap()
             .is_empty()
         );
+    }
+
+    #[tokio::test]
+    async fn concurrent_anomaly_delivery_claim_allows_only_one_owner() {
+        let db = Db::open(std::path::Path::new(":memory:")).await.unwrap();
+        db.reconcile_notification_anomaly_states(
+            &["acme/api".to_string()],
+            &[observation("missing")],
+            "2026-09-26T00:00:00Z",
+        )
+        .await
+        .unwrap();
+        let occurrence = db
+            .list_all_pending_notification_anomaly_occurrences()
+            .await
+            .unwrap()
+            .pop()
+            .unwrap();
+        let first_db = db.clone();
+        let second_db = db.clone();
+        let (first, second) = tokio::join!(
+            first_db.try_claim_notification_anomaly_batch(
+                &occurrence.batch_id,
+                "claim-a",
+                "2026-09-26T00:01:00Z",
+            ),
+            second_db.try_claim_notification_anomaly_batch(
+                &occurrence.batch_id,
+                "claim-b",
+                "2026-09-26T00:01:00Z",
+            )
+        );
+
+        assert_eq!(first.unwrap() as u8 + second.unwrap() as u8, 1);
     }
 
     #[tokio::test]
@@ -676,6 +720,7 @@ impl Db {
         .context("reconcile notification anomaly states")
     }
 
+    #[allow(dead_code)]
     pub(crate) async fn mark_notification_anomaly_states_notified(
         &self,
         items: &[(String, String, String, i64)],
@@ -685,7 +730,7 @@ impl Db {
             let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
             for (owner, repo, state, occurrence_count) in items {
                 tx.execute(
-                    "UPDATE notification_anomaly_occurrences SET notification_pending = 0, sent_channels_json = '[]' WHERE owner = ?1 AND repo = ?2 AND state = ?3 AND occurrence_count = ?4",
+                    "UPDATE notification_anomaly_occurrences SET notification_pending = 0, sent_channels_json = '[]', delivery_claim_token = NULL, delivery_claim_expires_at = NULL WHERE owner = ?1 AND repo = ?2 AND state = ?3 AND occurrence_count = ?4",
                     params![owner, repo, state, occurrence_count],
                 )?;
                 tx.execute(
@@ -698,6 +743,24 @@ impl Db {
         })
         .await
         .context("mark notification anomaly states notified")
+    }
+
+    pub(crate) async fn mark_all_notification_anomaly_states_notified(&self) -> anyhow::Result<()> {
+        self.call(|conn| {
+            let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
+            tx.execute(
+                "UPDATE notification_anomaly_occurrences SET notification_pending = 0, sent_channels_json = '[]', delivery_claim_token = NULL, delivery_claim_expires_at = NULL WHERE notification_pending = 1",
+                [],
+            )?;
+            tx.execute(
+                "UPDATE notification_anomaly_states SET notification_pending = 0, notification_batch_id = NULL, notification_sent_channels_json = '[]'",
+                [],
+            )?;
+            tx.commit()?;
+            Ok(())
+        })
+        .await
+        .context("mark all notification anomaly states notified")
     }
 
     pub(crate) async fn mark_notification_anomaly_occurrences_item_persisted(
@@ -722,6 +785,7 @@ impl Db {
         .context("mark notification anomaly occurrence item persisted")
     }
 
+    #[allow(dead_code)]
     pub(crate) async fn list_pending_notification_anomaly_occurrences(
         &self,
         items: &[(String, String, String, i64)],
@@ -759,6 +823,73 @@ impl Db {
         .context("list pending notification anomaly occurrences")
     }
 
+    pub(crate) async fn list_all_pending_notification_anomaly_occurrences(
+        &self,
+    ) -> anyhow::Result<Vec<NotificationAnomalyOccurrence>> {
+        self.call(|conn| {
+            let mut stmt = conn.prepare(
+                "SELECT owner, repo, state, last_error, occurrence_count, batch_id, notification_item_id, sent_channels_json FROM notification_anomaly_occurrences WHERE notification_pending = 1 ORDER BY created_at, id",
+            )?;
+            let rows = stmt.query_map([], |row| {
+                let raw_channels: String = row.get(7)?;
+                Ok(NotificationAnomalyOccurrence {
+                    observation: NotificationAnomalyObservation {
+                        owner: row.get(0)?,
+                        repo: row.get(1)?,
+                        state: row.get(2)?,
+                        last_error: row.get(3)?,
+                        occurrence_count: row.get(4)?,
+                    },
+                    batch_id: row.get(5)?,
+                    notification_item_id: row.get(6)?,
+                    sent_channels: serde_json::from_str(&raw_channels).unwrap_or_default(),
+                })
+            })?;
+            Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
+        })
+        .await
+        .context("list all pending notification anomaly occurrences")
+    }
+
+    pub(crate) async fn try_claim_notification_anomaly_batch(
+        &self,
+        batch_id: &str,
+        claim_token: &str,
+        now: &str,
+    ) -> anyhow::Result<bool> {
+        let batch_id = batch_id.to_string();
+        let claim_token = claim_token.to_string();
+        let now = now.to_string();
+        let claim_expires_at = anomaly_delivery_claim_expiry(&now)?;
+        self.call(move |conn| {
+            let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
+            let total: i64 = tx.query_row(
+                "SELECT COUNT(*) FROM notification_anomaly_occurrences WHERE batch_id = ?1 AND notification_pending = 1",
+                params![batch_id.as_str()],
+                |row| row.get(0),
+            )?;
+            if total == 0 {
+                return Ok(false);
+            }
+            let available: i64 = tx.query_row(
+                "SELECT COUNT(*) FROM notification_anomaly_occurrences WHERE batch_id = ?1 AND notification_pending = 1 AND (delivery_claim_token IS NULL OR delivery_claim_expires_at <= ?2)",
+                params![batch_id.as_str(), now.as_str()],
+                |row| row.get(0),
+            )?;
+            if available != total {
+                return Ok(false);
+            }
+            let changed = tx.execute(
+                "UPDATE notification_anomaly_occurrences SET delivery_claim_token = ?2, delivery_claim_expires_at = ?3 WHERE batch_id = ?1 AND notification_pending = 1",
+                params![batch_id.as_str(), claim_token.as_str(), claim_expires_at.as_str()],
+            )?;
+            tx.commit()?;
+            Ok(changed as i64 == total)
+        })
+        .await
+        .context("claim notification anomaly batch")
+    }
+
     #[allow(dead_code)]
     pub(crate) async fn list_notification_anomaly_sent_channels(
         &self,
@@ -789,43 +920,64 @@ impl Db {
         .context("list notification anomaly sent channels")
     }
 
+    #[allow(dead_code)]
     pub(crate) async fn record_notification_anomaly_delivery(
         &self,
         items: &[(String, String, String, i64)],
         successful_channels: &[String],
         complete: bool,
     ) -> anyhow::Result<()> {
+        self.record_notification_anomaly_delivery_with_claim(
+            items,
+            successful_channels,
+            complete,
+            None,
+        )
+        .await
+    }
+
+    pub(crate) async fn record_notification_anomaly_delivery_with_claim(
+        &self,
+        items: &[(String, String, String, i64)],
+        successful_channels: &[String],
+        complete: bool,
+        claim_token: Option<&str>,
+    ) -> anyhow::Result<()> {
         let items = items.to_vec();
         let successful_channels = successful_channels.to_vec();
+        let claim_token = claim_token.map(ToString::to_string);
         self.call(move |conn| {
             let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
             for (owner, repo, state, occurrence_count) in items {
                 let existing = tx
                     .query_row(
-                        "SELECT sent_channels_json FROM notification_anomaly_occurrences WHERE owner = ?1 AND repo = ?2 AND state = ?3 AND occurrence_count = ?4 ORDER BY created_at DESC, id DESC LIMIT 1",
-                        params![owner, repo, state, occurrence_count],
+                        "SELECT sent_channels_json FROM notification_anomaly_occurrences WHERE owner = ?1 AND repo = ?2 AND state = ?3 AND occurrence_count = ?4 AND notification_pending = 1 AND (?5 IS NULL OR delivery_claim_token = ?5) ORDER BY created_at DESC, id DESC LIMIT 1",
+                        params![owner, repo, state, occurrence_count, claim_token.as_deref()],
                         |row| row.get::<_, String>(0),
                     )
                     .optional()?;
-                let mut channels = existing
-                    .as_deref()
-                    .and_then(|raw| serde_json::from_str::<BTreeSet<String>>(raw).ok())
+                let Some(existing) = existing else {
+                    continue;
+                };
+                let mut channels = serde_json::from_str::<BTreeSet<String>>(&existing)
+                    .ok()
                     .unwrap_or_default();
                 channels.extend(successful_channels.iter().cloned());
                 if complete {
                     tx.execute(
-                        "UPDATE notification_anomaly_occurrences SET notification_pending = 0, sent_channels_json = '[]' WHERE owner = ?1 AND repo = ?2 AND state = ?3 AND occurrence_count = ?4",
-                        params![owner, repo, state, occurrence_count],
+                        "UPDATE notification_anomaly_occurrences SET notification_pending = 0, sent_channels_json = '[]', delivery_claim_token = NULL, delivery_claim_expires_at = NULL WHERE owner = ?1 AND repo = ?2 AND state = ?3 AND occurrence_count = ?4 AND notification_pending = 1 AND (?5 IS NULL OR delivery_claim_token = ?5)",
+                        params![owner, repo, state, occurrence_count, claim_token.as_deref()],
                     )?;
                 } else {
                     tx.execute(
-                        "UPDATE notification_anomaly_occurrences SET sent_channels_json = ?5 WHERE owner = ?1 AND repo = ?2 AND state = ?3 AND occurrence_count = ?4 AND notification_pending = 1",
+                        "UPDATE notification_anomaly_occurrences SET sent_channels_json = ?5, delivery_claim_token = NULL, delivery_claim_expires_at = NULL WHERE owner = ?1 AND repo = ?2 AND state = ?3 AND occurrence_count = ?4 AND notification_pending = 1 AND (?6 IS NULL OR delivery_claim_token = ?6)",
                         params![
                             owner,
                             repo,
                             state,
                             occurrence_count,
                             serde_json::to_string(&channels)?,
+                            claim_token.as_deref(),
                         ],
                     )?;
                 }

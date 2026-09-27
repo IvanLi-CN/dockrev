@@ -390,7 +390,9 @@ pub(crate) async fn send_email_new_version(
 
     let mailer: AsyncSmtpTransport<Tokio1Executor> =
         AsyncSmtpTransport::<Tokio1Executor>::from_url(&dsn)?.build();
-    mailer.send(email).await?;
+    tokio::time::timeout(std::time::Duration::from_secs(240), mailer.send(email))
+        .await
+        .context("email delivery timed out")??;
     Ok(())
 }
 

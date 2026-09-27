@@ -626,7 +626,6 @@ async fn run_claimed_job(state: Arc<AppState>, job: JobListItem) -> anyhow::Resu
                     .reconcile_notification_anomaly_states(&scope_keys, &observations, &finished_at)
                     .await
                 {
-                    Ok(newly_active) if newly_active.is_empty() => {}
                     Ok(newly_active) => {
                         let anomaly_repos = newly_active
                             .into_iter()

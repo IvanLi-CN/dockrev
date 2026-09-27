@@ -12,6 +12,7 @@ pub(super) fn apply_migrations(conn: &mut rusqlite::Connection) -> anyhow::Resul
     apply_migration_0034_add_notification_dispatch_outbox(conn)?;
     apply_migration_0035_add_new_version_delivery_claim(conn)?;
     apply_migration_0036_add_notification_dispatch_reason(conn)?;
+    apply_migration_0037_add_notification_anomaly_delivery_claim(conn)?;
     Ok(())
 }
 
@@ -249,6 +250,28 @@ pub(super) fn apply_migration_0036_add_notification_dispatch_reason(
     tx.execute(
         "UPDATE notification_dispatch_outbox SET reason = COALESCE((SELECT reason FROM jobs WHERE jobs.id = notification_dispatch_outbox.job_id), '') WHERE reason = ''",
         [],
+    )?;
+    record_migration_tx(&tx, id)?;
+    tx.commit()?;
+    Ok(())
+}
+
+pub(super) fn apply_migration_0037_add_notification_anomaly_delivery_claim(
+    conn: &mut rusqlite::Connection,
+) -> anyhow::Result<()> {
+    let id = "0037_add_notification_anomaly_delivery_claim";
+    if migration_applied(conn, id)? {
+        return Ok(());
+    }
+
+    let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
+    tx.execute_batch(
+        r#"
+ALTER TABLE notification_anomaly_occurrences ADD COLUMN delivery_claim_token TEXT;
+ALTER TABLE notification_anomaly_occurrences ADD COLUMN delivery_claim_expires_at TEXT;
+CREATE INDEX IF NOT EXISTS idx_notification_anomaly_occurrences_delivery_claim
+  ON notification_anomaly_occurrences(delivery_claim_expires_at);
+"#,
     )?;
     record_migration_tx(&tx, id)?;
     tx.commit()?;

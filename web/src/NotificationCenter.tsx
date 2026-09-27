@@ -235,13 +235,14 @@ export function NotificationProvider(props: { children: ReactNode }) {
       setError(null)
       try {
         const response = await getNotificationInbox({ limit: 50, cursor })
-        if (listRevision !== listRevisionRef.current) return
+        if (listRevision !== listRevisionRef.current || mutationRevision !== mutationRevisionRef.current) {
+          if (isOpenRef.current) void sync(true)
+          return
+        }
         setItems((current) => [...current, ...response.items])
         nextCursorRef.current = response.nextCursor ?? null
         setNextCursor(response.nextCursor ?? null)
-        if (mutationRevision === mutationRevisionRef.current) {
-          applyServerUnreadCount(response.unreadCount, true)
-        }
+        applyServerUnreadCount(response.unreadCount, true)
       } catch (cause) {
         setError(cause instanceof Error ? cause.message : '通知同步失败')
       } finally {
@@ -254,7 +255,7 @@ export function NotificationProvider(props: { children: ReactNode }) {
     } finally {
       if (loadMoreRef.current === task) loadMoreRef.current = null
     }
-  }, [applyServerUnreadCount])
+  }, [applyServerUnreadCount, sync])
 
   useEffect(() => {
     void sync(false)

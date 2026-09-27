@@ -8,9 +8,13 @@ import {
   PUSH_BADGE_TIMEOUT_MS,
   PUSH_BADGE_FETCH_TIMEOUT_MS,
   PUSH_MESSAGE,
+  isNotificationClickAcknowledged,
   isPushBadgeAcknowledged,
+  notificationLaunchUrl,
+  resolveNotificationTargetUrl,
   type PushNotificationData,
   validPushUnreadCount,
+  waitForServiceWorkerAck,
 } from './swPush'
 
 declare let self: ServiceWorkerGlobalScope & {
@@ -77,9 +81,8 @@ async function authoritativePushUnreadCount(data: PushNotificationData): Promise
     )
     if (response.ok) {
       const payload = (await response.json()) as { unreadCount?: unknown }
-      if (typeof payload.unreadCount === 'number' && Number.isFinite(payload.unreadCount)) {
-        return Math.max(0, Math.floor(payload.unreadCount))
-      }
+      const unreadCount = validPushUnreadCount(payload as PushNotificationData)
+      if (unreadCount != null) return unreadCount
     }
   } catch {
     // Fall back to the signed absolute payload when the service is unreachable.
@@ -92,20 +95,14 @@ async function authoritativePushUnreadCount(data: PushNotificationData): Promise
 async function waitForPushBadgeClaim(client: WindowClient, notificationId: string): Promise<boolean> {
   if (typeof MessageChannel === 'undefined') return false
   const channel = new MessageChannel()
-  const acknowledgement = new Promise<boolean>((resolve) => {
-    const timeout = setTimeout(() => resolve(false), 1000)
-    channel.port1.onmessage = (message) => {
-      clearTimeout(timeout)
-      resolve(isPushBadgeAcknowledged(message.data))
-    }
-  })
-  try {
-    client.postMessage({ type: PUSH_MESSAGE, notificationId }, [channel.port2])
-  } catch {
-    channel.port1.close()
-    return false
-  }
-  const claimed = await acknowledgement
+  const claimed = await waitForServiceWorkerAck(
+    (receive) => {
+      channel.port1.onmessage = (message) => receive(message.data)
+      client.postMessage({ type: PUSH_MESSAGE, notificationId }, [channel.port2])
+    },
+    isPushBadgeAcknowledged,
+    1000,
+  )
   channel.port1.close()
   return claimed
 }
@@ -180,51 +177,20 @@ self.addEventListener('push', (event) => {
   )
 })
 
-function notificationLaunchUrl(url: string | null, notificationId: string | null): string {
-  const launch = new URL(appBasePath || '/', self.registration.scope)
-  if (notificationId) launch.searchParams.set('dockrevNotificationId', notificationId)
-  if (url) launch.searchParams.set('dockrevNotificationTarget', url)
-  return launch.href
-}
-
-function resolveNotificationTarget(url: string): string | null {
-  try {
-    const target = new URL(url, self.registration.scope)
-    const scope = new URL(self.registration.scope)
-    if (
-      target.origin === scope.origin &&
-      appBasePath &&
-      !target.pathname.startsWith(`${appBasePath}/`) &&
-      target.pathname !== appBasePath
-    ) {
-      target.pathname = `${appBasePath}${target.pathname}`.replace(/\/+/g, '/')
-    }
-    return target.href
-  } catch {
-    return null
-  }
-}
-
 async function waitForNotificationClickAck(client: WindowClient, notificationId: string, url: string): Promise<boolean> {
   if (typeof MessageChannel === 'undefined') return false
   const channel = new MessageChannel()
-  const acknowledgement = new Promise<boolean>((resolve) => {
-    const timeout = setTimeout(() => resolve(false), 2500)
-    channel.port1.onmessage = (message) => {
-      clearTimeout(timeout)
-      resolve(message.data?.type === 'DOCKREV_NOTIFICATION_CLICK_ACK' && message.data?.ok === true)
-    }
-  })
-  try {
-    client.postMessage(
-      { type: 'DOCKREV_NOTIFICATION_CLICK', notificationId, url },
-      [channel.port2],
-    )
-  } catch {
-    channel.port1.close()
-    return false
-  }
-  const confirmed = await acknowledgement
+  const confirmed = await waitForServiceWorkerAck(
+    (receive) => {
+      channel.port1.onmessage = (message) => receive(message.data)
+      client.postMessage(
+        { type: 'DOCKREV_NOTIFICATION_CLICK', notificationId, url },
+        [channel.port2],
+      )
+    },
+    isNotificationClickAcknowledged,
+    2500,
+  )
   channel.port1.close()
   return confirmed
 }
@@ -248,7 +214,7 @@ self.addEventListener('notificationclick', (event) => {
           : null
       let targetUrl: string | null = null
       if (url) {
-        targetUrl = resolveNotificationTarget(url)
+        targetUrl = resolveNotificationTargetUrl(self.registration.scope, appBasePath, url)
       }
 
       if (targetUrl && notificationId) {
@@ -264,7 +230,9 @@ self.addEventListener('notificationclick', (event) => {
           }
         }
         if (self.clients.openWindow) {
-          return self.clients.openWindow(notificationLaunchUrl(targetUrl, notificationId))
+          return self.clients.openWindow(
+            notificationLaunchUrl(self.registration.scope, appBasePath, targetUrl, notificationId),
+          )
         }
       } else if (targetUrl && self.clients.openWindow) {
         return self.clients.openWindow(targetUrl)

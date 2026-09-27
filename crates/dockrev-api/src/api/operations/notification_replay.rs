@@ -1,8 +1,17 @@
 use super::*;
 
 pub(crate) async fn replay_pending_check_notifications(state: &Arc<AppState>) {
+    let mut after = None::<(String, String)>;
     loop {
-        let pending = match state.db.list_pending_check_notification_dispatches().await {
+        let pending = match state
+            .db
+            .list_pending_check_notification_dispatches_after(
+                after
+                    .as_ref()
+                    .map(|(finished_at, job_id)| (finished_at.as_str(), job_id.as_str())),
+            )
+            .await
+        {
             Ok(items) => items,
             Err(error) => {
                 tracing::warn!(error = %error, "failed to load pending check notification dispatches");
@@ -13,6 +22,9 @@ pub(crate) async fn replay_pending_check_notifications(state: &Arc<AppState>) {
             return;
         }
         let batch_len = pending.len();
+        let last_cursor = pending
+            .last()
+            .map(|dispatch| (dispatch.finished_at.clone(), dispatch.job_id.clone()));
         let mut processed_any = false;
         for dispatch in pending {
             match maybe_notify_check_new_versions(
@@ -51,8 +63,15 @@ pub(crate) async fn replay_pending_check_notifications(state: &Arc<AppState>) {
                 }
             }
         }
-        if batch_len < 256 || !processed_any {
+        if batch_len < 256 {
             return;
         }
+        if !processed_any {
+            tracing::debug!("notification dispatch replay advanced past a failed batch");
+        }
+        let Some(last_cursor) = last_cursor else {
+            return;
+        };
+        after = Some(last_cursor);
     }
 }
