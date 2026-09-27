@@ -3312,9 +3312,7 @@ async function main() {
         await assertServiceLogsLightContrast({ baseUrl: targetUrl, browser });
       } else {
         if (!splitActionHoverOnly && (smokeOnly || (!interactiveOnly && !rollbackRaceOnly))) {
-          const selectedStoryIds = smokeOnly
-            ? Array.from(new Set([...selectSmokeShard(storyIds), ...SELECTED_VERSION_SUBMISSION_STORY_IDS]))
-            : storyIds;
+          const selectedStoryIds = smokeOnly ? selectSmokeShard(storyIds) : storyIds;
           await writeSmokeCoverage({ baselineStoryIds: storyIds, selectedStoryIds, mode: smokeOnly ? "shard" : "full" });
           await runSmoke({
             baseUrl: targetUrl,
@@ -3371,9 +3369,7 @@ async function main() {
         await assertServiceLogsLightContrast({ baseUrl: localUrl, browser });
       } else {
         if (!splitActionHoverOnly && (smokeOnly || (!interactiveOnly && !rollbackRaceOnly))) {
-          const selectedStoryIds = smokeOnly
-            ? Array.from(new Set([...selectSmokeShard(storyIds), ...SELECTED_VERSION_SUBMISSION_STORY_IDS]))
-            : storyIds;
+          const selectedStoryIds = smokeOnly ? selectSmokeShard(storyIds) : storyIds;
           await writeSmokeCoverage({ baselineStoryIds: storyIds, selectedStoryIds, mode: smokeOnly ? "shard" : "full" });
           await runSmoke({
             baseUrl: localUrl,

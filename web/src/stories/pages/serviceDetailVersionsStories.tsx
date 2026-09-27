@@ -426,6 +426,10 @@ function selectedVersionSubmissionStory(input: {
     play: async ({ canvasElement }) => {
       const doc = canvasElement.ownerDocument;
       await waitForCondition(() => Boolean(findVersionCard(canvasElement, input.releaseTag)));
+      await waitForCondition(() => {
+        const action = findVersionAction(canvasElement, "update", input.releaseTag);
+        return Boolean(action && !action.disabled);
+      });
       const action = findVersionAction(canvasElement, "update", input.releaseTag);
       expectStory(action && !action.disabled, `${input.releaseTag} should expose an enabled version update action`);
       action?.click();
