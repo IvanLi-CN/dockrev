@@ -623,7 +623,7 @@ async fn run_claimed_job(state: Arc<AppState>, job: JobListItem) -> anyhow::Resu
 
                 match state
                     .db
-                    .reconcile_notification_anomaly_states_with_enabled(
+                    .reconcile_notification_anomaly_states_with_enabled_and_decision(
                         &scope_keys,
                         &observations,
                         &finished_at,
@@ -633,7 +633,7 @@ async fn run_claimed_job(state: Arc<AppState>, job: JobListItem) -> anyhow::Resu
                     )
                     .await
                 {
-                    Ok(newly_active) => {
+                    Ok((notification_enabled, newly_active)) => {
                         let anomaly_repos = newly_active
                             .into_iter()
                             .map(|row| notify::GhcrWebhookAnomalyRepo {
@@ -664,8 +664,13 @@ async fn run_claimed_job(state: Arc<AppState>, job: JobListItem) -> anyhow::Resu
                             counts: notify_counts,
                             repos: &anomaly_repos,
                         };
-                        if let Err(err) =
-                            notify::notify_ghcr_webhook_anomaly(&state, &finished_at, event).await
+                        if let Err(err) = notify::notify_ghcr_webhook_anomaly(
+                            &state,
+                            &finished_at,
+                            event,
+                            Some(notification_enabled),
+                        )
+                        .await
                         {
                             tracing::warn!(
                                 job_id = %job_id,

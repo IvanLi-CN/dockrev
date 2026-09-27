@@ -147,7 +147,9 @@ WHERE id IN (
                             [],
                             |row| row.get::<_, i64>(0),
                         )
-                        .optional()?
+                        .optional()
+                        .ok()
+                        .flatten()
                         .unwrap_or(1)
                         != 0;
                     new_version_discoveries::record_new_version_discoveries_from_summary_conn(
@@ -169,7 +171,20 @@ WHERE id IN (
                     )?;
                 }
                 if let Some(notification) = notification.as_ref() {
-                    super::notification_items::insert_notification_item_tx(&tx, notification)?;
+                    let event_enabled = tx
+                        .query_row(
+                            "SELECT event_update_enabled FROM notification_settings LIMIT 1",
+                            [],
+                            |row| row.get::<_, i64>(0),
+                        )
+                        .optional()
+                        .ok()
+                        .flatten()
+                        .unwrap_or(1)
+                        != 0;
+                    if event_enabled {
+                        super::notification_items::insert_notification_item_tx(&tx, notification)?;
+                    }
                 }
                 tx.commit()?;
                 Ok(Some((

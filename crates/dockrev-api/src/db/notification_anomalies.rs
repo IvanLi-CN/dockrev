@@ -607,6 +607,27 @@ impl Db {
         source_job_id: Option<&str>,
         source_status: &str,
     ) -> anyhow::Result<Vec<NotificationAnomalyObservation>> {
+        self.reconcile_notification_anomaly_states_with_enabled_and_decision(
+            scope_keys,
+            observations,
+            now,
+            notification_enabled,
+            source_job_id,
+            source_status,
+        )
+        .await
+        .map(|(_, pending)| pending)
+    }
+
+    pub(crate) async fn reconcile_notification_anomaly_states_with_enabled_and_decision(
+        &self,
+        scope_keys: &[String],
+        observations: &[NotificationAnomalyObservation],
+        now: &str,
+        notification_enabled: Option<bool>,
+        source_job_id: Option<&str>,
+        source_status: &str,
+    ) -> anyhow::Result<(bool, Vec<NotificationAnomalyObservation>)> {
         let scope_keys = scope_keys.to_vec();
         let observations = observations.to_vec();
         let now = now.to_string();
@@ -826,7 +847,7 @@ impl Db {
             }
 
             tx.commit()?;
-            Ok(pending)
+            Ok((notification_enabled, pending))
         })
         .await
         .context("reconcile notification anomaly states")

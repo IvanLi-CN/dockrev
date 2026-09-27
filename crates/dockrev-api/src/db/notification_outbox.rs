@@ -108,6 +108,24 @@ LIMIT 256
         .context("mark check notification dispatch processed")
     }
 
+    pub(crate) async fn check_notification_event_enabled(
+        &self,
+        job_id: &str,
+    ) -> anyhow::Result<Option<bool>> {
+        let job_id = job_id.to_string();
+        self.call(move |conn| {
+            conn.query_row(
+                "SELECT event_enabled FROM notification_dispatch_outbox WHERE job_id = ?1",
+                params![job_id],
+                |row| row.get::<_, i64>(0).map(|value| value != 0),
+            )
+            .optional()
+            .map_err(Into::into)
+        })
+        .await
+        .context("read check notification event decision")
+    }
+
     #[allow(dead_code)]
     pub(crate) async fn check_notification_dispatch_pending(
         &self,

@@ -5,7 +5,9 @@ import {
   PUSH_BADGE_TIMEOUT_MS,
   PUSH_MESSAGE,
   CLICK_CANCEL,
+  CLICK_CANCEL_ACK,
   isNotificationClickAcknowledged,
+  isNotificationClickCancelAcknowledged,
   isPushBadgeAcknowledged,
   notificationLaunchUrl,
   resolveNotificationTargetUrl,
@@ -26,6 +28,7 @@ describe('service worker push contract', () => {
   test('uses an explicit page claim before the worker falls back to REST', () => {
     expect(PUSH_MESSAGE).toBe('DOCKREV_NOTIFICATION_PUSH')
     expect(CLICK_CANCEL).toBe('DOCKREV_NOTIFICATION_CLICK_CANCEL')
+    expect(CLICK_CANCEL_ACK).toBe('DOCKREV_NOTIFICATION_CLICK_CANCEL_ACK')
     expect(PUSH_ACK).toBe('DOCKREV_NOTIFICATION_PUSH_ACK')
     expect(isPushBadgeAcknowledged({ type: PUSH_ACK, ok: true })).toBe(true)
     expect(isPushBadgeAcknowledged({ type: PUSH_ACK, ok: false })).toBe(false)
@@ -48,6 +51,7 @@ describe('service worker push contract', () => {
     ).resolves.toBe(false)
     expect(isNotificationClickAcknowledged({ type: 'DOCKREV_NOTIFICATION_CLICK_ACK', ok: true })).toBe(true)
     expect(isNotificationClickAcknowledged({ type: PUSH_ACK, ok: true })).toBe(false)
+    expect(isNotificationClickCancelAcknowledged({ type: CLICK_CANCEL_ACK, ok: true })).toBe(true)
   })
 
   test('encodes and resolves cold-start notification navigation targets', () => {

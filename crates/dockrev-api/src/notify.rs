@@ -102,7 +102,6 @@ pub async fn prepare_job_notification_item(
 }
 
 pub async fn prepare_job_notification_item_for_finish(
-    state: &AppState,
     should_notify: bool,
     job_id: &str,
     status: &str,
@@ -112,7 +111,17 @@ pub async fn prepare_job_notification_item_for_finish(
     if !should_notify {
         return Ok(None);
     }
-    prepare_job_notification_item(state, job_id, status, now_rfc3339, summary).await
+    let target_url = best_effort_url(None, &format!("queue/{job_id}"));
+    Ok(Some(crate::db::NotificationItemDraft {
+        id: crate::ids::new_notification_id(),
+        kind: crate::db::NOTIFICATION_KIND_JOB_FINISHED.to_string(),
+        identity_key: format!("job_finished:{job_id}"),
+        title: format!("任务已{}", status_label(status)),
+        body: job_notification_body(status, summary),
+        target_url,
+        source_job_id: Some(job_id.to_string()),
+        created_at: now_rfc3339.to_string(),
+    }))
 }
 
 #[allow(dead_code)]
@@ -132,6 +141,7 @@ pub async fn notify_new_versions_discovered(
         services_checked,
         discovered_services,
         false,
+        None,
     )
     .await
 }
@@ -143,6 +153,7 @@ pub(crate) async fn notify_new_versions_discovered_for_replay(
     now_rfc3339: &str,
     services_checked: u32,
     discovered_services: &[NewVersionDiscoveredService],
+    event_enabled: bool,
 ) -> anyhow::Result<()> {
     notify_new_versions_discovered_inner(
         state,
@@ -152,10 +163,12 @@ pub(crate) async fn notify_new_versions_discovered_for_replay(
         services_checked,
         discovered_services,
         true,
+        Some(event_enabled),
     )
     .await
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn notify_new_versions_discovered_inner(
     state: &AppState,
     check_job_id: &str,
@@ -164,13 +177,14 @@ async fn notify_new_versions_discovered_inner(
     services_checked: u32,
     discovered_services: &[NewVersionDiscoveredService],
     fail_on_delivery_error: bool,
+    event_enabled_override: Option<bool>,
 ) -> anyhow::Result<()> {
     if discovered_services.is_empty() {
         return Ok(());
     }
 
     let settings = state.db.get_notification_settings().await?;
-    if !is_event_enabled(&settings, NotificationEventKind::NewVersionDiscovered) {
+    if !event_enabled_override.unwrap_or(settings.event_new_version_enabled) {
         return Ok(());
     }
     let has_external_delivery = has_enabled_delivery_channel(&settings);
@@ -430,13 +444,25 @@ pub async fn notify_ghcr_webhook_anomaly(
     state: &AppState,
     now_rfc3339: &str,
     event: GhcrWebhookAnomalyEvent<'_>,
+    event_enabled_override: Option<bool>,
 ) -> anyhow::Result<()> {
-    let settings = state.db.get_notification_settings().await?;
-    if !is_event_enabled(&settings, NotificationEventKind::GhcrWebhookAnomaly) {
-        state
-            .db
-            .mark_all_notification_anomaly_states_notified()
-            .await?;
+    let event_enabled = match event_enabled_override {
+        Some(enabled) => enabled,
+        None => {
+            state
+                .db
+                .get_notification_settings()
+                .await?
+                .event_ghcr_webhook_anomaly_enabled
+        }
+    };
+    if !event_enabled {
+        if event_enabled_override.is_none() {
+            state
+                .db
+                .mark_all_notification_anomaly_states_notified()
+                .await?;
+        }
         return Ok(());
     }
     let pending_occurrences = state
@@ -476,15 +502,21 @@ pub async fn notify_ghcr_webhook_anomaly(
             .find_map(|occurrence| occurrence.source_job_id.clone())
             .filter(|job_id| !job_id.is_empty())
             .unwrap_or_else(|| event.job_id.to_string());
+        let has_source_job = !source_job_id.is_empty();
+        let payload_job_id = if has_source_job {
+            source_job_id.clone()
+        } else {
+            "replay".to_string()
+        };
         let source_status = occurrences
             .first()
             .map(|occurrence| occurrence.source_status.as_str())
             .filter(|status| !status.is_empty())
             .unwrap_or(event.status);
-        let target_path = if source_job_id.is_empty() {
-            "queue".to_string()
-        } else {
+        let target_path = if has_source_job {
             format!("queue/{source_job_id}")
+        } else {
+            String::new()
         };
         let target_url = notification_target_url(state, &target_path).await?;
         let anomaly_repos = occurrences
@@ -547,7 +579,7 @@ pub async fn notify_ghcr_webhook_anomaly(
                     title: format!("GHCR Webhook 发现 {} 个异常", anomaly_repos.len()),
                     body: ghcr_anomaly_notification_body(&anomaly_repos),
                     target_url: target_url.clone(),
-                    source_job_id: (!source_job_id.is_empty()).then_some(source_job_id.clone()),
+                    source_job_id: has_source_job.then_some(source_job_id.clone()),
                     created_at: now_rfc3339.to_string(),
                 },
                 now_rfc3339,
@@ -558,8 +590,12 @@ pub async fn notify_ghcr_webhook_anomaly(
             .mark_notification_anomaly_occurrences_item_persisted(&group_keys, &item.item.id)
             .await?;
         let group_event = GhcrWebhookAnomalyEvent {
-            job_id: &source_job_id,
-            status: source_status,
+            job_id: &payload_job_id,
+            status: if has_source_job {
+                source_status
+            } else {
+                "replay"
+            },
             counts: anomaly_counts,
             repos: &anomaly_repos,
         };
@@ -602,7 +638,7 @@ pub(crate) async fn replay_pending_ghcr_webhook_anomalies(
         },
         repos: &[],
     };
-    notify_ghcr_webhook_anomaly(state, now_rfc3339, event).await
+    notify_ghcr_webhook_anomaly(state, now_rfc3339, event, None).await
 }
 
 async fn notification_target_url(

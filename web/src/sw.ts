@@ -15,6 +15,7 @@ import {
   resolveNotificationTargetUrl,
   type PushNotificationData,
   validPushUnreadCount,
+  isNotificationClickCancelAcknowledged,
   waitForServiceWorkerAck,
 } from './swPush'
 
@@ -195,7 +196,19 @@ async function waitForNotificationClickAck(client: WindowClient, notificationId:
   )
   channel.port1.close()
   if (!confirmed) {
-    client.postMessage({ type: CLICK_CANCEL, requestId })
+    const cancelChannel = new MessageChannel()
+    await waitForServiceWorkerAck(
+      (receive) => {
+        cancelChannel.port1.onmessage = (message) => receive(message.data)
+        client.postMessage(
+          { type: CLICK_CANCEL, requestId },
+          [cancelChannel.port2],
+        )
+      },
+      isNotificationClickCancelAcknowledged,
+      250,
+    )
+    cancelChannel.port1.close()
   }
   return confirmed
 }
@@ -227,7 +240,12 @@ self.addEventListener('notificationclick', (event) => {
           if (client && typeof client.focus === 'function') {
             try {
               if (await waitForNotificationClickAck(client, notificationId, targetUrl)) {
-                return client.focus()
+                try {
+                  await client.focus()
+                  return client.navigate(targetUrl)
+                } catch {
+                  return client.focus()
+                }
               }
             } catch {
               // Fall through to the cold-start handshake.

@@ -52,6 +52,7 @@ pub(crate) async fn replay_pending_check_notifications(state: &Arc<AppState>) {
                 &dispatch.reason,
                 &dispatch.finished_at,
                 &dispatch.summary,
+                dispatch.event_enabled,
             )
             .await
             {

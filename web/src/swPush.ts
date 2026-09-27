@@ -12,6 +12,7 @@ export const PUSH_BADGE_TIMEOUT_MS = 1500
 export const PUSH_BADGE_FETCH_TIMEOUT_MS = 400
 export const CLICK_ACK = 'DOCKREV_NOTIFICATION_CLICK_ACK'
 export const CLICK_CANCEL = 'DOCKREV_NOTIFICATION_CLICK_CANCEL'
+export const CLICK_CANCEL_ACK = 'DOCKREV_NOTIFICATION_CLICK_CANCEL_ACK'
 
 export function validPushUnreadCount(data: PushNotificationData): number | null {
   if (
@@ -39,6 +40,15 @@ export function isNotificationClickAcknowledged(data: unknown): boolean {
     typeof data === 'object' &&
     data !== null &&
     (data as { type?: unknown }).type === CLICK_ACK &&
+    (data as { ok?: unknown }).ok === true
+  )
+}
+
+export function isNotificationClickCancelAcknowledged(data: unknown): boolean {
+  return (
+    typeof data === 'object' &&
+    data !== null &&
+    (data as { type?: unknown }).type === CLICK_CANCEL_ACK &&
     (data as { ok?: unknown }).ok === true
   )
 }

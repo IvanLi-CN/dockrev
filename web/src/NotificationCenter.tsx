@@ -31,6 +31,7 @@ const COLD_START_ID = 'dockrevNotificationId'
 const COLD_START_TARGET = 'dockrevNotificationTarget'
 const CLICK_MESSAGE = 'DOCKREV_NOTIFICATION_CLICK'
 const CLICK_CANCEL = 'DOCKREV_NOTIFICATION_CLICK_CANCEL'
+const CLICK_CANCEL_ACK = 'DOCKREV_NOTIFICATION_CLICK_CANCEL_ACK'
 const CLICK_ACK = 'DOCKREV_NOTIFICATION_CLICK_ACK'
 const PUSH_MESSAGE = 'DOCKREV_NOTIFICATION_PUSH'
 const PUSH_ACK = 'DOCKREV_NOTIFICATION_PUSH_ACK'
@@ -310,6 +311,7 @@ export function NotificationProvider(props: { children: ReactNode }) {
       target: string,
       port?: MessagePort,
       requestId?: string,
+      navigate = true,
     ): Promise<boolean> => {
       try {
         if (requestId && canceledClickRequestsRef.current.delete(requestId)) return false
@@ -330,7 +332,7 @@ export function NotificationProvider(props: { children: ReactNode }) {
         broadcastUnreadCount(response.unreadCount, notificationId)
         void sync(isOpenRef.current)
         port?.postMessage({ type: CLICK_ACK, ok: true })
-        if (item || notificationId) navigateToNotification(target)
+        if (navigate && (item || notificationId)) navigateToNotification(target)
         return true
       } catch {
         port?.postMessage({ type: CLICK_ACK, ok: false })
@@ -351,10 +353,11 @@ export function NotificationProvider(props: { children: ReactNode }) {
       }
       if (data?.type === CLICK_CANCEL && typeof data.requestId === 'string') {
         canceledClickRequestsRef.current.add(data.requestId)
+        event.ports?.[0]?.postMessage({ type: CLICK_CANCEL_ACK, requestId: data.requestId, ok: true })
         return
       }
       if (!data || data.type !== CLICK_MESSAGE) return
-      void acknowledgeClick(data.notificationId, data.url, event.ports?.[0], data.requestId)
+      void acknowledgeClick(data.notificationId, data.url, event.ports?.[0], data.requestId, false)
     }
     navigator.serviceWorker?.addEventListener('message', onServiceWorkerMessage)
     return () => navigator.serviceWorker?.removeEventListener('message', onServiceWorkerMessage)
