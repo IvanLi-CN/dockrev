@@ -13,7 +13,7 @@
 
 ## Related Changes
 
-- None
+- PR #418 — adds selected-version update actions and prospective configured-tag digest evidence.
 
 ## References
 

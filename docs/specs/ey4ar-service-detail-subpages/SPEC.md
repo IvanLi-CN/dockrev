@@ -213,7 +213,7 @@
 
 - Given 服务详情页处于 `版本`
   When 用户浏览较新版本或历史已部署版本
-  Then 版本卡片会显示与当前服务关系相关的状态徽标、外链与动作区；update/rollback 的真实可执行性继续遵守既有显式 target tag 与 rollback target 合同。
+  Then 版本卡片会显示与当前服务关系相关的状态徽标、外链与动作区；普通服务的较新版本动作由 [`selected-version-service-updates`](../selected-version-service-updates/SPEC.md) 分类并确认，Dockrev 自我升级与 rollback 继续遵守各自既有合同。
 
 - Given 任一服务详情子页
   When 页面展示共享页头
