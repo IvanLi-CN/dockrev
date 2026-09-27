@@ -301,7 +301,28 @@ fn count_unread(conn: &rusqlite::Connection) -> rusqlite::Result<u64> {
 
 fn purge_read_items(conn: &rusqlite::Connection, cutoff: &str) -> rusqlite::Result<usize> {
     conn.execute(
-        "DELETE FROM notification_items WHERE rowid IN (SELECT rowid FROM notification_items WHERE read_at IS NOT NULL AND read_at < ?1 LIMIT 500)",
+        r#"
+DELETE FROM notification_items
+WHERE rowid IN (
+  SELECT item.rowid
+  FROM notification_items item
+  WHERE item.read_at IS NOT NULL
+    AND item.read_at < ?1
+    AND NOT EXISTS (
+      SELECT 1
+      FROM notification_anomaly_occurrences occurrence
+      WHERE occurrence.notification_item_id = item.id
+        AND occurrence.notification_pending = 1
+    )
+    AND NOT EXISTS (
+      SELECT 1
+      FROM new_version_notifications notification
+      WHERE notification.notification_item_id = item.id
+        AND notification.status IN ('pending', 'failed')
+    )
+  LIMIT 500
+)
+"#,
         params![cutoff],
     )
 }

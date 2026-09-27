@@ -5,10 +5,12 @@ use std::collections::HashSet;
 use crate::service_check;
 mod lifecycle;
 mod lifecycle_snapshot;
+mod notification_replay;
 mod progress_persistence;
 mod transitions;
 pub(crate) use lifecycle::*;
 pub(crate) use lifecycle_snapshot::LifecycleSnapshotCoordinator;
+pub(crate) use notification_replay::replay_pending_check_notifications;
 pub(crate) use progress_persistence::*;
 pub(crate) use transitions::*;
 
@@ -675,7 +677,7 @@ pub(super) async fn maybe_notify_check_new_versions(
         .and_then(|v| v.as_u64())
         .unwrap_or_default()
         .min(u32::MAX as u64) as u32;
-    notify::notify_new_versions_discovered(
+    notify::notify_new_versions_discovered_for_replay(
         state.as_ref(),
         job_id,
         notification_reason,
@@ -684,52 +686,6 @@ pub(super) async fn maybe_notify_check_new_versions(
         &discovered_services,
     )
     .await
-}
-
-pub(crate) async fn replay_pending_check_notifications(state: &Arc<AppState>) {
-    let pending = match state.db.list_pending_check_notification_dispatches().await {
-        Ok(items) => items,
-        Err(error) => {
-            tracing::warn!(error = %error, "failed to load pending check notification dispatches");
-            return;
-        }
-    };
-
-    for dispatch in pending {
-        match maybe_notify_check_new_versions(
-            state,
-            &dispatch.job_id,
-            &dispatch.reason,
-            &dispatch.finished_at,
-            &dispatch.summary,
-        )
-        .await
-        {
-            Ok(()) => {
-                if let Err(error) = state
-                    .db
-                    .mark_check_notification_dispatch_processed(
-                        &dispatch.job_id,
-                        &dispatch.finished_at,
-                    )
-                    .await
-                {
-                    tracing::warn!(
-                        job_id = %dispatch.job_id,
-                        error = %error,
-                        "failed to mark check notification dispatch processed"
-                    );
-                }
-            }
-            Err(error) => {
-                tracing::warn!(
-                    job_id = %dispatch.job_id,
-                    error = %error,
-                    "failed to replay check notification dispatch"
-                );
-            }
-        }
-    }
 }
 
 pub(crate) async fn complete_check_job(

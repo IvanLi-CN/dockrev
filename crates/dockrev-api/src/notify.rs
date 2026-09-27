@@ -140,6 +140,7 @@ pub async fn prepare_job_notification_item_for_finish_best_effort(
     }
 }
 
+#[allow(dead_code)]
 pub async fn notify_new_versions_discovered(
     state: &AppState,
     check_job_id: &str,
@@ -147,6 +148,47 @@ pub async fn notify_new_versions_discovered(
     now_rfc3339: &str,
     services_checked: u32,
     discovered_services: &[NewVersionDiscoveredService],
+) -> anyhow::Result<()> {
+    notify_new_versions_discovered_inner(
+        state,
+        check_job_id,
+        reason,
+        now_rfc3339,
+        services_checked,
+        discovered_services,
+        false,
+    )
+    .await
+}
+
+pub(crate) async fn notify_new_versions_discovered_for_replay(
+    state: &AppState,
+    check_job_id: &str,
+    reason: &str,
+    now_rfc3339: &str,
+    services_checked: u32,
+    discovered_services: &[NewVersionDiscoveredService],
+) -> anyhow::Result<()> {
+    notify_new_versions_discovered_inner(
+        state,
+        check_job_id,
+        reason,
+        now_rfc3339,
+        services_checked,
+        discovered_services,
+        true,
+    )
+    .await
+}
+
+async fn notify_new_versions_discovered_inner(
+    state: &AppState,
+    check_job_id: &str,
+    reason: &str,
+    now_rfc3339: &str,
+    services_checked: u32,
+    discovered_services: &[NewVersionDiscoveredService],
+    fail_on_delivery_error: bool,
 ) -> anyhow::Result<()> {
     if discovered_services.is_empty() {
         return Ok(());
@@ -402,6 +444,9 @@ pub async fn notify_new_versions_discovered(
                 Some(&item.claim_token),
             )
             .await?;
+    }
+    if fail_on_delivery_error && let Some(error) = last_error {
+        return Err(anyhow::anyhow!(error));
     }
     Ok(())
 }

@@ -14,16 +14,17 @@ pub(crate) struct PendingCheckNotificationDispatch {
 pub(super) fn enqueue_check_notification_tx(
     tx: &Transaction<'_>,
     job_id: &str,
+    reason: &str,
     finished_at: &str,
     summary: &serde_json::Value,
 ) -> anyhow::Result<()> {
     tx.execute(
         r#"
-INSERT INTO notification_dispatch_outbox (job_id, finished_at, summary_json)
-VALUES (?1, ?2, ?3)
+INSERT INTO notification_dispatch_outbox (job_id, reason, finished_at, summary_json)
+VALUES (?1, ?2, ?3, ?4)
 ON CONFLICT(job_id) DO NOTHING
 "#,
-        params![job_id, finished_at, serde_json::to_string(summary)?],
+        params![job_id, reason, finished_at, serde_json::to_string(summary)?],
     )?;
     Ok(())
 }
@@ -35,9 +36,8 @@ impl Db {
         self.call(|conn| {
             let mut stmt = conn.prepare(
                 r#"
-SELECT outbox.job_id, jobs.reason, outbox.finished_at, outbox.summary_json
+SELECT outbox.job_id, outbox.reason, outbox.finished_at, outbox.summary_json
 FROM notification_dispatch_outbox outbox
-JOIN jobs ON jobs.id = outbox.job_id
 WHERE outbox.processed_at IS NULL
 ORDER BY outbox.finished_at ASC, outbox.job_id ASC
 LIMIT 256

@@ -24,6 +24,7 @@ import {
 import type { NotificationItem } from './api/types'
 import { appBasePath, withAppBasePath } from './appBase'
 import { setNotificationBadge } from './notificationBadge'
+import { refreshNotificationAfterServerChange } from './notificationSync'
 
 const BROADCAST_CHANNEL_NAME = 'dockrev:notifications'
 const COLD_START_ID = 'dockrevNotificationId'
@@ -130,7 +131,7 @@ export function NotificationProvider(props: { children: ReactNode }) {
               mutationRevision !== mutationRevisionRef.current ||
               listRevision !== listRevisionRef.current
             ) {
-              window.setTimeout(() => void sync(isOpenRef.current), 0)
+              window.setTimeout(() => void sync(isOpenRef.current, shouldBroadcast), 0)
               return false
             }
             setItems(response.items)
@@ -141,7 +142,7 @@ export function NotificationProvider(props: { children: ReactNode }) {
           } else {
             const response = await getNotificationUnreadCount()
             if (mutationRevision !== mutationRevisionRef.current) {
-              window.setTimeout(() => void sync(isOpenRef.current), 0)
+              window.setTimeout(() => void sync(isOpenRef.current, shouldBroadcast), 0)
               return false
             }
             applyServerUnreadCount(response.unreadCount, shouldBroadcast)
@@ -180,6 +181,20 @@ export function NotificationProvider(props: { children: ReactNode }) {
     isOpenRef.current = false
     setIsOpen(false)
   }, [])
+
+  const refreshAfterServerChange = useCallback(
+    async (withItems: boolean, shouldBroadcast: boolean): Promise<boolean> => {
+      return refreshNotificationAfterServerChange(
+        sync,
+        () => {
+          mutationRevisionRef.current += 1
+        },
+        withItems,
+        shouldBroadcast,
+      )
+    },
+    [sync],
+  )
 
   const read = useCallback(
     async (item: NotificationItem) => {
@@ -271,14 +286,14 @@ export function NotificationProvider(props: { children: ReactNode }) {
     const channel = new BroadcastChannel(BROADCAST_CHANNEL_NAME)
     const onMessage = (event: MessageEvent<NotificationBroadcast>) => {
       if (event.data?.type !== 'unread-count') return
-      applyUnreadCount(event.data.unreadCount)
+      void refreshAfterServerChange(isOpenRef.current, false)
     }
     channel.addEventListener('message', onMessage)
     return () => {
       channel.removeEventListener('message', onMessage)
       channel.close()
     }
-  }, [applyUnreadCount])
+  }, [refreshAfterServerChange])
 
   const acknowledgeClick = useCallback(
     async (notificationId: string, target: string, port?: MessagePort): Promise<boolean> => {
@@ -310,7 +325,7 @@ export function NotificationProvider(props: { children: ReactNode }) {
     const onServiceWorkerMessage = (event: MessageEvent) => {
       const data = event.data
       if (data?.type === PUSH_MESSAGE) {
-        void sync(isOpenRef.current)
+        void refreshAfterServerChange(isOpenRef.current, true)
           .then((ok) => event.ports?.[0]?.postMessage({ type: PUSH_ACK, ok }))
           .catch(() => event.ports?.[0]?.postMessage({ type: PUSH_ACK, ok: false }))
         return
@@ -320,7 +335,7 @@ export function NotificationProvider(props: { children: ReactNode }) {
     }
     navigator.serviceWorker?.addEventListener('message', onServiceWorkerMessage)
     return () => navigator.serviceWorker?.removeEventListener('message', onServiceWorkerMessage)
-  }, [acknowledgeClick, sync])
+  }, [acknowledgeClick, refreshAfterServerChange])
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search)

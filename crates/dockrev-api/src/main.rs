@@ -305,6 +305,13 @@ async fn main() -> anyhow::Result<()> {
             .await?;
     }
     api::replay_pending_check_notifications(&state).await;
+    let notification_replay_state = state.clone();
+    tokio::spawn(async move {
+        loop {
+            tokio::time::sleep(std::time::Duration::from_secs(60)).await;
+            api::replay_pending_check_notifications(&notification_replay_state).await;
+        }
+    });
     let evidence_db = state.db.clone();
     let evidence_db_path = state.config.db_path.clone();
     tokio::spawn(async move {

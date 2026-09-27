@@ -11,6 +11,7 @@ pub(super) fn apply_migrations(conn: &mut rusqlite::Connection) -> anyhow::Resul
     apply_migration_0033_add_notification_anomaly_occurrences(conn)?;
     apply_migration_0034_add_notification_dispatch_outbox(conn)?;
     apply_migration_0035_add_new_version_delivery_claim(conn)?;
+    apply_migration_0036_add_notification_dispatch_reason(conn)?;
     Ok(())
 }
 
@@ -226,6 +227,28 @@ ALTER TABLE new_version_notifications ADD COLUMN delivery_claim_expires_at TEXT;
 CREATE INDEX IF NOT EXISTS idx_new_version_notifications_delivery_claim
   ON new_version_notifications(delivery_claim_expires_at);
 "#,
+    )?;
+    record_migration_tx(&tx, id)?;
+    tx.commit()?;
+    Ok(())
+}
+
+pub(super) fn apply_migration_0036_add_notification_dispatch_reason(
+    conn: &mut rusqlite::Connection,
+) -> anyhow::Result<()> {
+    let id = "0036_add_notification_dispatch_reason";
+    if migration_applied(conn, id)? {
+        return Ok(());
+    }
+
+    let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
+    tx.execute(
+        "ALTER TABLE notification_dispatch_outbox ADD COLUMN reason TEXT NOT NULL DEFAULT ''",
+        [],
+    )?;
+    tx.execute(
+        "UPDATE notification_dispatch_outbox SET reason = COALESCE((SELECT reason FROM jobs WHERE jobs.id = notification_dispatch_outbox.job_id), '') WHERE reason = ''",
+        [],
     )?;
     record_migration_tx(&tx, id)?;
     tx.commit()?;
