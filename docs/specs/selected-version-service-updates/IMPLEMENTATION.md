@@ -29,15 +29,11 @@
 
 ## Empirical Acceptance
 
-- Scenario: 在隔离 Compose 服务上先观察配置标签 `latest` 的 D34，再将 Registry 的 `latest` 指向 D38；从版本列表通过普通路径部署已观测 D37。随后让真实 cron 检查首次观察一个新的 D38 测试摘要，并由已启用的自动策略部署。
-- Result: `v2.71.34` 检查后，历史关联使 `v2.71.37` 走普通指定部署并成功；未观测的 `v2.71.38` 预检分类为强制。最终计划检查 `chk_01M3J2FY74JM6VTCWC31DHPR6E` 成功观察到当前 `latest` 摘要 `sha256:bdc29646be584a68a1b4559aae6ba265f651d5ce11b4d15fcbc49d0676831099`，自动策略任务 `job_01M3J2G95KZE8J5NMFAKDQYMNY` 成功从 D37 推进到该 D38 摘要；运行镜像与本地 `latest` 摘要一致，Compose 文件 SHA-256 保持为 `9ffa0dbd18105e861ded817cf1ae7de3166da710c7607bbd626dcfae38a0d32f`。测试 Registry 为避免复用旧候选，以仅增加测试标签的镜像生成新摘要；自动策略拉取可选兼容标签 `2.71.38` 时 Registry 未提供该别名，产生非阻塞告警，目标摘要部署成功。
-- Evidence: 当前候选 API 全量测试和上述检查/任务 JSON、镜像摘要、Compose SHA-256 及设置恢复结果保存在 `/srv/codex/agents/01a0d6f3-3124-7432-9daa-99fd4bfb3755/selected-version-fix-62bc150e-20260928/evidence-final`。
+- Scenario: 在隔离 Compose 服务上先观察配置标签 `latest` 的 D34，再从版本列表通过普通路径部署已观测 D37。对实现提交 `3e7ff16fa46b69fffa11a0b9ddd20684cf576d95` 的源码候选，让真实 cron 检查首次观察新的 D38 测试摘要，并由已启用的自动策略部署。
+- Result: `v2.71.34` 检查后，历史关联使 `v2.71.37` 走普通指定部署并成功；未观测的 `v2.71.38` 预检分类为强制。最终计划检查 `chk_01M3J3ZHN19VS50PWDWQ71Z37T` 记录配置标签 `latest` 对应的 `v2.71.38` 摘要 `sha256:686f4c86b3f4a5123fcc68ba257df6f4b7e283160064c8d79e6fe6825b5d0e3a`，自动策略任务 `job_01M3J3ZWMJW93CDM7K6KTBMV6D` 成功从 D37 推进到该摘要；运行镜像与本地 `latest` 摘要一致，Compose 文件 SHA-256 保持为 `9ffa0dbd18105e861ded817cf1ae7de3166da710c7607bbd626dcfae38a0d32f`。测试 Registry 为避免复用旧候选，以仅增加测试标签的镜像生成新摘要；自动策略拉取可选兼容标签 `2.71.38` 时 Registry 未提供该别名，产生非阻塞告警，目标摘要部署成功。
+- Evidence: 绑定最终候选 SHA 的 API 全量测试结果、检查/任务 JSON、镜像摘要、Compose SHA-256 及设置恢复结果保存在 `/srv/codex/agents/01a0d6f3-3124-7432-9daa-99fd4bfb3755/selected-version-fix-62bc150e-20260928/evidence-final`。
 - Test transport: 测试机隔离工作副本使用临时 CA 信任配置访问带 TLS 的本地 Registry；该构建参数和证书未改仓库源码或正式构建配置。
 - Candidate binding: 最终候选 SHA、验收合同摘要、必需场景摘要和最终运行日志位置保存在当前交付流的 Candidate evidence card 中。
-
-## Remaining Gaps
-
-- 完成 Tier 3 四通道审查、最终候选 CI 和 Step 5C Ready 收敛；不合并。
 
 ## Related Changes
 
