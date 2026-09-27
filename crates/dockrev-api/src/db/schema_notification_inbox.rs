@@ -16,6 +16,7 @@ pub(super) fn apply_migrations(conn: &mut rusqlite::Connection) -> anyhow::Resul
     apply_migration_0038_add_notification_delivery_guards(conn)?;
     apply_migration_0039_add_notification_dispatch_decision_marker(conn)?;
     apply_migration_0040_backfill_notification_anomaly_occurrences(conn)?;
+    apply_migration_0041_add_notification_anomaly_delivery_attempt(conn)?;
     Ok(())
 }
 
@@ -377,6 +378,27 @@ ALTER TABLE notification_anomaly_occurrences ADD COLUMN delivery_claim_token TEX
 ALTER TABLE notification_anomaly_occurrences ADD COLUMN delivery_claim_expires_at TEXT;
 CREATE INDEX IF NOT EXISTS idx_notification_anomaly_occurrences_delivery_claim
   ON notification_anomaly_occurrences(delivery_claim_expires_at);
+"#,
+    )?;
+    record_migration_tx(&tx, id)?;
+    tx.commit()?;
+    Ok(())
+}
+
+pub(super) fn apply_migration_0041_add_notification_anomaly_delivery_attempt(
+    conn: &mut rusqlite::Connection,
+) -> anyhow::Result<()> {
+    let id = "0041_add_notification_anomaly_delivery_attempt";
+    if migration_applied(conn, id)? {
+        return Ok(());
+    }
+
+    let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
+    tx.execute_batch(
+        r#"
+ALTER TABLE notification_anomaly_occurrences ADD COLUMN delivery_attempted_at TEXT;
+CREATE INDEX IF NOT EXISTS idx_notification_anomaly_occurrences_replay
+  ON notification_anomaly_occurrences(notification_pending, delivery_attempted_at, created_at, id);
 "#,
     )?;
     record_migration_tx(&tx, id)?;
