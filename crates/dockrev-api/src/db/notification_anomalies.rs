@@ -190,6 +190,68 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn anomaly_replay_does_not_starve_items_after_a_failed_batch() {
+        let db = Db::open(std::path::Path::new(":memory:")).await.unwrap();
+        let observations = (0..256)
+            .map(|index| NotificationAnomalyObservation {
+                owner: "acme".to_string(),
+                repo: format!("service-{index:03}"),
+                state: "missing".to_string(),
+                last_error: None,
+                occurrence_count: 1,
+            })
+            .collect::<Vec<_>>();
+        let scope = observations
+            .iter()
+            .map(|item| format!("{}/{}", item.owner, item.repo))
+            .collect::<Vec<_>>();
+        db.reconcile_notification_anomaly_states(&scope, &observations, "2026-09-26T00:00:00Z")
+            .await
+            .unwrap();
+        db.reconcile_notification_anomaly_states(
+            &["acme/service-256".to_string()],
+            &[NotificationAnomalyObservation {
+                owner: "acme".to_string(),
+                repo: "service-256".to_string(),
+                state: "missing".to_string(),
+                last_error: None,
+                occurrence_count: 1,
+            }],
+            "2026-09-26T00:01:00Z",
+        )
+        .await
+        .unwrap();
+
+        let first_page = db
+            .list_all_pending_notification_anomaly_occurrences()
+            .await
+            .unwrap();
+        assert_eq!(first_page.len(), 256);
+        assert!(
+            !first_page
+                .iter()
+                .any(|item| item.observation.repo == "service-256")
+        );
+
+        db.try_claim_notification_anomaly_batch(
+            &first_page[0].batch_id,
+            "claim-failed-batch",
+            "2026-09-26T00:02:00Z",
+        )
+        .await
+        .unwrap();
+        let next_page = db
+            .list_all_pending_notification_anomaly_occurrences()
+            .await
+            .unwrap();
+        assert!(
+            next_page
+                .iter()
+                .any(|item| item.observation.repo == "service-256")
+        );
+    }
+
+    #[tokio::test]
     async fn disabled_anomaly_notifications_are_not_replayed_after_reenable() {
         let db = Db::open(std::path::Path::new(":memory:")).await.unwrap();
         let scope = vec!["acme/api".to_string()];
@@ -962,7 +1024,7 @@ impl Db {
     ) -> anyhow::Result<Vec<NotificationAnomalyOccurrence>> {
         self.call(|conn| {
             let mut stmt = conn.prepare(
-                "SELECT owner, repo, state, last_error, occurrence_count, batch_id, notification_item_id, sent_channels_json, source_job_id, source_status FROM notification_anomaly_occurrences WHERE notification_pending = 1 ORDER BY created_at, id LIMIT 256",
+                "SELECT owner, repo, state, last_error, occurrence_count, batch_id, notification_item_id, sent_channels_json, source_job_id, source_status FROM notification_anomaly_occurrences WHERE notification_pending = 1 ORDER BY delivery_attempted_at IS NOT NULL, delivery_attempted_at, created_at, id LIMIT 256",
             )?;
             let rows = stmt.query_map([], |row| {
                 let raw_channels: String = row.get(7)?;
@@ -1048,8 +1110,13 @@ impl Db {
                 return Ok(false);
             }
             let changed = tx.execute(
-                "UPDATE notification_anomaly_occurrences SET delivery_claim_token = ?2, delivery_claim_expires_at = ?3 WHERE batch_id = ?1 AND notification_pending = 1",
-                params![batch_id.as_str(), claim_token.as_str(), claim_expires_at.as_str()],
+                "UPDATE notification_anomaly_occurrences SET delivery_claim_token = ?2, delivery_claim_expires_at = ?3, delivery_attempted_at = ?4 WHERE batch_id = ?1 AND notification_pending = 1",
+                params![
+                    batch_id.as_str(),
+                    claim_token.as_str(),
+                    claim_expires_at.as_str(),
+                    now.as_str(),
+                ],
             )?;
             tx.commit()?;
             Ok(changed as i64 == total)
