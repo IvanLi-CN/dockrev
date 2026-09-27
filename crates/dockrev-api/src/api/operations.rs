@@ -741,49 +741,27 @@ pub(crate) async fn complete_check_job(
                     );
                 }
                 match state.db.check_notification_event_enabled(job_id).await {
-                    Ok(Some(true)) => match maybe_notify_check_new_versions(
-                        state,
-                        job_id,
-                        reason,
-                        finished_at,
-                        &notify_summary,
-                        true,
-                    )
-                    .await
-                    {
-                        Ok(()) => {
-                            if let Err(e) = state
-                                .db
-                                .mark_check_notification_dispatch_processed(job_id, finished_at)
-                                .await
-                            {
-                                tracing::warn!(
-                                    job_id = %job_id,
-                                    error = %e,
-                                    "failed to mark check notification dispatch processed"
-                                );
-                            }
-                        }
-                        Err(e) => {
-                            tracing::warn!(
-                                job_id = %job_id,
-                                error = %e,
-                                "failed to send discovered-version notification"
-                            );
-                        }
-                    },
-                    Ok(Some(false)) => {
-                        if let Err(e) = state
-                            .db
-                            .mark_check_notification_dispatch_processed(job_id, finished_at)
-                            .await
-                        {
-                            tracing::warn!(
-                                job_id = %job_id,
-                                error = %e,
-                                "failed to mark disabled check notification dispatch processed"
-                            );
-                        }
+                    Ok(Some(Some(event_enabled))) => {
+                        notification_replay::dispatch_check_notification(
+                            state,
+                            job_id,
+                            reason,
+                            finished_at,
+                            &notify_summary,
+                            event_enabled,
+                        )
+                        .await;
+                    }
+                    Ok(Some(None)) => {
+                        notification_replay::dispatch_check_notification(
+                            state,
+                            job_id,
+                            reason,
+                            finished_at,
+                            &notify_summary,
+                            false,
+                        )
+                        .await;
                     }
                     Ok(None) => {}
                     Err(e) => {

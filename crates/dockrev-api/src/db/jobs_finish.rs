@@ -150,7 +150,7 @@ WHERE id IN (
                         .optional()
                         .ok()
                         .flatten()
-                        .unwrap_or(1)
+                        .unwrap_or(0)
                         != 0;
                     new_version_discoveries::record_new_version_discoveries_from_summary_conn(
                         &tx,
@@ -180,7 +180,7 @@ WHERE id IN (
                         .optional()
                         .ok()
                         .flatten()
-                        .unwrap_or(1)
+                        .unwrap_or(0)
                         != 0;
                     if event_enabled {
                         super::notification_items::insert_notification_item_tx(&tx, notification)?;

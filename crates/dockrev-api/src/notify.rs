@@ -638,7 +638,9 @@ pub(crate) async fn replay_pending_ghcr_webhook_anomalies(
         },
         repos: &[],
     };
-    notify_ghcr_webhook_anomaly(state, now_rfc3339, event, None).await
+    // Pending anomaly rows represent an already accepted event decision. A replay
+    // must not re-read the current toggle and discard that durable decision.
+    notify_ghcr_webhook_anomaly(state, now_rfc3339, event, Some(true)).await
 }
 
 async fn notification_target_url(

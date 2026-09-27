@@ -1,5 +1,49 @@
 use super::*;
 
+pub(crate) async fn dispatch_check_notification(
+    state: &Arc<AppState>,
+    job_id: &str,
+    reason: &str,
+    finished_at: &str,
+    summary: &serde_json::Value,
+    event_enabled: bool,
+) {
+    if !event_enabled {
+        if let Err(error) = state
+            .db
+            .mark_check_notification_dispatch_processed(job_id, finished_at)
+            .await
+        {
+            tracing::warn!(
+                job_id = %job_id,
+                error = %error,
+                "failed to mark disabled check notification dispatch processed"
+            );
+        }
+        return;
+    }
+    match maybe_notify_check_new_versions(state, job_id, reason, finished_at, summary, true).await {
+        Ok(()) => {
+            if let Err(error) = state
+                .db
+                .mark_check_notification_dispatch_processed(job_id, finished_at)
+                .await
+            {
+                tracing::warn!(
+                    job_id = %job_id,
+                    error = %error,
+                    "failed to mark check notification dispatch processed"
+                );
+            }
+        }
+        Err(error) => tracing::warn!(
+            job_id = %job_id,
+            error = %error,
+            "failed to send discovered-version notification"
+        ),
+    }
+}
+
 pub(crate) async fn replay_pending_check_notifications(state: &Arc<AppState>) {
     let mut after = None::<(String, String)>;
     loop {
@@ -27,7 +71,7 @@ pub(crate) async fn replay_pending_check_notifications(state: &Arc<AppState>) {
             .map(|dispatch| (dispatch.finished_at.clone(), dispatch.job_id.clone()));
         let mut processed_any = false;
         for dispatch in pending {
-            if !dispatch.event_enabled {
+            if dispatch.event_enabled != Some(true) {
                 if let Err(error) = state
                     .db
                     .mark_check_notification_dispatch_processed(
@@ -52,7 +96,7 @@ pub(crate) async fn replay_pending_check_notifications(state: &Arc<AppState>) {
                 &dispatch.reason,
                 &dispatch.finished_at,
                 &dispatch.summary,
-                dispatch.event_enabled,
+                true,
             )
             .await
             {

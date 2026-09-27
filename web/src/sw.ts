@@ -242,9 +242,11 @@ self.addEventListener('notificationclick', (event) => {
               if (await waitForNotificationClickAck(client, notificationId, targetUrl)) {
                 try {
                   await client.focus()
-                  return client.navigate(targetUrl)
+                  const navigated = await client.navigate(targetUrl)
+                  if (navigated) return navigated
                 } catch {
-                  return client.focus()
+                  // Fall through to the cold-start URL so a failed controlled
+                  // navigation does not leave the notification marked read.
                 }
               }
             } catch {

@@ -9,7 +9,7 @@ pub(crate) struct PendingCheckNotificationDispatch {
     pub reason: String,
     pub finished_at: String,
     pub summary: serde_json::Value,
-    pub event_enabled: bool,
+    pub event_enabled: Option<bool>,
 }
 
 pub(super) fn enqueue_check_notification_tx(
@@ -22,8 +22,8 @@ pub(super) fn enqueue_check_notification_tx(
 ) -> anyhow::Result<()> {
     tx.execute(
         r#"
-INSERT INTO notification_dispatch_outbox (job_id, reason, finished_at, summary_json, event_enabled)
-VALUES (?1, ?2, ?3, ?4, ?5)
+INSERT INTO notification_dispatch_outbox (job_id, reason, finished_at, summary_json, event_enabled, event_decision_known)
+VALUES (?1, ?2, ?3, ?4, ?5, 1)
 ON CONFLICT(job_id) DO NOTHING
 "#,
         params![
@@ -55,7 +55,8 @@ impl Db {
         self.call(move |conn| {
             let mut stmt = conn.prepare(
                 r#"
-SELECT outbox.job_id, outbox.reason, outbox.finished_at, outbox.summary_json, outbox.event_enabled
+SELECT outbox.job_id, outbox.reason, outbox.finished_at, outbox.summary_json,
+       CASE WHEN outbox.event_decision_known != 0 THEN outbox.event_enabled ELSE NULL END
 FROM notification_dispatch_outbox outbox
 WHERE outbox.processed_at IS NULL
   AND (
@@ -81,7 +82,7 @@ LIMIT 256
                     reason: row.get(1)?,
                     finished_at: row.get(2)?,
                     summary,
-                    event_enabled: row.get::<_, i64>(4)? != 0,
+                    event_enabled: row.get::<_, Option<i64>>(4)?.map(|value| value != 0),
                 })
             })?;
             Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
@@ -111,13 +112,16 @@ LIMIT 256
     pub(crate) async fn check_notification_event_enabled(
         &self,
         job_id: &str,
-    ) -> anyhow::Result<Option<bool>> {
+    ) -> anyhow::Result<Option<Option<bool>>> {
         let job_id = job_id.to_string();
         self.call(move |conn| {
             conn.query_row(
-                "SELECT event_enabled FROM notification_dispatch_outbox WHERE job_id = ?1",
+                "SELECT CASE WHEN event_decision_known != 0 THEN event_enabled ELSE NULL END FROM notification_dispatch_outbox WHERE job_id = ?1",
                 params![job_id],
-                |row| row.get::<_, i64>(0).map(|value| value != 0),
+                |row| {
+                    row.get::<_, Option<i64>>(0)
+                        .map(|value| value.map(|value| value != 0))
+                },
             )
             .optional()
             .map_err(Into::into)

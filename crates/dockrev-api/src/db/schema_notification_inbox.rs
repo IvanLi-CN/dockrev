@@ -14,6 +14,7 @@ pub(super) fn apply_migrations(conn: &mut rusqlite::Connection) -> anyhow::Resul
     apply_migration_0036_add_notification_dispatch_reason(conn)?;
     apply_migration_0037_add_notification_anomaly_delivery_claim(conn)?;
     apply_migration_0038_add_notification_delivery_guards(conn)?;
+    apply_migration_0039_add_notification_dispatch_decision_marker(conn)?;
     Ok(())
 }
 
@@ -232,6 +233,24 @@ pub(super) fn apply_migration_0038_add_notification_delivery_guards(
     )?;
     tx.execute(
         "ALTER TABLE notification_anomaly_occurrences ADD COLUMN source_status TEXT NOT NULL DEFAULT 'success'",
+        [],
+    )?;
+    record_migration_tx(&tx, id)?;
+    tx.commit()?;
+    Ok(())
+}
+
+pub(super) fn apply_migration_0039_add_notification_dispatch_decision_marker(
+    conn: &mut rusqlite::Connection,
+) -> anyhow::Result<()> {
+    let id = "0039_add_notification_dispatch_decision_marker";
+    if migration_applied(conn, id)? {
+        return Ok(());
+    }
+
+    let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
+    tx.execute(
+        "ALTER TABLE notification_dispatch_outbox ADD COLUMN event_decision_known INTEGER NOT NULL DEFAULT 0",
         [],
     )?;
     record_migration_tx(&tx, id)?;
