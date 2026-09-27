@@ -305,11 +305,25 @@ async fn main() -> anyhow::Result<()> {
             .await?;
     }
     api::replay_pending_check_notifications(&state).await;
+    if let Err(err) = notify::replay_pending_ghcr_webhook_anomalies(&state, &now).await {
+        tracing::warn!(error = %err, "failed to replay pending GHCR webhook anomaly notifications");
+    }
     let notification_replay_state = state.clone();
     tokio::spawn(async move {
         loop {
             tokio::time::sleep(std::time::Duration::from_secs(60)).await;
             api::replay_pending_check_notifications(&notification_replay_state).await;
+            let replay_now = time::OffsetDateTime::now_utc()
+                .format(&time::format_description::well_known::Rfc3339)
+                .unwrap_or_else(|_| "1970-01-01T00:00:00Z".to_string());
+            if let Err(err) = notify::replay_pending_ghcr_webhook_anomalies(
+                &notification_replay_state,
+                &replay_now,
+            )
+            .await
+            {
+                tracing::warn!(error = %err, "failed to replay pending GHCR webhook anomaly notifications");
+            }
         }
     });
     let evidence_db = state.db.clone();

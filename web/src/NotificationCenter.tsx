@@ -200,6 +200,7 @@ export function NotificationProvider(props: { children: ReactNode }) {
     async (item: NotificationItem) => {
       mutationRevisionRef.current += 1
       const response = await markNotificationRead(item.id)
+      mutationRevisionRef.current += 1
       setItems((current) =>
         current.map((candidate) =>
           candidate.id === item.id ? { ...candidate, readAt: response.readAt } : candidate,
@@ -216,6 +217,7 @@ export function NotificationProvider(props: { children: ReactNode }) {
     try {
       mutationRevisionRef.current += 1
       const response = await markAllNotificationsRead()
+      mutationRevisionRef.current += 1
       setItems((current) => current.map((item) => ({ ...item, readAt: response.readAt })))
       applyUnreadCount(response.unreadCount)
       broadcastUnreadCount(response.unreadCount)
@@ -302,6 +304,7 @@ export function NotificationProvider(props: { children: ReactNode }) {
         const item = items.find((candidate) => candidate.id === notificationId)
         mutationRevisionRef.current += 1
         const response = await markNotificationRead(notificationId)
+        mutationRevisionRef.current += 1
         applyUnreadCount(response.unreadCount)
         setItems((current) =>
           current.map((candidate) =>

@@ -188,6 +188,44 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn disabled_anomaly_notifications_are_not_replayed_after_reenable() {
+        let db = Db::open(std::path::Path::new(":memory:")).await.unwrap();
+        let scope = vec!["acme/api".to_string()];
+
+        db.reconcile_notification_anomaly_states_with_enabled(
+            &scope,
+            &[observation("missing")],
+            "2026-09-26T00:00:00Z",
+            false,
+        )
+        .await
+        .unwrap();
+        assert!(
+            db.list_all_pending_notification_anomaly_occurrences()
+                .await
+                .unwrap()
+                .is_empty()
+        );
+
+        let reenabled = db
+            .reconcile_notification_anomaly_states_with_enabled(
+                &scope,
+                &[observation("missing")],
+                "2026-09-26T00:01:00Z",
+                true,
+            )
+            .await
+            .unwrap();
+        assert!(reenabled.is_empty());
+        assert!(
+            db.list_all_pending_notification_anomaly_occurrences()
+                .await
+                .unwrap()
+                .is_empty()
+        );
+    }
+
+    #[tokio::test]
     async fn new_anomaly_in_a_later_audit_gets_a_new_batch() {
         let db = Db::open(std::path::Path::new(":memory:")).await.unwrap();
         let first = db
@@ -511,10 +549,11 @@ fn insert_occurrence(
     last_error: Option<&str>,
     occurrence_count: i64,
     batch_id: &str,
+    notification_pending: bool,
     created_at: &str,
 ) -> rusqlite::Result<()> {
     tx.execute(
-        "INSERT INTO notification_anomaly_occurrences (id, owner, repo, state, last_error, occurrence_count, batch_id, created_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+        "INSERT INTO notification_anomaly_occurrences (id, owner, repo, state, last_error, occurrence_count, batch_id, notification_pending, created_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
         params![
             crate::ids::new_notification_id(),
             owner,
@@ -523,6 +562,7 @@ fn insert_occurrence(
             last_error,
             occurrence_count,
             batch_id,
+            notification_pending,
             created_at,
         ],
     )?;
@@ -530,17 +570,30 @@ fn insert_occurrence(
 }
 
 impl Db {
+    #[allow(dead_code)]
     pub(crate) async fn reconcile_notification_anomaly_states(
         &self,
         scope_keys: &[String],
         observations: &[NotificationAnomalyObservation],
         now: &str,
     ) -> anyhow::Result<Vec<NotificationAnomalyObservation>> {
+        self.reconcile_notification_anomaly_states_with_enabled(scope_keys, observations, now, true)
+            .await
+    }
+
+    pub(crate) async fn reconcile_notification_anomaly_states_with_enabled(
+        &self,
+        scope_keys: &[String],
+        observations: &[NotificationAnomalyObservation],
+        now: &str,
+        notification_enabled: bool,
+    ) -> anyhow::Result<Vec<NotificationAnomalyObservation>> {
         let scope_keys = scope_keys.to_vec();
         let observations = observations.to_vec();
         let now = now.to_string();
         self.call(move |conn| {
             let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
+            let notification_pending = notification_enabled;
             // One audit invocation owns one batch. Existing pending occurrences
             // keep their original batch so retries do not mutate an earlier item.
             let audit_batch_id = crate::ids::new_notification_id();
@@ -550,6 +603,22 @@ impl Db {
                     .iter()
                     .map(|item| format!("{}/{}", item.owner, item.repo)),
             );
+
+            if !notification_enabled {
+                for key in &requested_keys {
+                    let Some((owner, repo)) = key.split_once('/') else {
+                        continue;
+                    };
+                    tx.execute(
+                        "UPDATE notification_anomaly_occurrences SET notification_pending = 0, sent_channels_json = '[]', delivery_claim_token = NULL, delivery_claim_expires_at = NULL WHERE owner = ?1 AND repo = ?2 AND notification_pending = 1",
+                        params![owner, repo],
+                    )?;
+                    tx.execute(
+                        "UPDATE notification_anomaly_states SET notification_pending = 0, notification_batch_id = NULL, notification_sent_channels_json = '[]' WHERE owner = ?1 AND repo = ?2",
+                        params![owner, repo],
+                    )?;
+                }
+            }
 
             for observation in &observations {
                 let previous = tx
@@ -580,11 +649,12 @@ impl Db {
                             observation.last_error.as_deref(),
                             1,
                             &batch_id,
+                            notification_pending,
                             &now,
                         )?;
                         tx.execute(
-                            "INSERT INTO notification_anomaly_states (owner, repo, state, active, occurrence_count, last_error, last_seen_at, notification_pending, notification_batch_id) VALUES (?1, ?2, ?3, 1, 1, ?4, ?5, 1, ?6)",
-                            params![observation.owner, observation.repo, observation.state, observation.last_error, now, batch_id],
+                            "INSERT INTO notification_anomaly_states (owner, repo, state, active, occurrence_count, last_error, last_seen_at, notification_pending, notification_batch_id) VALUES (?1, ?2, ?3, 1, 1, ?4, ?5, ?6, ?7)",
+                            params![observation.owner, observation.repo, observation.state, observation.last_error, now, notification_pending, batch_id],
                         )?;
                         (1, batch_id)
                     }
@@ -620,11 +690,12 @@ impl Db {
                                 observation.last_error.as_deref(),
                                 occurrence_count,
                                 &occurrence_batch_id,
+                                notification_pending,
                                 &now,
                             )?;
                         }
                         tx.execute(
-                            "UPDATE notification_anomaly_states SET state = ?3, active = 1, occurrence_count = ?4, last_error = ?5, last_seen_at = ?6, notification_pending = EXISTS(SELECT 1 FROM notification_anomaly_occurrences WHERE owner = ?1 AND repo = ?2 AND notification_pending = 1), notification_batch_id = ?7 WHERE owner = ?1 AND repo = ?2 AND last_seen_at <= ?6",
+                            "UPDATE notification_anomaly_states SET state = ?3, active = 1, occurrence_count = ?4, last_error = ?5, last_seen_at = ?6, notification_pending = CASE WHEN ?8 != 0 THEN EXISTS(SELECT 1 FROM notification_anomaly_occurrences WHERE owner = ?1 AND repo = ?2 AND notification_pending = 1) ELSE 0 END, notification_batch_id = CASE WHEN ?8 != 0 THEN ?7 ELSE NULL END WHERE owner = ?1 AND repo = ?2 AND last_seen_at <= ?6",
                             params![
                                 observation.owner,
                                 observation.repo,
@@ -633,6 +704,7 @@ impl Db {
                                 observation.last_error,
                                 now,
                                 occurrence_batch_id,
+                                notification_pending,
                             ],
                         )?;
                         (occurrence_count, occurrence_batch_id)
@@ -682,13 +754,14 @@ impl Db {
                                 last_error.as_deref(),
                                 occurrence_count,
                                 &batch_id,
+                                notification_pending,
                                 &now,
                             )?;
                         }
                     }
                     tx.execute(
-                        "UPDATE notification_anomaly_states SET active = 0, last_seen_at = ?3, notification_pending = EXISTS(SELECT 1 FROM notification_anomaly_occurrences WHERE owner = ?1 AND repo = ?2 AND notification_pending = 1) WHERE owner = ?1 AND repo = ?2 AND last_seen_at <= ?3",
-                        params![owner, repo, now],
+                        "UPDATE notification_anomaly_states SET active = 0, last_seen_at = ?3, notification_pending = CASE WHEN ?4 != 0 THEN EXISTS(SELECT 1 FROM notification_anomaly_occurrences WHERE owner = ?1 AND repo = ?2 AND notification_pending = 1) ELSE 0 END, notification_batch_id = CASE WHEN ?4 != 0 THEN notification_batch_id ELSE NULL END WHERE owner = ?1 AND repo = ?2 AND last_seen_at <= ?3",
+                        params![owner, repo, now, notification_pending],
                     )?;
                 }
             }
@@ -849,6 +922,36 @@ impl Db {
         })
         .await
         .context("list all pending notification anomaly occurrences")
+    }
+
+    pub(crate) async fn list_pending_notification_anomaly_occurrences_for_batch(
+        &self,
+        batch_id: &str,
+    ) -> anyhow::Result<Vec<NotificationAnomalyOccurrence>> {
+        let batch_id = batch_id.to_string();
+        self.call(move |conn| {
+            let mut stmt = conn.prepare(
+                "SELECT owner, repo, state, last_error, occurrence_count, batch_id, notification_item_id, sent_channels_json FROM notification_anomaly_occurrences WHERE batch_id = ?1 AND notification_pending = 1 ORDER BY created_at, id",
+            )?;
+            let rows = stmt.query_map(params![batch_id], |row| {
+                let raw_channels: String = row.get(7)?;
+                Ok(NotificationAnomalyOccurrence {
+                    observation: NotificationAnomalyObservation {
+                        owner: row.get(0)?,
+                        repo: row.get(1)?,
+                        state: row.get(2)?,
+                        last_error: row.get(3)?,
+                        occurrence_count: row.get(4)?,
+                    },
+                    batch_id: row.get(5)?,
+                    notification_item_id: row.get(6)?,
+                    sent_channels: serde_json::from_str(&raw_channels).unwrap_or_default(),
+                })
+            })?;
+            Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
+        })
+        .await
+        .context("list pending notification anomaly occurrences for batch")
     }
 
     pub(crate) async fn try_claim_notification_anomaly_batch(

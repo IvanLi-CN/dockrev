@@ -450,6 +450,8 @@ pub(crate) async fn send_email_ghcr_webhook_anomaly(
 
     let mailer: AsyncSmtpTransport<Tokio1Executor> =
         AsyncSmtpTransport::<Tokio1Executor>::from_url(&dsn)?.build();
-    mailer.send(email).await?;
+    tokio::time::timeout(Duration::from_secs(240), mailer.send(email))
+        .await
+        .context("email delivery timed out")??;
     Ok(())
 }

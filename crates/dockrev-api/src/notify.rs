@@ -471,7 +471,12 @@ pub async fn notify_ghcr_webhook_anomaly(
     if pending_occurrences.is_empty() {
         return Ok(());
     }
-    let target_url = notification_target_url(state, &format!("queue/{}", event.job_id)).await?;
+    let target_path = if event.job_id.is_empty() {
+        "queue".to_string()
+    } else {
+        format!("queue/{}", event.job_id)
+    };
+    let target_url = notification_target_url(state, &target_path).await?;
     let mut groups =
         std::collections::BTreeMap::<String, Vec<crate::db::NotificationAnomalyOccurrence>>::new();
     for occurrence in pending_occurrences {
@@ -481,13 +486,20 @@ pub async fn notify_ghcr_webhook_anomaly(
             .push(occurrence);
     }
 
-    for (batch_id, occurrences) in groups {
+    for (batch_id, _) in groups {
         let claim_token = crate::ids::new_notification_id();
         if !state
             .db
             .try_claim_notification_anomaly_batch(&batch_id, &claim_token, now_rfc3339)
             .await?
         {
+            continue;
+        }
+        let occurrences = state
+            .db
+            .list_pending_notification_anomaly_occurrences_for_batch(&batch_id)
+            .await?;
+        if occurrences.is_empty() {
             continue;
         }
         let anomaly_repos = occurrences
@@ -585,6 +597,23 @@ pub async fn notify_ghcr_webhook_anomaly(
             .await?;
     }
     Ok(())
+}
+
+pub(crate) async fn replay_pending_ghcr_webhook_anomalies(
+    state: &AppState,
+    now_rfc3339: &str,
+) -> anyhow::Result<()> {
+    let event = GhcrWebhookAnomalyEvent {
+        job_id: "",
+        status: "replay",
+        counts: GhcrWebhookAnomalyCounts {
+            missing: 0,
+            conflict: 0,
+            error: 0,
+        },
+        repos: &[],
+    };
+    notify_ghcr_webhook_anomaly(state, now_rfc3339, event).await
 }
 
 async fn notification_target_url(

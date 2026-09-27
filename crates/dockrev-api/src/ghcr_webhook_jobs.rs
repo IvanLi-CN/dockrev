@@ -621,9 +621,19 @@ async fn run_claimed_job(state: Arc<AppState>, job: JobListItem) -> anyhow::Resu
                     })
                     .collect::<Vec<_>>();
 
+                let notification_enabled = state
+                    .db
+                    .get_notification_settings()
+                    .await?
+                    .event_ghcr_webhook_anomaly_enabled;
                 match state
                     .db
-                    .reconcile_notification_anomaly_states(&scope_keys, &observations, &finished_at)
+                    .reconcile_notification_anomaly_states_with_enabled(
+                        &scope_keys,
+                        &observations,
+                        &finished_at,
+                        notification_enabled,
+                    )
                     .await
                 {
                     Ok(newly_active) => {

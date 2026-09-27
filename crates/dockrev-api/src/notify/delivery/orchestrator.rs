@@ -768,6 +768,7 @@ async fn send_web_push_with_progress(
     let attempted = pending.len();
     let mut successful_subscriptions = Vec::new();
     let mut first_error = None;
+    let mut final_retryable_failures = 0;
     for attempt in 0..2 {
         let mut retry = Vec::new();
         for (endpoint, p256dh, auth) in pending {
@@ -801,6 +802,8 @@ async fn send_web_push_with_progress(
                     }
                     if attempt == 0 {
                         retry.push(retry_subscription);
+                    } else {
+                        final_retryable_failures += 1;
                     }
                 }
             }
@@ -811,7 +814,10 @@ async fn send_web_push_with_progress(
         }
     }
 
-    let error = if !pending.is_empty() || (successful_subscriptions.is_empty() && attempted > 0) {
+    let error = if !pending.is_empty()
+        || final_retryable_failures > 0
+        || (successful_subscriptions.is_empty() && attempted > 0)
+    {
         Some(first_error.unwrap_or_else(|| "web push: no successful sends".to_string()))
     } else {
         None
