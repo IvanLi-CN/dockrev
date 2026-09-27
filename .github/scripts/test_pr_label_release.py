@@ -2063,7 +2063,7 @@ try:
 
     def fake_paged_runs(_api_root, _token, path):
         page_calls.append(path)
-        if "page=1&" in path:
+        if path.endswith("page=1"):
             return {"workflow_runs": [{"pull_requests": []}] * 100}
         if "label-gate.yml" not in path:
             return {"workflow_runs": [{"event": "pull_request", "head_sha": source_sha, "pull_requests": [{"number": 42}]}]}
@@ -2078,8 +2078,7 @@ try:
         "https://api.github.test", "token", "IvanLi-CN/dockrev", "label-gate.yml", 42, source_sha,
         required_event="pull_request_target",
     )) == 1
-    assert any("page=2&head_sha=" in path for path in page_calls)
-    assert all("head_sha=" in path for path in page_calls)
+    assert page_calls[-1].endswith("page=2")
 finally:
     completion.api_json = original_completion_api_json
 
