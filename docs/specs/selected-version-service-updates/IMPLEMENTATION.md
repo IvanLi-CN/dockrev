@@ -4,7 +4,7 @@
 
 ## Current Status
 
-- Implementation: 功能、自动验证和受控 Docker/Compose 行为验收已完成；视觉证据已归档
+- Implementation: 功能、自动验证、受控 Docker/Compose 行为验收和桌面/移动端视觉检查已完成
 - Lifecycle: active
 - Catalog note: 服务版本列表指定版本部署
 
@@ -18,7 +18,7 @@
 - Verification commands:
   - `cargo fmt --all -- --check`
   - `cargo clippy --workspace --all-targets --all-features -- -D warnings`
-  - `cargo test -p dockrev-api --bin dockrev`（948 passed、1 transient failure、1 ignored；失败用例立即单测重试通过）
+  - `cargo test -p dockrev-api --bin dockrev -- --test-threads=1`（951 passed、1 ignored）
   - In `web/`: `bun run test`（249 passed、778 expectations）、`bun run lint`（0 errors；3 existing hook warnings）、`bun run build:demo:pages`
   - TypeScript build, selected-version Spec contract check, and visual-evidence document check passed; the related legacy service-detail Spec retains its historical format and does not pass the current canonical-format checker.
   - In `web/`: `node ./scripts/storybook-build.mjs` and `DOCKREV_TEST_STORYBOOK_INTERACTIVE_ONLY=1 node ./scripts/test-storybook.mjs`
@@ -26,15 +26,15 @@
 
 ## Empirical Acceptance
 
-- Scenario: 在隔离 Compose 服务上先观察 `latest` 的 D34，再将 `latest` 指向 D37；检查后通过普通路径部署 D37，再让真实 cron 检查在策略启用时把服务推进到 D38。
-- Result: `v2.71.34` 检查后，历史关联使 `v2.71.37` 走普通指定部署并成功；未观测的 `v2.71.38` 预检分类为强制。随后真实计划检查和自动策略任务成功将服务推进到 `v2.71.38`。各步运行摘要与本地 `latest` 摘要一致，Compose 文件 SHA-256 保持不变。自动策略尝试拉取可选兼容标签 `2.71.38` 时测试 Registry 未提供该别名，因此有非阻塞告警；目标摘要部署成功。
-- Evidence: `/srv/codex/agents/01a0d6f3-3124-7432-9daa-99fd4bfb3755/selected-version-final-19042071-20260927t051612z/evidence.log`（实现候选 `190420710dd736822da1a16c40efb6f50b6da840`）；Compose 文件 SHA-256 前后均为 `456560989e96fdaab1958f14228a61e8fd04cf91e9efd063814a95ab925d5b8f`。关联应用日志位于同一目录的 `app.log`。
+- Scenario: 在隔离 Compose 服务上先观察配置标签 `latest` 的 D34，再将 Registry 的 `latest` 指向 D38；从版本列表通过普通路径部署已观测 D37，再启用真实 cron 检查及自动策略。
+- Result: `v2.71.34` 检查后，历史关联使 `v2.71.37` 走普通指定部署并成功；当时未观测的 `v2.71.38` 预检分类为强制。随后真实计划检查观察到 D38，自动策略任务成功将服务推进至 D38。各步运行摘要与本地 `latest` 摘要一致，Compose 文件 SHA-256 保持不变。自动策略尝试拉取可选兼容标签 `2.71.38` 时测试 Registry 未提供该别名，因此有非阻塞告警；目标摘要部署成功。
+- Evidence: 绑定最终候选 SHA 的日志、API 输出和服务/任务状态保存在受控 testbox Agent Directory；最终路径和 Compose SHA-256 将随当前候选证据卡更新。
 - Test transport: 测试机隔离工作副本使用临时 CA 信任配置访问带 TLS 的本地 Registry；该构建参数和证书未改仓库源码或正式构建配置。
 - Candidate binding: 最终候选 SHA、验收合同摘要、必需场景摘要和最终运行日志位置保存在当前交付流的 Candidate evidence card 中。
 
 ## Remaining Gaps
 
-- 完成 Tier 3 四通道审查、PR CI 和 Step 5C Ready 收敛；不合并。
+- 完成 Tier 3 四通道审查、最终候选 CI 和 Step 5C Ready 收敛；不合并。
 
 ## Related Changes
 
