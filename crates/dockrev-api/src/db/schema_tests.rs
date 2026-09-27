@@ -886,6 +886,10 @@ INSERT INTO notification_anomaly_states (
         &mut conn,
     )
     .unwrap();
+    super::schema_notification_inbox::apply_migration_0040_backfill_notification_anomaly_occurrences(
+        &mut conn,
+    )
+    .unwrap();
 
     let rows = conn
         .prepare(
@@ -929,7 +933,7 @@ INSERT INTO notification_anomaly_states (
                 "rate_limit".to_string(),
                 Some("rate limited".to_string()),
                 2,
-                "migration-0033:acme/web".to_string(),
+                "migration-0040:acme/web".to_string(),
                 1,
                 "[]".to_string(),
                 "2026-04-30T00:01:00Z".to_string(),

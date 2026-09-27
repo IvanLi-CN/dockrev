@@ -17743,7 +17743,12 @@ html[data-theme="light"] .homepageHeaderSearchPopover {
   }
 
   :is(.appShellStackDetail, .appShellServiceDetail) .topbarRight {
-    display: contents !important;
+    display: flex !important;
+    grid-area: actions;
+    align-items: center;
+    justify-content: flex-end;
+    gap: 8px;
+    min-width: 0;
   }
 
   :is(.appShellStackDetail, .appShellServiceDetail) .topActions {

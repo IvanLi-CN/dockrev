@@ -65,9 +65,16 @@ function clampUnreadCount(value: number): number {
 
 function broadcastUnreadCount(unreadCount: number, notificationId?: string): void {
   if (typeof BroadcastChannel === 'undefined') return
-  const channel = new BroadcastChannel(BROADCAST_CHANNEL_NAME)
-  channel.postMessage({ type: 'unread-count', unreadCount, notificationId } satisfies NotificationBroadcast)
-  channel.close()
+  try {
+    const channel = new BroadcastChannel(BROADCAST_CHANNEL_NAME)
+    try {
+      channel.postMessage({ type: 'unread-count', unreadCount, notificationId } satisfies NotificationBroadcast)
+    } finally {
+      channel.close()
+    }
+  } catch {
+    // REST remains authoritative when cross-tab broadcast is unavailable.
+  }
 }
 
 function navigateToNotification(target: string): void {
@@ -293,7 +300,12 @@ export function NotificationProvider(props: { children: ReactNode }) {
 
   useEffect(() => {
     if (typeof BroadcastChannel === 'undefined') return
-    const channel = new BroadcastChannel(BROADCAST_CHANNEL_NAME)
+    let channel: BroadcastChannel
+    try {
+      channel = new BroadcastChannel(BROADCAST_CHANNEL_NAME)
+    } catch {
+      return
+    }
     const onMessage = (event: MessageEvent<NotificationBroadcast>) => {
       if (event.data?.type !== 'unread-count') return
       void refreshAfterServerChange(isOpenRef.current, false)

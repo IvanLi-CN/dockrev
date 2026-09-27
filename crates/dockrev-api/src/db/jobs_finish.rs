@@ -11,7 +11,7 @@ impl Db {
         archive: Option<Vec<u8>>,
         settlements: Option<&[ServiceAcceptedStateSettlement]>,
         notification: Option<&NotificationItemDraft>,
-    ) -> anyhow::Result<()> {
+    ) -> anyhow::Result<Option<bool>> {
         let job_id = job_id.to_string();
         let status = status.to_string();
         let finished_at = finished_at.to_string();
@@ -171,7 +171,7 @@ WHERE id IN (
                         event_enabled,
                     )?;
                 }
-                if let Some(notification) = notification.as_ref() {
+                let notification_event_enabled = if let Some(notification) = notification.as_ref() {
                     let event_enabled = match tx.query_row(
                         "SELECT event_update_enabled FROM notification_settings LIMIT 1",
                         [],
@@ -187,7 +187,10 @@ WHERE id IN (
                     if event_enabled {
                         super::notification_items::insert_notification_item_tx(&tx, notification)?;
                     }
-                }
+                    Some(event_enabled)
+                } else {
+                    None
+                };
                 tx.commit()?;
                 Ok(Some((
                     job_id,
@@ -198,6 +201,7 @@ WHERE id IN (
                     service_id,
                     target_service_ids,
                     changed_stack_ids,
+                    notification_event_enabled,
                 )))
             })
             .await
@@ -209,6 +213,7 @@ WHERE id IN (
             self.sync_auto_update_candidate_policy_for_job(job_id, &projection_finished_at)
                 .await?;
         }
+        let notification_event_enabled = completed.as_ref().and_then(|completed| completed.8);
         if let Some((
             job_id,
             status,
@@ -218,6 +223,7 @@ WHERE id IN (
             service_id,
             target_service_ids,
             changed_stack_ids,
+            _notification_event_enabled,
         )) = completed
         {
             let mut entities = vec![crate::management_events::ManagementEventEntity {
@@ -254,6 +260,6 @@ WHERE id IN (
                 )
                 .await;
         }
-        Ok(())
+        Ok(notification_event_enabled)
     }
 }

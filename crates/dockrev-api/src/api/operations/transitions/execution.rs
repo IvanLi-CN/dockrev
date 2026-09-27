@@ -1428,7 +1428,7 @@ pub(crate) async fn run_update_job(
         &notify_summary,
     )
     .await?;
-    state
+    let notification_event_enabled = state
         .db
         .finish_job_with_archive_and_settlement_and_notification(
             &job_id,
@@ -1466,13 +1466,14 @@ pub(crate) async fn run_update_job(
             }
         }
     }
-    if should_notify
-        && let Err(error) = notify::notify_job_updated(
+    if notification_event_enabled == Some(true)
+        && let Err(error) = notify::notify_job_updated_with_event_enabled(
             state.as_ref(),
             &job_id,
             &final_status,
             &finished_at,
             &notify_summary,
+            notification_event_enabled,
         )
         .await
     {

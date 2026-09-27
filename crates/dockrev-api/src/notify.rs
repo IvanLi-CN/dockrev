@@ -42,15 +42,23 @@ const MAX_GHCR_REPO_ERROR_CHARS: usize = 256;
 const NEW_VERSION_NOTIFY_SETTLE_TIMEOUT: Duration = Duration::from_secs(10);
 const GHCR_ANOMALY_DELIVERY_TIMEOUT: Duration = Duration::from_secs(240);
 
-pub async fn notify_job_updated(
+pub async fn notify_job_updated_with_event_enabled(
     state: &AppState,
     job_id: &str,
     status: &str,
     now_rfc3339: &str,
     summary: &Value,
+    event_enabled_override: Option<bool>,
 ) -> anyhow::Result<()> {
-    let Some(draft) =
-        prepare_job_notification_item(state, job_id, status, now_rfc3339, summary).await?
+    let Some(draft) = prepare_job_notification_item_with_event_enabled(
+        state,
+        job_id,
+        status,
+        now_rfc3339,
+        summary,
+        event_enabled_override,
+    )
+    .await?
     else {
         return Ok(());
     };
@@ -77,15 +85,22 @@ pub async fn notify_job_updated(
     Ok(())
 }
 
-pub async fn prepare_job_notification_item(
+pub async fn prepare_job_notification_item_with_event_enabled(
     state: &AppState,
     job_id: &str,
     status: &str,
     now_rfc3339: &str,
     summary: &Value,
+    event_enabled_override: Option<bool>,
 ) -> anyhow::Result<Option<crate::db::NotificationItemDraft>> {
-    let settings = state.db.get_notification_settings().await?;
-    if !is_event_enabled(&settings, NotificationEventKind::Update) {
+    let event_enabled = match event_enabled_override {
+        Some(enabled) => enabled,
+        None => {
+            let settings = state.db.get_notification_settings().await?;
+            is_event_enabled(&settings, NotificationEventKind::Update)
+        }
+    };
+    if !event_enabled {
         return Ok(None);
     }
     let target_url = notification_target_url(state, &format!("queue/{job_id}")).await?;

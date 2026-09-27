@@ -433,6 +433,7 @@ WHERE id = ?1 AND status = 'queued'
             None,
         )
         .await
+        .map(|_| ())
     }
     #[allow(clippy::too_many_arguments)]
     pub async fn list_jobs_page(&self, filters: JobListFilters) -> anyhow::Result<JobListPage> {

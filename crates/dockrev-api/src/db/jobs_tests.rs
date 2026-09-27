@@ -286,6 +286,55 @@ async fn finishing_a_job_can_persist_its_notification_in_the_same_transaction() 
 }
 
 #[tokio::test]
+async fn finishing_a_job_returns_the_persisted_notification_event_decision() {
+    let db = Db::open(Path::new(":memory:")).await.unwrap();
+    db.insert_job(job(
+        "job-notification-disabled",
+        JobType::Update,
+        "running",
+        "2026-09-27T00:00:00Z",
+    ))
+    .await
+    .unwrap();
+    let mut settings = db.get_notification_settings().await.unwrap();
+    settings.event_update_enabled = false;
+    db.put_notification_settings(&settings, "2026-09-27T00:00:00Z")
+        .await
+        .unwrap();
+
+    let decision = db
+        .finish_job_with_archive_and_settlement_and_notification(
+            "job-notification-disabled",
+            "success",
+            "2026-09-27T00:01:00Z",
+            &serde_json::json!({"message": "done"}),
+            None,
+            None,
+            Some(&NotificationItemDraft {
+                id: "notification-job-notification-disabled".to_string(),
+                kind: NOTIFICATION_KIND_JOB_FINISHED.to_string(),
+                identity_key: "job_finished:job-notification-disabled".to_string(),
+                title: "任务已成功".to_string(),
+                body: "任务成功：done".to_string(),
+                target_url: "/queue/job-notification-disabled".to_string(),
+                source_job_id: Some("job-notification-disabled".to_string()),
+                created_at: "2026-09-27T00:01:00Z".to_string(),
+            }),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(decision, Some(false));
+    assert_eq!(
+        db.list_notification_items(50, None, "2026-09-27T00:02:00Z")
+            .await
+            .unwrap()
+            .unread_count,
+        0
+    );
+}
+
+#[tokio::test]
 async fn finishing_a_check_job_enqueues_notification_dispatch_in_the_same_transaction() {
     let db = Db::open(Path::new(":memory:")).await.unwrap();
     db.insert_job(job(
