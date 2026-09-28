@@ -785,6 +785,20 @@ services:
     let payload = response_json(resp).await;
 
     assert_eq!(payload["job"]["status"].as_str(), Some("rolled_back"));
+    let rollback_evidence = &payload["job"]["summary"]["rollbackEvidence"];
+    assert_eq!(rollback_evidence["status"].as_str(), Some("available"));
+    assert_eq!(
+        rollback_evidence["services"][0]["logsBytes"].as_u64(),
+        Some(b"candidate log line\n".len() as u64)
+    );
+    assert_eq!(rollback_evidence["services"][0]["logsTruncated"], false);
+    assert!(state
+        .db
+        .get_rollback_evidence_archive(&job_id)
+        .await
+        .unwrap()
+        .is_some_and(|archive| !archive.is_empty()));
+    assert!(!payload.to_string().contains("candidate log line"));
     assert_eq!(
         payload["job"]["progress"]["message"].as_str(),
         Some("update rolled back after healthcheck failure")

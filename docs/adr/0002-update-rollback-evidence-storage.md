@@ -15,3 +15,4 @@ When an automatic rollback replaces a candidate container, its logs and runtime 
 - Dockrev does not attempt to parse or redact arbitrary application output. Ordinary task logs, notifications, list/detail metadata, live events, and screenshots contain only structured status and evidence metadata; the authorized evidence attachment is the explicit raw-output boundary.
 - A failed spool, archive, or database write does not cancel an automatic rollback; its diagnostic state remains explicit in the update summary.
 - Existing terminal-job retention deletes the archive together with its job row.
+- Archive files are written to and read from the existing jobs BLOB incrementally, keeping application memory bounded without introducing another durable copy or changing the download contract.

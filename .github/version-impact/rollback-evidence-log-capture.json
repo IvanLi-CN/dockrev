@@ -2,7 +2,7 @@
   "schema_version": 1,
   "kind": "version-impact-record",
   "change": {
-    "description": "Capture the candidate Docker CLI stdout and stderr in the existing rollback evidence archive, including recoverable partial output after process interruption.",
+    "description": "Capture the candidate Docker CLI stdout in the existing rollback evidence archive, retaining recoverable partial output after process interruption; keep bounded stderr only as command error context.",
     "release_unit_description": "Dockrev application release unit.",
     "affected_contracts": [
       "public-api",
@@ -29,7 +29,7 @@
         "detected": false,
         "description": "No new API surface or persistent schema; existing archive paths and summary fields are retained."
       },
-      "reasoning": "The implementation merges raw CLI streams into the pre-existing container.log entry and makes interrupted captures recoverable without changing the public response or database shape.",
+      "reasoning": "The implementation merges raw CLI streams into the pre-existing container.log entry and makes interrupted captures recoverable without changing the route, authorization, archive bytes, summary schema, or database shape; the streamed response includes Content-Length for the existing BLOB size.",
       "reassessed_at": "2026-09-29T05:33:47+08:00",
       "evidence": [
         "docs/specs/update-rollback-diagnostics/SPEC.md",
@@ -55,7 +55,7 @@
       "supported_consumer_range": "Dockrev 0.81.0 and later 0.81.x consumers of the existing authorized rollback-evidence endpoint.",
       "evidence": [
         "Base 43388ae4 already registers GET /api/jobs/{job_id}/rollback-evidence in crates/dockrev-api/src/api/mod.rs.",
-        "The response remains application/zstd with private, no-store caching and unchanged summary fields."
+      "The response remains application/zstd with private, no-store caching and unchanged summary fields; Content-Length reports the stored BLOB size so clients can detect an incomplete stream, and existing consumers need no changes."
       ]
     },
     "persistent_state": {

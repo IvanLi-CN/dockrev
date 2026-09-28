@@ -126,24 +126,34 @@ async fn rollback_evidence_api_download_requires_user_and_keeps_archive_out_of_j
     )
     .to_db();
     state.db.insert_job(job).await.unwrap();
+    let archive_bytes = (0..(2 * 1024 * 1024 + 173))
+        .map(|index| (index % 251) as u8)
+        .collect::<Vec<_>>();
+    let archive_path = std::env::temp_dir().join(format!(
+        "dockrev-api-rollback-evidence-{}.tar.zst",
+        ulid::Ulid::new()
+    ));
+    tokio::fs::write(&archive_path, &archive_bytes).await.unwrap();
     let summary = json!({
         "rollbackEvidence": {
             "status": "available",
             "archiveFormat": "tar",
             "compression": "zstd",
             "failedCandidates": 1,
-            "archiveSizeBytes": 4,
+            "archiveSizeBytes": archive_bytes.len(),
             "services": [{"serviceId": "service-a", "logsTruncated": false}]
         }
     });
     state
         .db
-        .finish_job_with_archive(
+        .finish_job_with_archive_file_and_settlement_and_notification(
             &job_id,
             "rolled_back",
             "2026-08-28T00:01:00Z",
             &summary,
-            Some(vec![0x28, 0xb5, 0x2f, 0xfd]),
+            Some(archive_path.clone()),
+            None,
+            None,
         )
         .await
         .unwrap();
@@ -181,8 +191,12 @@ async fn rollback_evidence_api_download_requires_user_and_keeps_archive_out_of_j
         response.headers().get("cache-control").unwrap(),
         "private, no-store"
     );
+    assert_eq!(
+        response.headers().get("content-length").unwrap(),
+        archive_bytes.len().to_string().as_str()
+    );
     let bytes = response.into_body().collect().await.unwrap().to_bytes();
-    assert_eq!(bytes.as_ref(), &[0x28, 0xb5, 0x2f, 0xfd]);
+    assert_eq!(bytes.as_ref(), archive_bytes);
 
     let detail = app
         .clone()
@@ -202,4 +216,5 @@ async fn rollback_evidence_api_download_requires_user_and_keeps_archive_out_of_j
         false
     );
     assert!(!detail_json.to_string().contains("28b52ffd"));
+    tokio::fs::remove_file(archive_path).await.unwrap();
 }
