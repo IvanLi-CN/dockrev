@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Validate and render the structured context consumed by the release notifier."""
+"""Validate and render the immutable identity carried by release failures."""
 
 from __future__ import annotations
 
@@ -12,13 +12,8 @@ from typing import Any
 import release_policy
 
 
-def resolved_identity_failure_context(
-    identity: dict[str, Any], *, repository: str, server: str, run_id: str,
-    attempt: str, event: str, ref: str, actor: str
-) -> dict[str, Any]:
-    release_policy.validate_identity(identity)
-    version = str(identity["version"])
-    expected = [
+def expected_artifacts(version: str) -> list[str]:
+    return [
         suffix
         for base in [
             f"{binary}_{version}_linux_{arch}_{libc}"
@@ -28,20 +23,27 @@ def resolved_identity_failure_context(
         ]
         for suffix in (f"{base}.tar.gz", f"{base}.tar.gz.sha256")
     ]
+
+
+def resolved_identity_failure_context(
+    identity: dict[str, Any], *, repository: str, server: str, run_id: str,
+    attempt: str, event: str, ref: str, actor: str, artifact_digest: str = "",
+) -> dict[str, Any]:
+    release_policy.validate_identity(identity)
     merge_sha = str(identity["merge_commit_sha"])
     return {
-        "pull_request": int(identity.get("pull_request") or 0),
         "source_sha": str(identity["source_sha"]),
         "merge_commit_sha": merge_sha,
-        "type": str(identity["type"]),
+        "identity_sha": str(identity["identity_sha"]),
+        "baseline_version": str(identity["baseline_version"]),
+        "version_input": str(identity["version_input"]),
         "channel": str(identity["channel"]),
-        "version": version,
+        "version": str(identity["version"]),
         "tag": str(identity["release_tag"]),
-        "artifact_names": expected,
+        "artifact_names": expected_artifacts(str(identity["version"])),
+        "artifact_digest": artifact_digest,
         "run_url": f"{server}/{repository}/actions/runs/{run_id}",
         "recovery_instruction": f"workflow_dispatch merge_sha={merge_sha} recovery_reason=<required>",
-        "identity_resolution_failed": False,
-        "identity_failure_kind": "identity-step-failure",
         "repository": repository,
         "workflow": "Release",
         "event": event,
@@ -59,6 +61,21 @@ def notification_summary(payload: dict[str, Any]) -> str:
         expected_server=os.environ.get("GITHUB_SERVER_URL"),
         expected_attempt=os.environ.get("EXPECTED_RELEASE_ATTEMPT"),
     )
+    if payload.get("identity_resolution_failed") is True:
+        return "\n".join(
+            [
+                "Dockrev release identity could not be resolved",
+                "status: failure",
+                f"repository: {payload.get('repository', '')}",
+                f"workflow: {payload.get('workflow', 'Release')}",
+                f"event: {payload.get('event', '')}",
+                f"attempt: {payload.get('run_attempt', '')}",
+                f"merge sha: {payload['merge_commit_sha']}",
+                f"failure kind: {payload['identity_failure_kind']}",
+                f"run: {payload['run_url']}",
+                f"recovery: {payload['recovery_instruction']}",
+            ]
+        )
     lines = [
         f"Dockrev release failed - {payload['tag']}",
         "status: failure",
@@ -68,11 +85,14 @@ def notification_summary(payload: dict[str, Any]) -> str:
         f"ref: {payload.get('ref', '')}",
         f"attempt: {payload.get('run_attempt', '')}",
         f"actor: {payload.get('actor', '')}",
-        f"intent: type:{payload['type']} channel:{payload['channel']}",
-        f"version: {payload['version']}",
+        f"version decision: {payload['version_input']}",
+        f"baseline VERSION: {payload['baseline_version']}",
+        f"version: {payload['version']} ({payload['channel']})",
         f"source sha: {payload['source_sha']}",
+        f"identity sha: {payload['identity_sha']}",
         f"merge sha: {payload['merge_commit_sha']}",
         f"tag: {payload['tag']}",
+        f"artifact digest: {payload.get('artifact_digest') or 'not created before this failure'}",
         "assets: " + ", ".join(payload["artifact_names"]),
         f"run: {payload['run_url']}",
         f"recovery: {payload['recovery_instruction']}",
@@ -91,7 +111,8 @@ def main() -> int:
     parser.add_argument("--event")
     parser.add_argument("--ref")
     parser.add_argument("--actor")
-    parser.add_argument("--output", type=Path, default=None)
+    parser.add_argument("--artifact-digest", default="")
+    parser.add_argument("--output", type=Path)
     args = parser.parse_args()
     if args.resolved_identity:
         required = {
@@ -117,6 +138,7 @@ def main() -> int:
             event=args.event,
             ref=args.ref,
             actor=args.actor,
+            artifact_digest=args.artifact_digest,
         )
         args.output.write_text(json.dumps(payload, sort_keys=True) + "\n", encoding="utf-8")
         return 0

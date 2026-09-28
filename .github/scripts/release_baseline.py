@@ -42,7 +42,7 @@ def final_version_from_tag(tag: str) -> str | None:
         return None
     version_text = tag[1:] if tag.startswith("v") else tag
     try:
-        major, minor, patch, prerelease = release_policy.parse_version(version_text)
+        major, minor, patch, prerelease, _sequence = release_policy.parse_version(version_text)
     except release_policy.PolicyError:
         return None
     if prerelease is not None:
@@ -209,7 +209,7 @@ def latest_qualified_final_release_version(fetch: Fetch, repository: str) -> str
             version = final_version_from_tag(tag)
             if version is None:
                 continue
-            major, minor, patch, _prerelease = release_policy.parse_version(version)
+            major, minor, patch, _prerelease, _sequence = release_policy.parse_version(version)
             candidates.append(((major, minor, patch), release, version))
         if len(releases) < 100:
             break
@@ -233,7 +233,7 @@ def latest_qualified_final_release_version(fetch: Fetch, repository: str) -> str
 
 def validate_frozen_final_baseline(fetch: Fetch, repository: str, baseline_version: str) -> None:
     try:
-        major, minor, patch, prerelease = release_policy.parse_version(baseline_version)
+        major, minor, patch, prerelease, _sequence = release_policy.parse_version(baseline_version)
     except release_policy.PolicyError as error:
         raise BaselineError("release baseline is not valid semver") from error
     if prerelease is not None:

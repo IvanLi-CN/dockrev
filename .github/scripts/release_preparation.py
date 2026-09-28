@@ -1,23 +1,19 @@
 #!/usr/bin/env python3
-"""Create and verify signed VERSION-only preparation commits on PR branches."""
+"""Allocate a version identity from main:VERSION and open its protected PR."""
 
 from __future__ import annotations
 
 import argparse
 import base64
 import json
-import os
 import re
 import sys
-import time
 import urllib.error
 import urllib.parse
 import urllib.request
 from pathlib import Path
 from typing import Any
 
-import release_baseline
-import release_lock
 import release_policy
 
 
@@ -25,29 +21,10 @@ class PreparationError(RuntimeError):
     pass
 
 
-VERSION_ONLY_BRANCH_PREFIX = "recovery/"
-
-
-def validate_version_only_branch(branch: str) -> None:
-    if not isinstance(branch, str) or not branch.startswith(VERSION_ONLY_BRANCH_PREFIX):
-        raise PreparationError(
-            f"version-only release PR branch must use the {VERSION_ONLY_BRANCH_PREFIX} prefix"
-        )
-
-
-def validate_release_mode_for_branch(
-    branch: str, release_mode: str, *, has_version_only_identity: bool = False
-) -> None:
-    if (
-        (branch.startswith(VERSION_ONLY_BRANCH_PREFIX) or has_version_only_identity)
-        and release_mode != "version-only-release-pr"
-    ):
-        raise PreparationError(
-            "recovery PRs require explicit version-only-release-pr preparation"
-        )
-
-
-def api_request(api_root: str, token: str, method: str, path: str, payload: dict[str, Any] | None = None) -> Any:
+def api_request(
+    api_root: str, token: str, method: str, path: str,
+    payload: dict[str, Any] | None = None,
+) -> Any:
     url = path if path.startswith("http") else f"{api_root.rstrip('/')}{path}"
     data = None if payload is None else json.dumps(payload).encode()
     request = urllib.request.Request(
@@ -58,1567 +35,274 @@ def api_request(api_root: str, token: str, method: str, path: str, payload: dict
             "Authorization": f"Bearer {token}",
             "Accept": "application/vnd.github+json",
             "X-GitHub-Api-Version": "2022-11-28",
-            "User-Agent": "dockrev-release-preparation",
+            "User-Agent": "dockrev-manual-version-release",
             **({"Content-Type": "application/json"} if data else {}),
         },
     )
     try:
-        with urllib.request.urlopen(request) as response:
+        with urllib.request.urlopen(request, timeout=30) as response:
             body = response.read().decode(response.headers.get_content_charset() or "utf-8")
             return json.loads(body) if body else {}
     except urllib.error.HTTPError as error:
         detail = error.read().decode(errors="replace")
+        if error.code == 404:
+            return None
         raise PreparationError(f"GitHub API {method} {path} failed: {error.code}: {detail[:500]}") from error
+    except urllib.error.URLError as error:
+        raise PreparationError(f"GitHub API request failed: {error.reason}") from error
 
 
 def graphql(api_root: str, token: str, query: str, variables: dict[str, Any]) -> dict[str, Any]:
-    payload = api_request(api_root, token, "POST", f"{api_root.rstrip('/')}/graphql", {"query": query, "variables": variables})
-    if payload.get("errors"):
-        raise PreparationError(f"GraphQL mutation failed: {payload['errors']}")
-    return payload.get("data", {})
+    response = api_request(api_root, token, "POST", f"{api_root.rstrip('/')}/graphql", {"query": query, "variables": variables})
+    if response.get("errors"):
+        raise PreparationError(f"GitHub commit creation failed: {response['errors']}")
+    return response.get("data", {})
 
 
 def repository_parts(repository: str) -> tuple[str, str]:
-    parts = repository.split("/", 1)
-    if len(parts) != 2 or not all(parts):
+    owner, separator, name = repository.partition("/")
+    if not separator or not owner or not name:
         raise PreparationError("repository must be owner/name")
-    return parts[0], parts[1]
+    return owner, name
 
 
-def labels_for_pr(api_root: str, token: str, repository: str, number: int) -> list[str]:
+def branch_ref(api_root: str, token: str, repository: str, branch: str) -> str | None:
     owner, name = repository_parts(repository)
-    payload = api_request(api_root, token, "GET", f"/repos/{owner}/{name}/pulls/{number}")
-    return [str(item.get("name")) for item in payload.get("labels", []) if item.get("name")]
+    quoted = urllib.parse.quote(branch, safe="/")
+    response = api_request(api_root, token, "GET", f"/repos/{owner}/{name}/git/ref/heads/{quoted}")
+    if response is None:
+        return None
+    sha = response.get("object", {}).get("sha")
+    release_policy.validate_sha(str(sha), "branch tip SHA")
+    return str(sha)
 
 
-def pull_request(api_root: str, token: str, repository: str, number: int) -> dict[str, Any]:
+def create_branch(api_root: str, token: str, repository: str, branch: str, sha: str) -> str:
     owner, name = repository_parts(repository)
-    return api_request(api_root, token, "GET", f"/repos/{owner}/{name}/pulls/{number}")
-
-
-def workflow_runs_for_pr(
-    api_root: str,
-    token: str,
-    repository: str,
-    workflow_file: str,
-    pr_number: int,
-    source_sha: str | None = None,
-    required_event: str | None = None,
-) -> list[dict[str, Any]]:
-    owner, name = repository_parts(repository)
-    result: list[dict[str, Any]] = []
-    page = 1
-    while True:
-        query = ["per_page=100", f"page={page}"]
-        if source_sha is not None:
-            query.append(f"head_sha={urllib.parse.quote(source_sha, safe='')}")
-        if required_event is not None:
-            query.append(f"event={urllib.parse.quote(required_event, safe='')}")
-        runs = api_request(
-            api_root,
-            token,
-            "GET",
-            f"/repos/{owner}/{name}/actions/workflows/{urllib.parse.quote(workflow_file, safe='')}/runs?{'&'.join(query)}",
-        ).get("workflow_runs", [])
-        result.extend(
-            run for run in runs
-            if any(
-                item.get("number") == pr_number
-                and (required_event is None or run.get("event") == required_event)
-                and (
-                    source_sha is None
-                    or run.get("head_sha") == source_sha
-                    or item.get("head", {}).get("sha") == source_sha
-                )
-                for item in run.get("pull_requests", [])
-            )
-        )
-        if len(runs) < 100:
-            return result
-        page += 1
-
-
-def pull_request_changed_files(api_root: str, token: str, repository: str, number: int) -> list[str]:
-    owner, name = repository_parts(repository)
-    files: list[str] = []
-    page = 1
-    while True:
-        batch = api_request(
-            api_root,
-            token,
-            "GET",
-            f"/repos/{owner}/{name}/pulls/{number}/files?per_page=100&page={page}",
-        )
-        files.extend(str(item.get("filename")) for item in batch if item.get("filename"))
-        if len(batch) < 100:
-            return sorted(set(files))
-        page += 1
-
-
-def source_ci_ready(
-    api_root: str,
-    token: str,
-    repository: str,
-    pr_number: int,
-    source_sha: str,
-    *,
-    expected_pr_updated_at: str | None = None,
-    expected_intent: dict[str, Any] | None = None,
-    require_current_head: bool = True,
-    require_unchanged_pr: bool = False,
-) -> str:
-    pr = pull_request(api_root, token, repository, pr_number)
-    current_head = str(pr.get("head", {}).get("sha", ""))
-    if require_current_head and current_head != source_sha:
-        raise PreparationError("PR head changed while source checks were being verified")
-    current_updated_at = str(pr.get("updated_at", ""))
-    if require_unchanged_pr and expected_pr_updated_at and current_updated_at != expected_pr_updated_at:
-        raise PreparationError("PR labels or metadata changed while source checks were being verified")
-    if expected_intent is not None:
-        try:
-            current_intent = release_policy.parse_labels(
-                [str(item.get("name")) for item in pr.get("labels", []) if item.get("name")]
-            )
-        except release_policy.PolicyError as error:
-            raise PreparationError(str(error)) from error
-        if any(
-            current_intent[field] != expected_intent[field]
-            for field in ("type_label", "channel_label", "components")
-        ):
-            raise PreparationError("PR release intent labels changed while source checks were being verified")
-    label_updated_at = expected_pr_updated_at or current_updated_at
-    if not label_updated_at:
-        raise PreparationError("PR metadata is missing updated_at for Label Gate binding")
-    try:
-        release_policy.validate_source_boundary(pull_request_changed_files(api_root, token, repository, pr_number))
-    except release_policy.PolicyError as error:
-        raise PreparationError(str(error)) from error
-    ci_runs = workflow_runs_for_pr(
-        api_root,
-        token,
-        repository,
-        "ci-pr.yml",
-        pr_number,
-        source_sha,
-        required_event="pull_request",
+    response = api_request(
+        api_root, token, "POST", f"/repos/{owner}/{name}/git/refs",
+        {"ref": f"refs/heads/{branch}", "sha": sha},
     )
-    if not any(run.get("status") == "completed" and run.get("conclusion") == "success" for run in ci_runs):
-        raise PreparationError("source SHA does not have a successful complete CI (PR) run")
-    label_runs = workflow_runs_for_pr(
-        api_root,
-        token,
-        repository,
-        "label-gate.yml",
-        pr_number,
-        source_sha,
-        required_event="pull_request_target",
-    )
-    if not any(
-        run.get("status") == "completed"
-        and run.get("conclusion") == "success"
-        and str(run.get("created_at", "")) >= label_updated_at
-        for run in label_runs
-    ):
-        raise PreparationError("PR does not have a successful Label Gate check")
-    return label_updated_at
+    if response is None:
+        live = branch_ref(api_root, token, repository, branch)
+        if live is None:
+            raise PreparationError("release preparation branch creation could not be confirmed")
+        return live
+    created_sha = response.get("object", {}).get("sha")
+    release_policy.validate_sha(str(created_sha), "created branch SHA")
+    return str(created_sha)
 
 
-def current_version(api_root: str, token: str, repository: str, source_sha: str) -> str:
+def version_at_ref(api_root: str, token: str, repository: str, ref: str) -> str:
     owner, name = repository_parts(repository)
-    payload = api_request(api_root, token, "GET", f"/repos/{owner}/{name}/contents/VERSION?ref={urllib.parse.quote(source_sha)}")
-    if payload.get("encoding") != "base64":
-        raise PreparationError("VERSION content is not returned as base64")
+    quoted = urllib.parse.quote(ref, safe="")
+    response = api_request(api_root, token, "GET", f"/repos/{owner}/{name}/contents/VERSION?ref={quoted}")
+    if not isinstance(response, dict) or response.get("encoding") != "base64":
+        raise PreparationError(f"{ref}:VERSION is missing or is not base64 content")
     try:
-        encoded_content = "".join(str(payload["content"]).split())
-        version = base64.b64decode(encoded_content, validate=True).decode().strip()
-    except (KeyError, ValueError, UnicodeDecodeError) as error:
-        raise PreparationError("VERSION content is not valid UTF-8 base64") from error
-    release_policy.parse_version(version)
+        encoded = "".join(str(response["content"]).split())
+        version = release_policy.parse_version_file(
+            base64.b64decode(encoded, validate=True).decode("utf-8")
+        )
+    except (KeyError, ValueError, UnicodeDecodeError, release_policy.PolicyError) as error:
+        raise PreparationError(f"{ref}:VERSION is invalid") from error
     return version
 
 
-def latest_final_release_version(api_root: str, token: str, repository: str) -> str:
-    """Return the highest qualified final release version, or the virtual baseline."""
-    try:
-        return release_baseline.latest_qualified_final_release_version(
-            lambda path: api_request(api_root, token, "GET", path), repository
-        )
-    except release_baseline.BaselineError as error:
-        raise PreparationError(str(error)) from error
-
-
-def validate_frozen_final_baseline(
-    api_root: str, token: str, repository: str, baseline_version: str
-) -> None:
-    try:
-        release_baseline.validate_frozen_final_baseline(
-            lambda path: api_request(api_root, token, "GET", path), repository, baseline_version
-        )
-    except release_baseline.BaselineError as error:
-        raise PreparationError(str(error)) from error
-
-
-def pull_requests(api_root: str, token: str, repository: str, state: str) -> list[dict[str, Any]]:
+def inspect_identity(
+    api_root: str, token: str, repository: str, identity_sha: str,
+    main_sha: str, baseline: str, decision: dict[str, str],
+) -> dict[str, Any]:
     owner, name = repository_parts(repository)
-    result: list[dict[str, Any]] = []
-    page = 1
-    while True:
-        batch = api_request(
-            api_root,
-            token,
-            "GET",
-            f"/repos/{owner}/{name}/pulls?state={state}&base=main&per_page=100&page={page}",
-        )
-        if not isinstance(batch, list):
-            raise PreparationError("GitHub PR list is invalid")
-        result.extend(batch)
-        if len(batch) < 100:
-            return result
-        page += 1
-
-
-def pull_request_release_identity_messages(
-    api_root: str, token: str, repository: str
-) -> list[dict[str, Any]]:
-    """Read release identity trailers for all main-targeting PR heads in batches."""
-    owner, name = repository_parts(repository)
-    query = """
-    query($owner: String!, $name: String!, $after: String) {
-      repository(owner: $owner, name: $name) {
-        pullRequests(first: 100, after: $after, states: [OPEN, CLOSED, MERGED], baseRefName: "main") {
-          nodes {
-            number
-            state
-            mergedAt
-            commits(last: 1) {
-              nodes { commit { message } }
-            }
-          }
-          pageInfo { hasNextPage endCursor }
-        }
-      }
+    commit = api_request(api_root, token, "GET", f"/repos/{owner}/{name}/commits/{identity_sha}")
+    if not isinstance(commit, dict):
+        raise PreparationError("reserved identity commit is unavailable")
+    metadata = commit.get("commit") or {}
+    if (metadata.get("verification") or {}).get("verified") is not True:
+        raise PreparationError("release identity commit is not signed")
+    parents = [str(item.get("sha", "")) for item in commit.get("parents", [])]
+    trailers = release_policy.parse_trailers(str(metadata.get("message", "")))
+    source_sha = trailers.get("Source-SHA", "")
+    release_policy.validate_sha(source_sha, "release source SHA")
+    if parents != [source_sha]:
+        raise PreparationError("release identity must have its frozen main commit as its only parent")
+    files = sorted(str(item.get("filename", "")) for item in commit.get("files", []))
+    if files != ["VERSION"]:
+        raise PreparationError("release identity commit must change VERSION only")
+    expected = {
+        "Source-SHA": source_sha,
+        "Product-Version": decision["version"],
+        "Release-Baseline-Version": baseline,
+        "Release-Intent": decision["version_input"],
     }
-    """
-    result: list[dict[str, Any]] = []
-    after: str | None = None
-    while True:
-        connection = graphql(
-            api_root,
-            token,
-            query,
-            {"owner": owner, "name": name, "after": after},
-        ).get("repository", {}).get("pullRequests", {})
-        for pull in connection.get("nodes", []):
-            commits = pull.get("commits", {}).get("nodes", [])
-            message = commits[0].get("commit", {}).get("message") if commits else None
-            result.append(
-                {
-                    "number": pull.get("number"),
-                    "state": pull.get("state"),
-                    "merged_at": pull.get("mergedAt"),
-                    "message": message if isinstance(message, str) else "",
-                }
-            )
-        page_info = connection.get("pageInfo", {})
-        if not page_info.get("hasNextPage"):
-            return result
-        after = page_info.get("endCursor")
-        if not isinstance(after, str) or not after:
-            raise PreparationError("GitHub PR identity pagination cursor is invalid")
-
-
-def covered_product_boundary(api_root: str, token: str, repository: str, merge_sha: str) -> dict[str, Any]:
+    if trailers != expected:
+        raise PreparationError("release identity provenance does not match this version decision")
+    if version_at_ref(api_root, token, repository, identity_sha) != decision["version"]:
+        raise PreparationError("release identity VERSION does not match its provenance")
+    if version_at_ref(api_root, token, repository, source_sha) != baseline:
+        raise PreparationError("release identity source VERSION does not match its frozen baseline")
     owner, name = repository_parts(repository)
-    pulls = api_request(api_root, token, "GET", f"/repos/{owner}/{name}/commits/{merge_sha}/pulls")
-    if not isinstance(pulls, list) or len(pulls) != 1:
-        raise PreparationError("version-only release PR must cover exactly one merged product PR")
-    product = pulls[0]
-    if product.get("base", {}).get("ref") != "main" or product.get("state") != "closed" or not product.get("merged_at"):
-        raise PreparationError("covered product boundary is not a merged main PR")
-    if product.get("merge_commit_sha") != merge_sha:
-        raise PreparationError("covered product boundary does not match the exact merge SHA")
-    return product
-
-
-def covered_product_has_existing_identity(
-    api_root: str,
-    token: str,
-    repository: str,
-    covered_merge_sha: str,
-    version: str,
-    *,
-    identity_sha: str | None = None,
-) -> bool:
-    owner, name = repository_parts(repository)
-    reservation_path = (
-        f"/repos/{owner}/{name}/git/ref/heads/"
-        f"{urllib.parse.quote(f'release-reservation/v{version}', safe='')}"
+    compare = api_request(
+        api_root, token, "GET",
+        f"/repos/{owner}/{name}/compare/{source_sha}...{main_sha}",
     )
-    try:
-        reservation_ref = api_request(api_root, token, "GET", reservation_path)
-    except PreparationError as error:
-        if " 404:" not in str(error):
-            raise
-    else:
-        reservation_sha = reservation_ref.get("object", {}).get("sha")
-        if not isinstance(reservation_sha, str) or not re.fullmatch(r"[0-9a-f]{40}", reservation_sha):
-            raise PreparationError("release reservation ref has an invalid commit SHA")
-        reservation = api_request(api_root, token, "GET", f"/repos/{owner}/{name}/commits/{reservation_sha}")
-        message = str(reservation.get("commit", {}).get("message", ""))
-        trailers = release_policy.parse_reservation_trailers(message)
-        if trailers.get("Release-Reservation-Source-SHA") == covered_merge_sha:
-            identity_trailers = release_policy.parse_trailers(message)
-            if (
-                identity_trailers.get("Release-Mode") == "version-only-release-pr"
-                and not trailers.get("Release-Reservation-Identity-SHA")
-            ):
-                if reservation.get("commit", {}).get("verification", {}).get("verified") is not True:
-                    raise PreparationError("direct release reservation identity is not signed")
-                parents = [parent.get("sha") for parent in reservation.get("parents", [])]
-                if len(parents) != 1 or not isinstance(parents[0], str):
-                    raise PreparationError("direct release reservation identity must have one parent")
-                try:
-                    release_policy.validate_version_only_reservation(
-                        reservation,
-                        version=version,
-                        pr_number=int(trailers.get("Release-Reservation-PR", "0")),
-                        source_sha=covered_merge_sha,
-                    )
-                except (ValueError, release_policy.PolicyError) as error:
-                    raise PreparationError(str(error)) from error
-                if identity_sha is None or reservation_sha != identity_sha:
-                    return True
-            else:
-                try:
-                    release_policy.validate_sha(covered_merge_sha, "reservation_source_sha")
-                    if trailers.get("Release-Reservation-Version") != version:
-                        raise PreparationError("covered product reservation version does not match VERSION")
-                    if [parent.get("sha") for parent in reservation.get("parents", [])] != [covered_merge_sha]:
-                        raise PreparationError("covered product reservation ownership is invalid")
-                except release_policy.PolicyError as error:
-                    raise PreparationError(str(error)) from error
-                if not (
-                    identity_sha is not None
-                    and trailers.get("Release-Reservation-Identity-SHA") == identity_sha
-                    and trailers.get("Release-Reservation-Mode") == "version-only-release-pr"
-                ):
-                    return True
-
-    def tag_fetch(path: str) -> Any:
-        try:
-            return api_request(api_root, token, "GET", path)
-        except PreparationError as error:
-            if " 404:" in str(error):
-                raise urllib.error.HTTPError(path, 404, "Not Found", None, None) from error
-            raise
-
-    for tag in (f"v{version}", version):
-        target_sha = release_baseline.tagged_commit_sha(tag_fetch, repository, tag)
-        if target_sha is not None and target_sha in {covered_merge_sha, identity_sha}:
-            return True
-    lock_path = (
-        f"/repos/{owner}/{name}/git/ref/heads/"
-        f"{urllib.parse.quote(f'release-publication-lock/v{version}', safe='')}"
-    )
-    try:
-        lock_ref = api_request(api_root, token, "GET", lock_path)
-    except PreparationError as error:
-        if " 404:" not in str(error):
-            raise
-        return False
-    lock_sha = lock_ref.get("object", {}).get("sha")
-    if not isinstance(lock_sha, str) or not re.fullmatch(r"[0-9a-f]{40}", lock_sha):
-        raise PreparationError("publication lock ref has an invalid commit SHA")
-    try:
-        return release_lock.publication_lock_matches_merge(
-            lambda path: api_request(api_root, token, "GET", path),
-            repository,
-            lock_sha,
-            version,
-            covered_merge_sha,
-            allowed_identity_shas={identity_sha} if identity_sha else set(),
-        )
-    except release_lock.PublicationLockOwnershipError as error:
-        raise PreparationError(str(error)) from error
+    if not isinstance(compare, dict) or compare.get("status") not in {"ahead", "identical"}:
+        raise PreparationError("release identity source is not an ancestor of the current main commit")
+    return {"identity_sha": identity_sha, "parent_sha": source_sha, "trailers": trailers}
 
 
-def version_only_reservation_is_owned(
-    api_root: str,
-    token: str,
-    repository: str,
-    version: str,
-    pr_number: int,
-    source_sha: str,
-    identity_sha: str,
-    release_intent: str,
-) -> bool:
-    owner, name = repository_parts(repository)
-    path = (
-        f"/repos/{owner}/{name}/git/ref/heads/"
-        f"{urllib.parse.quote(f'release-reservation/v{version}', safe='')}"
-    )
-    try:
-        ref = api_request(api_root, token, "GET", path)
-    except PreparationError as error:
-        if " 404:" in str(error):
-            return False
-        raise
-    reservation_sha = ref.get("object", {}).get("sha")
-    if not isinstance(reservation_sha, str) or not re.fullmatch(r"[0-9a-f]{40}", reservation_sha):
-        return False
-    try:
-        reservation = api_request(api_root, token, "GET", f"/repos/{owner}/{name}/commits/{reservation_sha}")
-        trailers = release_policy.validate_version_only_reservation(
-            reservation, version=version, pr_number=pr_number, source_sha=source_sha
-        )
-    except (PreparationError, release_policy.PolicyError):
-        return False
-    reservation_identity_sha = trailers.get("Release-Reservation-Identity-SHA") or reservation_sha
-    return reservation_identity_sha == identity_sha and trailers.get("Release-Reservation-Intent") == release_intent
-
-
-def version_reservation_exists(
-    api_root: str, token: str, repository: str, version: str
-) -> bool:
-    owner, name = repository_parts(repository)
-    path = (
-        f"/repos/{owner}/{name}/git/ref/heads/"
-        f"{urllib.parse.quote(f'release-reservation/v{version}', safe='')}"
-    )
-    try:
-        api_request(api_root, token, "GET", path)
-    except PreparationError as error:
-        if " 404:" in str(error):
-            return False
-        raise
-    return True
-
-
-def recovery_identity_is_owned(
-    api_root: str, token: str, repository: str, covered_merge_sha: str, identity_sha: str
-) -> bool:
-    owner, name = repository_parts(repository)
-    try:
-        ref = api_request(api_root, token, "GET", recovery_ref_path(owner, name, covered_merge_sha))
-    except PreparationError as error:
-        if " 404:" in str(error):
-            return False
-        raise
-    return ref.get("object", {}).get("sha") == identity_sha
-
-
-def recovery_ref_path(owner: str, name: str, covered_merge_sha: str) -> str:
-    ref_name = f"release-recovery/{covered_merge_sha}"
-    return f"/repos/{owner}/{name}/git/ref/heads/{urllib.parse.quote(ref_name, safe='')}"
-
-
-def preparation_ref_path(owner: str, name: str, pr_number: int, source_sha: str) -> str:
-    ref_name = f"release-preparation/{pr_number}/{source_sha}"
-    return f"/repos/{owner}/{name}/git/ref/heads/{urllib.parse.quote(ref_name, safe='')}"
-
-
-def publication_lock_is_owned(
-    api_root: str,
-    token: str,
-    repository: str,
-    version: str,
-    identity_sha: str | None = None,
-) -> bool:
-    owner, name = repository_parts(repository)
-    ref_name = f"release-publication-lock/v{version}"
-    path = f"/repos/{owner}/{name}/git/ref/heads/{urllib.parse.quote(ref_name, safe='')}"
-    try:
-        ref = api_request(api_root, token, "GET", path)
-    except PreparationError as error:
-        if " 404:" in str(error):
-            return False
-        raise
-    lock_sha = ref.get("object", {}).get("sha")
-    if not isinstance(lock_sha, str) or not re.fullmatch(r"[0-9a-f]{40}", lock_sha):
-        raise PreparationError("publication lock ref has an invalid commit SHA")
-    if identity_sha != lock_sha:
-        raise PreparationError(f"release version {version} is already locked for publication")
-    return True
-
-
-def reserve_preparation_identity(
-    api_root: str, token: str, repository: str, pr_number: int, source_sha: str, identity_sha: str
-) -> bool:
-    """CAS one immutable normal preparation identity for a PR source."""
-    try:
-        release_policy.validate_sha(source_sha, "preparation source SHA")
-        release_policy.validate_sha(identity_sha, "preparation identity SHA")
-    except release_policy.PolicyError as error:
-        raise PreparationError(str(error)) from error
-    owner, name = repository_parts(repository)
-    path = preparation_ref_path(owner, name, pr_number, source_sha)
-    try:
-        existing = api_request(api_root, token, "GET", path)
-    except PreparationError as error:
-        if " 404:" not in str(error):
-            raise
-        try:
-            api_request(
-                api_root,
-                token,
-                "POST",
-                f"/repos/{owner}/{name}/git/refs",
-                {"ref": f"refs/heads/release-preparation/{pr_number}/{source_sha}", "sha": identity_sha},
-            )
-            return True
-        except PreparationError as create_error:
-            if " 422:" not in str(create_error):
-                raise
-            existing = api_request(api_root, token, "GET", path)
-    if existing.get("object", {}).get("sha") != identity_sha:
-        raise PreparationError("preparation identity ref already belongs to another commit")
-    return False
-
-
-def reserve_recovery_identity(
-    api_root: str, token: str, repository: str, covered_merge_sha: str, identity_sha: str
-) -> bool:
-    """CAS one immutable recovery identity for each covered product merge."""
-    try:
-        release_policy.validate_sha(covered_merge_sha, "covered_product_merge_sha")
-        release_policy.validate_sha(identity_sha, "version-only recovery identity SHA")
-    except release_policy.PolicyError as error:
-        raise PreparationError(str(error)) from error
-    owner, name = repository_parts(repository)
-    path = recovery_ref_path(owner, name, covered_merge_sha)
-    try:
-        existing = api_request(api_root, token, "GET", path)
-    except PreparationError as error:
-        if " 404:" not in str(error):
-            raise
-        try:
-            api_request(
-                api_root,
-                token,
-                "POST",
-                f"/repos/{owner}/{name}/git/refs",
-                {"ref": f"refs/heads/release-recovery/{covered_merge_sha}", "sha": identity_sha},
-            )
-            return True
-        except PreparationError as create_error:
-            if " 422:" not in str(create_error):
-                raise
-            existing = api_request(api_root, token, "GET", path)
-    if existing.get("object", {}).get("sha") != identity_sha:
-        raise PreparationError("covered product merge already has an immutable recovery identity")
-    return False
-
-
-def reserve_tag(
-    api_root: str,
-    token: str,
-    repository: str,
-    version: str,
-    pr_number: int,
-    source_sha: str,
-    *,
-    identity_sha: str | None = None,
-    release_intent: str | None = None,
-    release_mode: str | None = None,
-) -> str | None:
-    owner, name = repository_parts(repository)
-    publication_lock_is_owned(
-        api_root, token, repository, version, identity_sha=identity_sha
-    )
-    for tag in (f"v{version}", version):
-        try:
-            existing = api_request(api_root, token, "GET", f"/repos/{owner}/{name}/git/ref/tags/{tag}")
-        except PreparationError as error:
-            if " 404:" in str(error):
-                continue
-            raise
-        raise PreparationError(f"release tag {tag} already exists and cannot be reserved: {existing}")
-
-    for pull in pull_request_release_identity_messages(api_root, token, repository):
-        if pull.get("number") == pr_number or (
-            pull.get("state") == "CLOSED" and not pull.get("merged_at")
-        ):
-            continue
-        trailers = release_policy.parse_trailers(str(pull.get("message", "")))
-        if (
-            trailers.get("Release-Mode") in {"normal-preparation", "version-only-release-pr"}
-            and trailers.get("Product-Version") == version
-        ):
-            raise PreparationError(
-                f"release version {version} is already reserved by PR #{pull.get('number')}"
-            )
-    return reserve_version_ref(
-        api_root,
-        token,
-        repository,
-        version,
-        pr_number,
-        source_sha,
-        identity_sha=identity_sha,
-        release_intent=release_intent,
-        release_mode=release_mode,
-    )
-
-
-def reserve_version_ref(
-    api_root: str,
-    token: str,
-    repository: str,
-    version: str,
-    pr_number: int,
-    source_sha: str,
-    *,
-    identity_sha: str | None = None,
-    release_intent: str | None = None,
-    release_mode: str | None = None,
-) -> str | None:
-    """CAS one version ref to an already-verified signed identity commit."""
-    version_only_reservation = any(value is not None for value in (release_intent, release_mode))
-    if identity_sha is None:
-        raise PreparationError("release reservation requires a signed identity SHA")
-    if version_only_reservation:
-        if not all(value is not None for value in (identity_sha, release_intent, release_mode)):
-            raise PreparationError("version-only reservation provenance is incomplete")
-        try:
-            release_policy.validate_sha(str(identity_sha), "version-only reservation identity SHA")
-            intent = release_policy.parse_labels(str(release_intent).split())
-        except release_policy.PolicyError as error:
-            raise PreparationError(str(error)) from error
-        if not intent["release_enabled"] or release_mode != "version-only-release-pr":
-            raise PreparationError("version-only reservation provenance is invalid")
-    try:
-        release_policy.validate_sha(str(identity_sha), "reservation identity SHA")
-    except release_policy.PolicyError as error:
-        raise PreparationError(str(error)) from error
-    owner, name = repository_parts(repository)
-    ref_name = f"release-reservation/v{version}"
-    path = f"/repos/{owner}/{name}/git/ref/heads/{urllib.parse.quote(ref_name, safe='')}"
-    try:
-        existing = api_request(api_root, token, "GET", path)
-    except PreparationError as error:
-        if " 404:" not in str(error):
-            raise
-        reservation_sha = str(identity_sha)
-        reservation_commit = api_request(
-            api_root, token, "GET", f"/repos/{owner}/{name}/commits/{reservation_sha}"
-        )
-        if reservation_commit.get("commit", {}).get("verification", {}).get("verified") is not True:
-            raise PreparationError("release reservation identity commit signature is not verified")
-        try:
-            if version_only_reservation:
-                trailers = release_policy.validate_version_only_reservation(
-                    reservation_commit, version=version, pr_number=pr_number, source_sha=source_sha
-                )
-                if trailers.get("Release-Reservation-Identity-SHA") not in {"", identity_sha}:
-                    raise PreparationError("release reservation identity SHA does not match the recovery PR")
-                if trailers.get("Release-Reservation-Intent") != release_intent:
-                    raise PreparationError("release reservation intent does not match the recovery PR")
-            else:
-                release_policy.validate_reservation(
-                    reservation_commit, version=version, pr_number=pr_number, source_sha=source_sha
-                )
-        except release_policy.PolicyError as error:
-            raise PreparationError(str(error)) from error
-        try:
-            api_request(
-                api_root,
-                token,
-                "POST",
-                f"/repos/{owner}/{name}/git/refs",
-                {"ref": f"refs/heads/{ref_name}", "sha": reservation_sha},
-            )
-            return reservation_sha
-        except PreparationError as create_error:
-            if " 422:" not in str(create_error):
-                raise
-            existing = api_request(api_root, token, "GET", path)
-    reservation_sha = existing.get("object", {}).get("sha")
-    if not isinstance(reservation_sha, str):
-        raise PreparationError("release reservation ref has no commit SHA")
-    reservation_commit = api_request(api_root, token, "GET", f"/repos/{owner}/{name}/commits/{reservation_sha}")
-    try:
-        reservation_message = str(reservation_commit.get("commit", {}).get("message", ""))
-        reservation_trailers = release_policy.parse_reservation_trailers(reservation_message)
-        identity_trailers = release_policy.parse_trailers(reservation_message)
-        if reservation_sha != identity_sha:
-            if version_only_reservation:
-                trailers = release_policy.validate_version_only_reservation(
-                    reservation_commit, version=version, pr_number=pr_number, source_sha=source_sha
-                )
-                if trailers.get("Release-Reservation-Identity-SHA") != identity_sha:
-                    raise PreparationError("release reservation identity SHA does not match the recovery PR")
-                if trailers.get("Release-Reservation-Intent") != release_intent:
-                    raise PreparationError("release reservation intent does not match the recovery PR")
-            else:
-                if (
-                    identity_trailers.get("Release-Mode")
-                    or reservation_trailers.get("Release-Reservation-Identity-SHA")
-                    or reservation_trailers.get("Release-Reservation-Mode")
-                ):
-                    raise PreparationError("release reservation ref belongs to another identity")
-                release_policy.validate_reservation(
-                    reservation_commit, version=version, pr_number=pr_number, source_sha=source_sha
-                )
-            return None
-        if reservation_commit.get("commit", {}).get("verification", {}).get("verified") is not True:
-            raise PreparationError("release reservation identity commit signature is not verified")
-        if version_only_reservation:
-            trailers = release_policy.validate_version_only_reservation(
-                reservation_commit, version=version, pr_number=pr_number, source_sha=source_sha
-            )
-            if trailers.get("Release-Reservation-Identity-SHA") not in {"", identity_sha}:
-                raise PreparationError("release reservation identity SHA does not match the recovery PR")
-            if trailers.get("Release-Reservation-Intent") != release_intent:
-                raise PreparationError("release reservation intent does not match the recovery PR")
-        else:
-            release_policy.validate_reservation(
-                reservation_commit, version=version, pr_number=pr_number, source_sha=source_sha
-            )
-    except release_policy.PolicyError as error:
-        raise PreparationError(str(error)) from error
-    return None
-
-
-def delete_reservation_ref(
-    api_root: str, token: str, repository: str, version: str, expected_sha: str
-) -> None:
-    owner, name = repository_parts(repository)
-    ref_name = f"release-reservation/v{version}"
-    path = f"/repos/{owner}/{name}/git/refs/heads/{urllib.parse.quote(ref_name, safe='')}"
-    try:
-        current = api_request(api_root, token, "GET", path)
-    except PreparationError as error:
-        if " 404:" not in str(error):
-            raise
-        return
-    current_sha = current.get("object", {}).get("sha")
-    if current_sha != expected_sha:
-        return
-    api_request(api_root, token, "DELETE", path)
-
-
-def expected_version(
-    intent: dict[str, Any],
-    base_version: str,
-    exact_version: str | None,
-    *,
-    baseline_version: str,
+def create_identity_commit(
+    api_root: str, token: str, repository: str, branch: str, source_sha: str,
+    decision: dict[str, str],
 ) -> str:
-    exact_version = exact_version.strip() if exact_version is not None else None
-    release_policy.validate_final_baseline_version(baseline_version)
-    if intent["type"] == "patch":
-        source_channel = release_policy.channel_for_version(base_version)
-        if intent["channel"] == "stable" and source_channel == "stable":
-            if exact_version:
-                raise PreparationError("stable type:patch preparation does not accept an exact version")
-            version = release_policy.next_patch(baseline_version)
-        else:
-            if not exact_version:
-                raise PreparationError(
-                    "beta/rc/dev and prerelease-to-stable type:patch preparation require an explicit exact version"
-                )
-            version = exact_version
-    elif intent["type"] in {"major", "minor"}:
-        if not exact_version:
-            raise PreparationError("major/minor preparation requires an explicit exact version")
-        version = exact_version
-    else:
-        raise PreparationError("type:none does not create a release preparation commit")
-    try:
-        release_policy.validate_preparation_version(
-            base_version, version, intent, baseline_version=baseline_version
-        )
-    except release_policy.PolicyError as error:
-        raise PreparationError(str(error)) from error
-    return version
-
-
-def is_existing_preparation(trailers: dict[str, str]) -> bool:
-    return trailers.get("Release-Mode") == "normal-preparation" and bool(
-        trailers.get("Source-SHA")
-        and trailers.get("Product-Version")
-        and trailers.get("Release-Baseline-Version")
-    )
-
-
-def is_version_only_release(trailers: dict[str, str]) -> bool:
-    return trailers.get("Release-Mode") == "version-only-release-pr" and bool(
-        trailers.get("Covered-Product-Merge-SHA")
-        and trailers.get("Product-Version")
-        and trailers.get("Release-Intent")
-        and trailers.get("Release-Baseline-Version")
-    )
-
-
-def create_commit(
-    api_root: str,
-    token: str,
-    repository: str,
-    branch: str,
-    source_sha: str,
-    version: str,
-    intent: dict[str, Any],
-    source_pr_updated_at: str,
-    baseline_version: str,
-    reservation_pr_number: int | None = None,
-) -> str:
-    encoded = base64.b64encode((version + "\n").encode()).decode()
-    query = """
-    mutation($input: CreateCommitOnBranchInput!) {
-      createCommitOnBranch(input: $input) {
-        commit { oid }
-      }
-    }
-    """
     body = "\n".join(
         [
-            "Prepare release identity",
+            "Prepare Dockrev version identity",
             "",
             f"Source-SHA: {source_sha}",
-            f"Source-PR-Updated-At: {source_pr_updated_at}",
-            f"Product-Version: {version}",
-            f"Release-Baseline-Version: {baseline_version}",
-            f"Release-Intent: {intent['type_label']} {intent['channel_label']}",
-            "Release-Mode: normal-preparation",
+            f"Product-Version: {decision['version']}",
+            f"Release-Baseline-Version: {decision['baseline_version']}",
+            f"Release-Intent: {decision['version_input']}",
         ]
     )
-    if reservation_pr_number is not None:
-        body += "\n" + "\n".join(
-            [
-                f"Release-Reservation-Version: {version}",
-                f"Release-Reservation-PR: {reservation_pr_number}",
-                f"Release-Reservation-Source-SHA: {source_sha}",
-            ]
-        )
+    query = """
+    mutation($input: CreateCommitOnBranchInput!) {
+      createCommitOnBranch(input: $input) { commit { oid } }
+    }
+    """
     variables = {
         "input": {
             "branch": {"repositoryNameWithOwner": repository, "branchName": branch},
             "expectedHeadOid": source_sha,
             "message": {"headline": "chore(release): prepare VERSION", "body": body},
-            "fileChanges": {"additions": [{"path": "VERSION", "contents": encoded}]},
+            "fileChanges": {
+                "additions": [{"path": "VERSION", "contents": decision["version"] + "\n"}]
+            },
         }
     }
-    data = graphql(f"{api_root.rstrip('/')}", token, query, variables)
+    data = graphql(api_root, token, query, variables)
     oid = (((data.get("createCommitOnBranch") or {}).get("commit") or {}).get("oid"))
-    if not isinstance(oid, str) or not re.fullmatch(r"[0-9a-f]{40}", oid):
-        raise PreparationError("createCommitOnBranch did not return a commit OID")
-    return oid
+    release_policy.validate_sha(str(oid), "created identity SHA")
+    return str(oid)
 
 
-def create_version_only_commit(
-    api_root: str,
-    token: str,
-    repository: str,
-    branch: str,
-    expected_head_sha: str,
-    covered_merge_sha: str,
-    version: str,
-    intent: dict[str, Any],
-    source_pr_updated_at: str,
-    baseline_version: str,
-    reservation_pr_number: int | None = None,
-) -> str:
-    """Create the one immutable VERSION-only identity for a historical merge."""
-    encoded = base64.b64encode((version + "\n").encode()).decode()
-    query = """
-    mutation($input: CreateCommitOnBranchInput!) {
-      createCommitOnBranch(input: $input) {
-        commit { oid }
-      }
-    }
-    """
-    body = "\n".join(
-        [
-            "Prepare version-only release identity",
-            "",
-            f"Covered-Product-Merge-SHA: {covered_merge_sha}",
-            f"Product-Version: {version}",
-            f"Release-Baseline-Version: {baseline_version}",
-            f"Release-Intent: {intent['type_label']} {intent['channel_label']}",
-            f"Source-PR-Updated-At: {source_pr_updated_at}",
-            "Release-Mode: version-only-release-pr",
-        ]
+def reserve_version(
+    api_root: str, token: str, repository: str, version: str, identity_sha: str,
+) -> None:
+    owner, name = repository_parts(repository)
+    branch = f"release-reservation/v{version}"
+    live = branch_ref(api_root, token, repository, branch)
+    if live is not None:
+        if live != identity_sha:
+            raise PreparationError("target version is reserved by another immutable identity")
+        return
+    response = api_request(
+        api_root, token, "POST", f"/repos/{owner}/{name}/git/refs",
+        {"ref": f"refs/heads/{branch}", "sha": identity_sha},
     )
-    if reservation_pr_number is not None:
-        body += "\n" + "\n".join(
-            [
-                f"Release-Reservation-Version: {version}",
-                f"Release-Reservation-PR: {reservation_pr_number}",
-                f"Release-Reservation-Source-SHA: {covered_merge_sha}",
-                f"Release-Reservation-Intent: {intent['type_label']} {intent['channel_label']}",
-                "Release-Reservation-Mode: version-only-release-pr",
-            ]
-        )
-    data = graphql(
-        f"{api_root.rstrip('/')}",
-        token,
-        query,
-        {
-            "input": {
-                "branch": {"repositoryNameWithOwner": repository, "branchName": branch},
-                "expectedHeadOid": expected_head_sha,
-                "message": {"headline": "chore(release): prepare historical VERSION", "body": body},
-                "fileChanges": {"additions": [{"path": "VERSION", "contents": encoded}]},
-            }
-        },
-    )
-    oid = (((data.get("createCommitOnBranch") or {}).get("commit") or {}).get("oid"))
-    if not isinstance(oid, str) or not re.fullmatch(r"[0-9a-f]{40}", oid):
-        raise PreparationError("createCommitOnBranch did not return a version-only commit OID")
-    return oid
+    if response is None and branch_ref(api_root, token, repository, branch) != identity_sha:
+        raise PreparationError("target version reservation raced with a foreign identity")
+    if response is not None and response.get("object", {}).get("sha") != identity_sha:
+        raise PreparationError("target version reservation points at an unexpected identity")
 
 
-def inspect_version_only_commit(
-    api_root: str,
-    token: str,
-    repository: str,
-    branch: str,
-    commit_sha: str,
-    expected_head_sha: str,
-    covered_merge_sha: str,
-    version: str,
-    intent: dict[str, Any],
-    source_pr_updated_at: str,
-    baseline_version: str,
+def find_or_create_pull_request(
+    api_root: str, token: str, repository: str, branch: str, version: str,
+    identity_sha: str,
 ) -> dict[str, Any]:
     owner, name = repository_parts(repository)
-    commit = api_request(api_root, token, "GET", f"/repos/{owner}/{name}/commits/{commit_sha}")
-    ref = api_request(
-        api_root,
-        token,
-        "GET",
-        f"/repos/{owner}/{name}/git/ref/heads/{urllib.parse.quote(branch, safe='')}",
-    )
-    if ref.get("object", {}).get("sha") != commit_sha:
-        raise PreparationError("version-only PR branch head drifted after preparation")
-    files = sorted({item.get("filename") for item in commit.get("files", []) if item.get("filename")})
-    parents = [parent.get("sha") for parent in commit.get("parents", [])]
-    trailers = release_policy.parse_trailers(commit.get("commit", {}).get("message", ""))
-    if parents != [expected_head_sha] or files != ["VERSION"]:
-        raise PreparationError("version-only identity must be a single-parent VERSION-only commit")
-    if commit.get("commit", {}).get("verification", {}).get("verified") is not True:
-        raise PreparationError("version-only identity commit signature is not verified")
-    expected_trailers = {
-        "Covered-Product-Merge-SHA": covered_merge_sha,
-        "Product-Version": version,
-        "Release-Baseline-Version": baseline_version,
-        "Release-Intent": f"{intent['type_label']} {intent['channel_label']}",
-        "Source-PR-Updated-At": source_pr_updated_at,
-        "Release-Mode": "version-only-release-pr",
-    }
-    if any(trailers.get(key) != value for key, value in expected_trailers.items()):
-        raise PreparationError("version-only provenance trailers do not match the requested identity")
-    if current_version(api_root, token, repository, commit_sha) != version:
-        raise PreparationError("version-only identity VERSION does not match Product-Version")
-    return {
-        "commit_sha": commit_sha,
-        "source_sha": covered_merge_sha,
-        "version": version,
-        "baseline_version": baseline_version,
-        "intent": intent,
-        "release_intent": expected_trailers["Release-Intent"],
-        "release_mode": "version-only-release-pr",
-        "parents": parents,
-        "changed_files": files,
-        "verified": True,
-        "branch_head_sha": commit_sha,
-        "covered_product_merge_sha": covered_merge_sha,
-    }
-
-
-def inspect_commit(
-    api_root: str,
-    token: str,
-    repository: str,
-    branch: str,
-    commit_sha: str,
-    source_sha: str,
-    version: str,
-    intent: dict[str, Any],
-    baseline_version: str,
-) -> dict[str, Any]:
-    owner, name = repository_parts(repository)
-    commit = None
-    for attempt in range(5):
-        candidate = api_request(api_root, token, "GET", f"/repos/{owner}/{name}/commits/{commit_sha}")
-        commit = candidate
-        verification = candidate.get("commit", {}).get("verification", {})
-        if verification.get("verified") is True or attempt == 4:
-            break
-        time.sleep(2)
-    assert commit is not None
-    ref = api_request(api_root, token, "GET", f"/repos/{owner}/{name}/git/ref/heads/{urllib.parse.quote(branch, safe='')}")
-    head_sha = ref.get("object", {}).get("sha")
-    files = sorted({item.get("filename") for item in commit.get("files", []) if item.get("filename")})
-    verification = commit.get("commit", {}).get("verification", {})
-    trailers = release_policy.parse_trailers(commit.get("commit", {}).get("message", ""))
-    payload = {
-        "commit_sha": commit_sha,
-        "source_sha": source_sha,
-        "source_pr_updated_at": trailers.get("Source-PR-Updated-At", ""),
-        "version": version,
-        "baseline_version": trailers.get("Release-Baseline-Version", ""),
-        "intent": intent,
-        "release_mode": trailers.get("Release-Mode", ""),
-        "parents": [parent.get("sha") for parent in commit.get("parents", [])],
-        "changed_files": files,
-        "verified": verification.get("verified") is True,
-        "branch_head_sha": head_sha,
-        "trailers": trailers,
-    }
-    release_policy.validate_preparation(payload, source_sha=source_sha)
-    if head_sha != commit_sha:
-        raise PreparationError("PR branch head drifted after preparation commit")
-    if (
-        trailers.get("Source-SHA") != source_sha
-        or trailers.get("Product-Version") != version
-        or trailers.get("Release-Baseline-Version") != baseline_version
-    ):
-        raise PreparationError("preparation provenance trailers do not match source/version")
-    if not trailers.get("Source-PR-Updated-At"):
-        raise PreparationError("preparation source PR timestamp trailer is missing")
-    if trailers.get("Release-Intent") != f"{intent['type_label']} {intent['channel_label']}":
-        raise PreparationError("preparation release intent trailer does not match labels")
-    return payload
-
-
-def write_json(path: Path, payload: Any) -> None:
-    path.write_text(json.dumps(payload, sort_keys=True, indent=2) + "\n", encoding="utf-8")
-
-
-def create_version_only(args: argparse.Namespace, pr: dict[str, Any], intent: dict[str, Any], source_sha: str) -> int:
-    validate_version_only_branch(str(pr.get("head", {}).get("ref", "")))
-    exact_version = str(getattr(args, "exact_version", "") or "").strip()
-    covered_merge_sha = str(getattr(args, "covered_merge_sha", "") or "").strip()
-    baseline_version = str(getattr(args, "baseline_version", "") or "").strip()
-    if not exact_version or not covered_merge_sha:
-        raise PreparationError("version-only mode requires exact_version and covered_merge_sha")
-    try:
-        release_policy.validate_sha(covered_merge_sha, "covered_product_merge_sha")
-        release_policy.parse_version(exact_version)
-    except release_policy.PolicyError as error:
-        raise PreparationError(str(error)) from error
-    if not baseline_version:
-        baseline_version = latest_final_release_version(args.api_root, args.token, args.repository)
-    covered_product_version = current_version(
-        args.api_root, args.token, args.repository, covered_merge_sha
-    )
-    try:
-        release_policy.validate_final_baseline_version(baseline_version)
-        release_policy.validate_approved_version_only_boundary(
-            covered_merge_sha, exact_version, baseline_version, intent
+    query = urllib.parse.urlencode({"state": "open", "head": f"{owner}:{branch}", "base": "main", "per_page": 100})
+    pulls = api_request(api_root, token, "GET", f"/repos/{owner}/{name}/pulls?{query}")
+    if not isinstance(pulls, list):
+        raise PreparationError("GitHub did not return the release identity PR list")
+    if len(pulls) > 1:
+        raise PreparationError("multiple open PRs exist for one release identity branch")
+    if pulls:
+        pull = pulls[0]
+    else:
+        pull = api_request(
+            api_root, token, "POST", f"/repos/{owner}/{name}/pulls",
+            {
+                "title": f"chore(release): prepare {version}",
+                "head": branch,
+                "base": "main",
+                "body": (
+                    f"Prepare signed VERSION identity `{version}` from the latest `main:VERSION`.\n\n"
+                    "The Release completion check verifies the frozen baseline, signature, identity, and reservation."
+                ),
+            },
         )
-        release_policy.validate_preparation_version(
-            covered_product_version,
-            exact_version,
-            intent,
-            baseline_version=baseline_version,
-        )
-    except release_policy.PolicyError as error:
-        raise PreparationError(str(error)) from error
-    validate_frozen_final_baseline(args.api_root, args.token, args.repository, baseline_version)
-    if pull_request_changed_files(args.api_root, args.token, args.repository, args.pr_number):
-        raise PreparationError("version-only release PR must start without existing file changes")
-    covered_product = covered_product_boundary(
-        args.api_root, args.token, args.repository, covered_merge_sha
-    )
-    if covered_product_has_existing_identity(
-        args.api_root,
-        args.token,
-        args.repository,
-        covered_merge_sha,
-        covered_product_version,
-    ):
-        raise PreparationError("covered product merge already has immutable release identity")
-    source_pr_updated_at = source_ci_ready(
-        args.api_root,
-        args.token,
-        args.repository,
-        args.pr_number,
-        source_sha,
-        expected_pr_updated_at=str(pr.get("updated_at", "")),
-        expected_intent=intent,
-        require_unchanged_pr=True,
-    )
-    identity_sha = create_version_only_commit(
-        args.api_root,
-        args.token,
-        args.repository,
-        pr["head"]["ref"],
-        source_sha,
-        covered_merge_sha,
-        exact_version,
-        intent,
-        source_pr_updated_at,
-        baseline_version,
-        args.pr_number,
-    )
-    preparation = inspect_version_only_commit(
-        args.api_root,
-        args.token,
-        args.repository,
-        pr["head"]["ref"],
-        identity_sha,
-        source_sha,
-        covered_merge_sha,
-        exact_version,
-        intent,
-        source_pr_updated_at,
-        baseline_version,
-    )
-    reservation_sha = None
-    try:
-        reserve_recovery_identity(
-            args.api_root, args.token, args.repository, covered_merge_sha, identity_sha
-        )
-        reservation_sha = reserve_tag(
-            args.api_root,
-            args.token,
-            args.repository,
-            exact_version,
-            args.pr_number,
-            covered_merge_sha,
-            identity_sha=identity_sha,
-            release_intent=f"{intent['type_label']} {intent['channel_label']}",
-            release_mode="version-only-release-pr",
-        )
-        if not recovery_identity_is_owned(
-            args.api_root, args.token, args.repository, covered_merge_sha, identity_sha
-        ):
-            raise PreparationError("version-only recovery identity ownership changed")
-        if not version_only_reservation_is_owned(
-            args.api_root,
-            args.token,
-            args.repository,
-            exact_version,
-            args.pr_number,
-            covered_merge_sha,
-            identity_sha,
-            f"{intent['type_label']} {intent['channel_label']}",
-        ):
-            raise PreparationError("version-only reservation ownership changed")
-    except PreparationError:
-        if reservation_sha:
-            delete_reservation_ref(args.api_root, args.token, args.repository, exact_version, reservation_sha)
-        raise
-    write_json(
-        args.output,
-        {
-            "schema_version": 1,
-            "release_enabled": True,
-            "pr_number": args.pr_number,
-            "source_sha": covered_merge_sha,
-            "preparation_commit_sha": identity_sha,
-            "version": exact_version,
-            "baseline_version": baseline_version,
-            "release_tag": f"v{exact_version}",
-            "intent": intent,
-            "release_mode": "version-only-release-pr",
-            "covered_product_merge_sha": covered_merge_sha,
-            "covered_product_pr_number": covered_product.get("number"),
-            "covered_product_version": covered_product_version,
-            "preparation": preparation,
-        },
-    )
-    return 0
+    if pull.get("state") != "open" or pull.get("base", {}).get("ref") != "main":
+        raise PreparationError("release identity PR is not open against main")
+    head = pull.get("head") or {}
+    head_repository = (head.get("repo") or {}).get("full_name")
+    if head_repository != repository or head.get("sha") != identity_sha:
+        raise PreparationError("release identity PR head does not match the reserved identity")
+    return pull
 
 
-def create(args: argparse.Namespace) -> int:
-    pr = pull_request(args.api_root, args.token, args.repository, args.pr_number)
-    if pr.get("state") != "open" or pr.get("base", {}).get("ref") != "main":
-        raise PreparationError("preparation requires an open PR targeting main")
-    head_repo = (pr.get("head", {}).get("repo") or {}).get("full_name")
-    if head_repo != args.repository:
-        raise PreparationError("fork PR branches are not eligible for GitHub-native preparation")
-    source_sha = pr.get("head", {}).get("sha", "")
-    release_policy.validate_sha(source_sha, "source_sha")
+def prepare(args: argparse.Namespace) -> dict[str, Any]:
+    release_policy.load_policy()
     owner, name = repository_parts(args.repository)
-    head_commit = api_request(args.api_root, args.token, "GET", f"/repos/{owner}/{name}/commits/{source_sha}")
-    head_trailers = release_policy.parse_trailers(head_commit.get("commit", {}).get("message", ""))
-    intent = release_policy.parse_labels([str(item.get("name")) for item in pr.get("labels", []) if item.get("name")])
-    release_mode = getattr(args, "release_mode", "")
-    head_branch = str(pr.get("head", {}).get("ref", ""))
-    has_version_only_identity = is_version_only_release(head_trailers)
-    validate_release_mode_for_branch(
-        head_branch, release_mode, has_version_only_identity=has_version_only_identity
+    main_ref = api_request(args.api_root, args.token, "GET", f"/repos/{owner}/{name}/git/ref/heads/main")
+    if not isinstance(main_ref, dict):
+        raise PreparationError("main branch could not be read")
+    source_sha = str((main_ref.get("object") or {}).get("sha", ""))
+    release_policy.validate_sha(source_sha, "main SHA")
+    baseline = version_at_ref(args.api_root, args.token, args.repository, source_sha)
+    decision = release_policy.compute_target(baseline, args.version)
+    branch = f"release-preparation/v{decision['version']}"
+
+    live_branch_sha = branch_ref(args.api_root, args.token, args.repository, branch)
+    if live_branch_sha is None:
+        live_branch_sha = create_branch(args.api_root, args.token, args.repository, branch, source_sha)
+    if live_branch_sha == source_sha:
+        identity_sha = create_identity_commit(
+            args.api_root, args.token, args.repository, branch, source_sha, decision
+        )
+    else:
+        identity_sha = live_branch_sha
+    identity = inspect_identity(
+        args.api_root, args.token, args.repository, identity_sha,
+        source_sha, baseline, decision,
     )
-    if head_trailers.get("Release-Mode") == "version-only-release-pr" and not has_version_only_identity:
-        raise PreparationError("version-only release identity is incomplete")
-    if has_version_only_identity:
-        validate_version_only_branch(head_branch)
-        if release_mode != "version-only-release-pr":
-            raise PreparationError(
-                "existing version-only release identity requires explicit version-only-release-pr preparation"
-            )
-    if release_mode == "version-only-release-pr":
-        if not intent["release_enabled"]:
-            raise PreparationError("type:none cannot create a version-only release identity")
-        if not head_trailers:
-            return create_version_only(args, pr, intent, source_sha)
-        if not has_version_only_identity:
-            raise PreparationError("version-only release PR head contains malformed identity trailers")
-    if any(
-        head_trailers.get(key)
-        for key in (
-            "Release-Mode",
-            "Source-SHA",
-            "Source-PR-Updated-At",
-            "Product-Version",
-            "Release-Baseline-Version",
-            "Release-Intent",
-            "Covered-Product-Merge-SHA",
-        )
-    ) and head_trailers.get("Release-Mode") not in {"normal-preparation", "version-only-release-pr"}:
-        raise PreparationError("PR head contains malformed release identity trailers")
-    if head_trailers.get("Release-Mode") == "normal-preparation" and not is_existing_preparation(head_trailers):
-        raise PreparationError("normal preparation identity is incomplete")
-    if head_trailers.get("Release-Mode") == "normal-preparation" and head_trailers.get("Covered-Product-Merge-SHA"):
-        raise PreparationError("normal preparation identity cannot carry Covered-Product-Merge-SHA")
-    if head_trailers.get("Release-Mode") == "version-only-release-pr" and not is_version_only_release(head_trailers):
-        raise PreparationError("version-only release identity is incomplete")
-    if is_version_only_release(head_trailers):
-        if not intent["release_enabled"]:
-            raise PreparationError("type:none PR cannot retain release-only identity")
-        if head_trailers.get("Source-SHA"):
-            raise PreparationError("version-only release identity cannot carry Source-SHA")
-        if head_trailers.get("Release-Intent") != f"{intent['type_label']} {intent['channel_label']}":
-            raise PreparationError("existing release-only intent does not match current PR labels")
-        version = head_trailers["Product-Version"]
-        baseline_version = head_trailers["Release-Baseline-Version"]
-        try:
-            release_policy.parse_version(version)
-            release_policy.validate_final_baseline_version(baseline_version)
-            release_policy.validate_channel_version(version, intent["channel"])
-            release_policy.validate_approved_version_only_boundary(
-                head_trailers["Covered-Product-Merge-SHA"], version, baseline_version, intent
-            )
-        except release_policy.PolicyError as error:
-            raise PreparationError(str(error)) from error
-        validate_frozen_final_baseline(
-            args.api_root, args.token, args.repository, baseline_version
-        )
-        covered_merge_sha = head_trailers["Covered-Product-Merge-SHA"]
-        covered_product = covered_product_boundary(args.api_root, args.token, args.repository, covered_merge_sha)
-        covered_product_version = current_version(args.api_root, args.token, args.repository, covered_merge_sha)
-        if covered_product_has_existing_identity(
-            args.api_root,
-            args.token,
-            args.repository,
-            covered_merge_sha,
-            covered_product_version,
-            identity_sha=source_sha,
-        ):
-            raise PreparationError("covered product merge already has immutable release identity")
-        identity_parents = [parent.get("sha") for parent in head_commit.get("parents", [])]
-        if len(identity_parents) != 1 or not isinstance(identity_parents[0], str):
-            raise PreparationError("version-only identity must have exactly one parent")
-        try:
-            release_policy.validate_sha(identity_parents[0], "version-only identity parent SHA")
-        except release_policy.PolicyError as error:
-            raise PreparationError(str(error)) from error
-        source_pr_updated_at = head_trailers.get("Source-PR-Updated-At", "")
-        if not source_pr_updated_at:
-            raise PreparationError("version-only release identity source timestamp is missing")
-        try:
-            release_policy.validate_version_only(
-                pull_request_changed_files(args.api_root, args.token, args.repository, args.pr_number),
-                {
-                    "covered_product_merge_sha": covered_merge_sha,
-                    "covered_product_pr_number": covered_product.get("number", 0),
-                    "covered_product_version": covered_product_version,
-                    "covered_product_merged": True,
-                    "product_version": version,
-                    "baseline_version": baseline_version,
-                    "release_intent": head_trailers["Release-Intent"],
-                    "release_mode": "version-only-release-pr",
-                    "branch_head_sha": source_sha,
-                    "source_pr_updated_at": source_pr_updated_at,
-                    "verified": head_commit.get("commit", {}).get("verification", {}).get("verified") is True,
-                },
-                head_sha=source_sha,
-            )
-        except release_policy.PolicyError as error:
-            raise PreparationError(str(error)) from error
-        source_pr_updated_at = source_ci_ready(
-            args.api_root,
-            args.token,
-            args.repository,
-            args.pr_number,
-            identity_parents[0],
-            expected_pr_updated_at=source_pr_updated_at,
-            expected_intent=intent,
-            require_current_head=False,
-            require_unchanged_pr=False,
-        )
-        reservation_sha = None
-        try:
-            target_reservation_exists = version_reservation_exists(
-                args.api_root, args.token, args.repository, version
-            )
-            recovery_was_owned = recovery_identity_is_owned(
-                args.api_root, args.token, args.repository, covered_merge_sha, source_sha
-            )
-            if target_reservation_exists and not recovery_was_owned:
-                raise PreparationError("target reservation exists without a matching covered recovery identity")
-            recovery_created = reserve_recovery_identity(
-                args.api_root, args.token, args.repository, covered_merge_sha, source_sha
-            )
-            if not recovery_created:
-                if not recovery_was_owned:
-                    raise PreparationError("covered recovery identity is not owned by this preparation")
-                if target_reservation_exists and not version_only_reservation_is_owned(
-                    args.api_root,
-                    args.token,
-                    args.repository,
-                    version,
-                    args.pr_number,
-                    covered_merge_sha,
-                    source_sha,
-                    head_trailers["Release-Intent"],
-                ):
-                    raise PreparationError("covered recovery identity is orphaned without its target reservation")
-            if covered_product_has_existing_identity(
-                args.api_root,
-                args.token,
-                args.repository,
-                covered_merge_sha,
-                covered_product_version,
-                identity_sha=source_sha,
-            ):
-                raise PreparationError("covered product merge already has immutable release identity")
-            reservation_sha = reserve_tag(
-                args.api_root,
-                args.token,
-                args.repository,
-                version,
-                args.pr_number,
-                covered_merge_sha,
-                identity_sha=source_sha,
-                release_intent=head_trailers["Release-Intent"],
-                release_mode="version-only-release-pr",
-            )
-            source_ci_ready(
-                args.api_root,
-                args.token,
-                args.repository,
-                args.pr_number,
-                identity_parents[0],
-                expected_pr_updated_at=source_pr_updated_at,
-                expected_intent=intent,
-                require_current_head=False,
-                require_unchanged_pr=False,
-            )
-        except PreparationError:
-            if reservation_sha:
-                delete_reservation_ref(args.api_root, args.token, args.repository, version, reservation_sha)
-            # The covered-merge lock intentionally survives failure. GitHub's ref
-            # API has no conditional delete, so removing it could erase a later
-            # owner's lock after a read/delete race.
-            raise
-        write_json(
-            args.output,
-            {
-                "schema_version": 1,
-                "release_enabled": True,
-                "pr_number": args.pr_number,
-                "source_sha": covered_merge_sha,
-                "preparation_commit_sha": source_sha,
-                "version": version,
-                "baseline_version": baseline_version,
-                "release_tag": f"v{version}",
-                "intent": intent,
-                "release_mode": "version-only-release-pr",
-                "skipped": "already-version-only",
-            },
-        )
-        return 0
-    if is_existing_preparation(head_trailers):
-        if not intent["release_enabled"]:
-            raise PreparationError("type:none PR cannot retain release preparation identity")
-        existing_source_sha = head_trailers["Source-SHA"]
-        existing_version = head_trailers["Product-Version"]
-        baseline_version = head_trailers["Release-Baseline-Version"]
-        release_policy.validate_sha(existing_source_sha, "preparation source_sha")
-        release_policy.parse_version(existing_version)
-        release_policy.validate_final_baseline_version(baseline_version)
-        release_intent = release_policy.parse_labels(head_trailers.get("Release-Intent", "").split())
-        if release_intent["type_label"] != intent["type_label"] or release_intent["channel_label"] != intent["channel_label"]:
-            raise PreparationError("existing preparation release intent does not match current PR labels")
-        validate_frozen_final_baseline(
-            args.api_root, args.token, args.repository, baseline_version
-        )
-        source_version = current_version(args.api_root, args.token, args.repository, existing_source_sha)
-        source_ci_ready(
-            args.api_root, args.token, args.repository, args.pr_number, existing_source_sha,
-            expected_pr_updated_at=head_trailers.get("Source-PR-Updated-At"),
-            expected_intent=intent,
-            require_current_head=False,
-        )
-        existing = inspect_commit(
-            args.api_root,
-            args.token,
-            args.repository,
-            pr["head"]["ref"],
-            source_sha,
-            existing_source_sha,
-            existing_version,
-            intent,
-            baseline_version,
-        )
-        release_policy.validate_preparation_version(
-            source_version,
-            existing_version,
-            intent,
-            baseline_version=baseline_version,
-        )
-        reserve_preparation_identity(
-            args.api_root,
-            args.token,
-            args.repository,
-            args.pr_number,
-            existing_source_sha,
-            source_sha,
-        )
-        reserve_tag(
-            args.api_root,
-            args.token,
-            args.repository,
-            existing_version,
-            args.pr_number,
-            existing_source_sha,
-            identity_sha=source_sha,
-        )
-        write_json(
-            args.output,
-            {
-                "schema_version": 1,
-                "release_enabled": True,
-                "pr_number": args.pr_number,
-                "source_sha": existing_source_sha,
-                "preparation_commit_sha": source_sha,
-                "version": existing_version,
-                "baseline_version": baseline_version,
-                "release_tag": f"v{existing_version}",
-                "intent": intent,
-                "release_mode": "normal-preparation",
-                "preparation": existing,
-                "skipped": "already-prepared",
-            },
-        )
-        return 0
-    if not intent["release_enabled"]:
-        write_json(args.output, {"release_enabled": False, "pr_number": args.pr_number, "source_sha": source_sha, "reason": "type:none"})
-        return 0
-    source_pr_updated_at = source_ci_ready(
-        args.api_root,
-        args.token,
-        args.repository,
-        args.pr_number,
-        source_sha,
-        expected_pr_updated_at=str(pr.get("updated_at", "")),
-        expected_intent=intent,
-        require_unchanged_pr=True,
+    reserve_version(args.api_root, args.token, args.repository, decision["version"], identity_sha)
+    pull = find_or_create_pull_request(
+        args.api_root, args.token, args.repository, branch, decision["version"], identity_sha
     )
-    source_version = current_version(args.api_root, args.token, args.repository, source_sha)
-    final_baseline = latest_final_release_version(args.api_root, args.token, args.repository)
-    version = expected_version(
-        intent,
-        source_version,
-        args.exact_version,
-        baseline_version=final_baseline,
-    )
-    commit_sha = None
-    reservation_sha = None
-    preparation_reserved = False
-    try:
-        source_ci_ready(
-            args.api_root,
-            args.token,
-            args.repository,
-            args.pr_number,
-            source_sha,
-            expected_pr_updated_at=source_pr_updated_at,
-            expected_intent=intent,
-            require_unchanged_pr=True,
-        )
-        commit_sha = create_commit(
-            args.api_root, args.token, args.repository, pr["head"]["ref"], source_sha, version, intent,
-            source_pr_updated_at, final_baseline,
-            args.pr_number,
-        )
-        preparation = inspect_commit(
-            args.api_root,
-            args.token,
-            args.repository,
-            pr["head"]["ref"],
-            commit_sha,
-            source_sha,
-            version,
-            intent,
-            final_baseline,
-        )
-        reserve_preparation_identity(
-            args.api_root, args.token, args.repository, args.pr_number, source_sha, commit_sha
-        )
-        preparation_reserved = True
-        reservation_sha = reserve_tag(
-            args.api_root,
-            args.token,
-            args.repository,
-            version,
-            args.pr_number,
-            source_sha,
-            identity_sha=commit_sha,
-        )
-    except PreparationError:
-        if reservation_sha and not preparation_reserved:
-            delete_reservation_ref(args.api_root, args.token, args.repository, version, reservation_sha)
-        raise
-    payload = {
+    return {
         "schema_version": 1,
-        "release_enabled": True,
-        "pr_number": args.pr_number,
-        "source_sha": source_sha,
-        "preparation_commit_sha": commit_sha,
-        "version": version,
-        "baseline_version": final_baseline,
-        "release_tag": f"v{version}",
-        "intent": intent,
-        "release_mode": "normal-preparation",
-        "preparation": preparation,
+        "baseline_sha": identity["parent_sha"],
+        "main_sha": source_sha,
+        **decision,
+        "identity_sha": identity_sha,
+        "release_tag": f"v{decision['version']}",
+        "pull_request": int(pull["number"]),
+        "pull_request_url": pull.get("html_url", ""),
     }
-    write_json(args.output, payload)
-    return 0
 
 
 def main() -> int:
     parser = argparse.ArgumentParser()
-    sub = parser.add_subparsers(dest="command", required=True)
-    create_parser = sub.add_parser("create")
-    create_parser.add_argument("--pr-number", type=int, required=True)
-    create_parser.add_argument("--repository", required=True)
-    create_parser.add_argument("--token", default=os.environ.get("GITHUB_TOKEN", ""))
-    create_parser.add_argument("--api-root", default=os.environ.get("GITHUB_API_URL", "https://api.github.com"))
-    create_parser.add_argument("--exact-version")
-    create_parser.add_argument(
-        "--release-mode",
-        choices=("normal-preparation", "version-only-release-pr"),
-        default="",
-    )
-    create_parser.add_argument("--covered-merge-sha")
-    create_parser.add_argument("--baseline-version")
-    create_parser.add_argument("--output", type=Path, required=True)
+    parser.add_argument("--repository", required=True)
+    parser.add_argument("--token", default="")
+    parser.add_argument("--api-root", default="https://api.github.com")
+    parser.add_argument("--version", required=True)
+    parser.add_argument("--output", type=Path)
     args = parser.parse_args()
     if not args.token:
-        print("GITHUB_TOKEN is required", file=sys.stderr)
-        return 2
+        parser.error("--token or GITHUB_TOKEN is required")
     try:
-        if args.command == "create":
-            return create(args)
-        raise PreparationError("unsupported preparation command")
-    except (PreparationError, release_policy.PolicyError, OSError, json.JSONDecodeError) as error:
+        result = prepare(args)
+        rendered = json.dumps(result, sort_keys=True, indent=2) + "\n"
+        if args.output:
+            args.output.write_text(rendered, encoding="utf-8")
+        else:
+            print(rendered, end="")
+    except (PreparationError, release_policy.PolicyError) as error:
         print(str(error), file=sys.stderr)
-        return 1
+        return 2
+    return 0
 
 
 if __name__ == "__main__":

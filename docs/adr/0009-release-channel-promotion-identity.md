@@ -2,8 +2,8 @@
 
 ## Status
 
-Accepted for implementation. This supplements ADR 0008 and supersedes its
-channel interpretation where they differ.
+Superseded by [ADR 0015](0015-manual-version-release-delivery.md). Retained as
+historical context for the former channel contract.
 
 ## Context
 

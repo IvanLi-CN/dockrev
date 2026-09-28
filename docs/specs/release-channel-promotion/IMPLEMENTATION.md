@@ -1,73 +1,56 @@
-# Dockrev Release Channel Promotion 实现状态
+# Dockrev Manual Version Release Delivery Implementation
 
 ## Current Status
 
-- Implementation: complete in the checked-in release policy, workflows, fixtures, and documentation.
+- Implementation: complete in the checked-in policy, workflows, helpers,
+  deterministic fixtures, and maintainer documentation.
 - Lifecycle: active.
-- Catalog note: RC is a first-class prerelease channel with exact beta-to-RC-to-stable promotion.
+- Main allocation baseline: root `VERSION`; currently `0.81.0`.
+- Generic Style Playbook topic: unchanged. Only the Dockrev project snapshot
+  and its catalog indexes are in scope for Style Playbook synchronization.
 
 ## Implementation Coverage
 
-- `REQ-RELEASE-CHANNEL-001`: `.github/pr-label-release.json`,
-  `.github/scripts/release_policy.py`, `.github/workflows/label-gate.yml`, and
-  `.github/workflows/release-completion-pr.yml` define and validate the four
-  channels.
-- `REQ-RELEASE-CHANNEL-002`: `.github/scripts/release_preparation.py` and
-  `.github/scripts/release_policy.py` enforce the exact promotion transition.
-  `.github/scripts/release_baseline.py` selects and revalidates the highest
-  qualified final release across legacy and canonical tags, rejects conflicting
-  qualified tag targets, and carries that frozen allocation input across
-  preparation, completion, and identity resolution.
-- `REQ-RELEASE-CHANNEL-003`: `.github/scripts/release_identity.py`,
-  `.github/scripts/release_completion.py`,
-  `.github/scripts/release_failure_context.py`, and `.github/workflows/release.yml`
-  carry the immutable channel/version pair through publication and recovery.
-- `REQ-RELEASE-CHANNEL-004`: `.github/scripts/release_preparation.py` and
-  `.github/workflows/release-preparation.yml` expose the explicit
-  `version-only-release-pr` mode and bind its covered merge, exact version,
-  baseline, intent, signed VERSION-only commit, direct reservation ref, and
-  recovery ref. Legacy reservation commits remain readable only for
-  compatibility. The direct reservation ref, recovery ref, and publication
-  lock for the new product version resolve to the same identity SHA. A lock on
-  the covered product's older VERSION is resolved to its exact owning merge and
-  does not block an unrelated historical boundary. Normal-preparation locks
-  require exactly one merged `main` PR whose head SHA matches the signed
-  release identity SHA and whose base repository matches the target repository.
-  `Release completion` validates the target-version publication lock as an
-  identity-only boundary: absent and current-identity locks are accepted,
-  foreign valid locks make the check fail, and malformed locks fail closed.
-  Publication acquires only
-  the new product-version lock. All writes use existing job-scoped
-  `contents: write`; no additional CI permission is required.
-  Recovery branches use the `recovery/` selector; automatic workflow-run
-  preparation skips them and the helper rejects version-only preparation on
-  other branches. `.github/workflows/release-completion-pr.yml` contains only
-  the trusted `pull_request_target` path.
-- Explicit version-only retries reuse an existing signed single-parent
-  identity and validate its source-parent CI and trusted `pull_request_target`
-  Label Gate evidence. The final identity resolver independently rejects a
-  reserved version-only identity with zero or multiple parents.
-- The baseline resolver and the publication workflow share a five-hop maximum
-  for nested annotated tags: a commit reached on the fifth annotated hop is
-  accepted, while a sixth hop fails closed.
+- `REQ-MVRD-001` and `REQ-MVRD-002`: `.github/manual-version-release.json`,
+  `.github/scripts/release_policy.py`, and
+  `.github/scripts/release_preparation.py` define the single `version` input,
+  calculate targets from `main:VERSION`, and reject missing or invalid bases.
+- `REQ-MVRD-003`: policy calculation and release workflow channel selection
+  enforce alpha/beta/RC progression and prevent prereleases from advancing
+  stable `latest`.
+- `REQ-MVRD-004`: preparation writes a signed `VERSION`-only identity,
+  reserves the version directly to that identity, reuses a matching existing
+  identity, and opens the protected main PR. The completion workflow validates
+  the frozen baseline and identity before merge.
+- `REQ-MVRD-005`: Release resolves merged identity, verifies the immutable
+  reservation and artifact bundle, publishes the channel-specific GitHub and
+  GHCR surfaces, records identity-aware failure context, and supports
+  same-identity recovery.
+- `.github/release-failure-notification.json` and the generic failure
+  sidecar no longer classify the removed label gate as an expected-success
+  workflow.
 
-## Coverage / rollout summary
+## Validation
 
-- The checked-in policy accepts `channel:rc`; creation of the corresponding
-  remote GitHub label and any ruleset/OIDC alignment remain maintainer actions.
+- `bash .github/scripts/release-channel-contract-check.sh`
+- `python3 .github/scripts/test_workflow_failure_notification_contract.py`
+- `actionlint` on the changed workflow files
+- `python3 bin/spec_contract_check.py --path docs/specs/release-channel-promotion/SPEC.md`
+- Style Playbook project snapshot sync and catalog audit
+
+The Release Preparation workflow creates its PR with `GITHUB_TOKEN`. GitHub
+requires a repository writer to approve the resulting PR workflow runs before
+they execute. No extra repository credential or external permission change is
+part of this implementation.
 
 ## Remaining Gaps
 
-- No release, tag, artifact, image, deployment, or recovery dispatch is part of
-  this implementation.
-- Approved historical boundaries are explicitly enumerated in
-  `.github/scripts/release_policy.py`: PR #391 merge
-  `978207fe9d140d81e2d4a2a7bd24fb253a04ebff` receives the `0.80.2` stable
-  identity and PR #395 merge
-  `ff1b57b6835616cd3b7a95a479c0106426eb5d40` receives the `0.80.3` stable
-  identity. PR #390 receives no separate release identity.
+- No live release, tag, GHCR publication, or recovery dispatch is run as part
+  of deterministic implementation validation.
+- The Dockrev snapshot update must complete its own Style Playbook repository
+  validation and review flow.
 
 ## References
 
-- `./SPEC.md`
-- `./HISTORY.md`
+- [SPEC.md](./SPEC.md)
+- [HISTORY.md](./HISTORY.md)

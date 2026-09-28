@@ -18,12 +18,7 @@
       "enforcement": {"mode": "required-check", "check_name": "Review Policy Gate"}
     }
   },
-  "required_checks": ["Review Policy Gate", "Label Gate", "Release completion"],
-  "release_label_contract": {
-    "policy_file": ".github/pr-label-release.json",
-    "supported_channels": ["stable", "beta", "rc", "dev"],
-    "promotion_sequence": ["beta", "rc", "stable"]
-  },
+  "required_checks": ["Review Policy Gate", "Release completion"],
   "informational_checks": [
     "Detect changes", "Lint & Checks", "Worktree bootstrap smoke", "Backend Tests",
     "Frontend lint + build", "Frontend Storybook build", "Frontend Storybook test",
@@ -32,8 +27,6 @@
   "waivers": [],
   "expected_pr_workflows": [
     {"workflow": "Review Policy", "jobs": ["Review Policy Gate"]},
-    {"workflow": "Label Gate", "jobs": ["Label Gate"]},
-    {"workflow": "Release Preparation", "jobs": ["Prepare PR VERSION identity"]},
     {"workflow": "Release completion", "jobs": ["Release completion"]},
     {"workflow": "CI (PR)", "jobs": ["Detect changes", "Lint & Checks", "Worktree bootstrap smoke", "Backend Tests", "Deploy Smoke", "Frontend lint + build", "Frontend Storybook build", "Frontend Storybook test", "Release build check (PR)"]}
   ]

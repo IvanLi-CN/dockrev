@@ -2,7 +2,8 @@
 
 ## Status
 
-Accepted for implementation.
+Superseded by [ADR 0015](0015-manual-version-release-delivery.md). Retained as
+historical context for the former label-driven identity contract.
 
 ## Context
 
