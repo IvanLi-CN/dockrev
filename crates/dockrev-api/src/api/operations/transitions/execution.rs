@@ -1393,12 +1393,12 @@ pub(crate) async fn run_update_job(
             )
             .await;
     }
-    let archive = if let Some(evidence) = evidence.as_ref() {
+    let archive_path = if let Some(evidence) = evidence.as_ref() {
         let mut evidence_summary = evidence.finalize().await;
-        let mut archive = None;
+        let mut archive_path = None;
         if evidence_summary.status == "available" {
-            match tokio::fs::read(evidence.archive_path()).await {
-                Ok(bytes) => archive = Some(bytes),
+            match tokio::fs::metadata(evidence.archive_path()).await {
+                Ok(_) => archive_path = Some(evidence.archive_path()),
                 Err(error) => {
                     evidence_summary.status = "incomplete";
                     evidence_summary.archive_size_bytes = None;
@@ -1416,7 +1416,7 @@ pub(crate) async fn run_update_job(
                 serde_json::to_value(&evidence_summary)?,
             );
         }
-        archive
+        archive_path
     } else {
         None
     };
@@ -1428,15 +1428,15 @@ pub(crate) async fn run_update_job(
         &notify_summary,
     )
     .await?;
-    let archive_attached = archive.is_some();
+    let archive_attached = archive_path.is_some();
     let notification_event_enabled = state
         .db
-        .finish_job_with_archive_and_settlement_and_notification(
+        .finish_job_with_archive_file_and_settlement_and_notification(
             &job_id,
             &final_status,
             &finished_at,
             &final_summary,
-            archive,
+            archive_path,
             (!settlements.is_empty()).then_some(settlements.as_slice()),
             notification.as_ref(),
         )

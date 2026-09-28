@@ -353,11 +353,7 @@ async fn main() -> anyhow::Result<()> {
             }
         }
     });
-    let evidence_db = state.db.clone();
-    let evidence_db_path = state.config.db_path.clone();
-    tokio::spawn(async move {
-        rollback_evidence::recover_orphaned_evidence(&evidence_db, &evidence_db_path).await;
-    });
+    rollback_evidence::recover_startup_interrupted_evidence(&state.db, &state.config.db_path).await;
     let host_platform = registry::host_platform_override(state.config.host_platform.as_deref())
         .unwrap_or_else(|| "linux/amd64".to_string());
     state.snapshot_worker.spawn_startup_warmup(&host_platform);

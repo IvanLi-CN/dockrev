@@ -1,4 +1,10 @@
 use super::*;
+use std::path::{Path, PathBuf};
+
+enum ArchiveSource {
+    Bytes(Vec<u8>),
+    File(PathBuf),
+}
 
 impl Db {
     #[allow(clippy::too_many_arguments)]
@@ -9,6 +15,52 @@ impl Db {
         finished_at: &str,
         summary_json: &serde_json::Value,
         archive: Option<Vec<u8>>,
+        settlements: Option<&[ServiceAcceptedStateSettlement]>,
+        notification: Option<&NotificationItemDraft>,
+    ) -> anyhow::Result<Option<bool>> {
+        self.finish_job_with_archive_source(
+            job_id,
+            status,
+            finished_at,
+            summary_json,
+            archive.map(ArchiveSource::Bytes),
+            settlements,
+            notification,
+        )
+        .await
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub async fn finish_job_with_archive_file_and_settlement_and_notification(
+        &self,
+        job_id: &str,
+        status: &str,
+        finished_at: &str,
+        summary_json: &serde_json::Value,
+        archive_path: Option<PathBuf>,
+        settlements: Option<&[ServiceAcceptedStateSettlement]>,
+        notification: Option<&NotificationItemDraft>,
+    ) -> anyhow::Result<Option<bool>> {
+        self.finish_job_with_archive_source(
+            job_id,
+            status,
+            finished_at,
+            summary_json,
+            archive_path.map(ArchiveSource::File),
+            settlements,
+            notification,
+        )
+        .await
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    async fn finish_job_with_archive_source(
+        &self,
+        job_id: &str,
+        status: &str,
+        finished_at: &str,
+        summary_json: &serde_json::Value,
+        archive: Option<ArchiveSource>,
         settlements: Option<&[ServiceAcceptedStateSettlement]>,
         notification: Option<&NotificationItemDraft>,
     ) -> anyhow::Result<Option<bool>> {
@@ -64,6 +116,14 @@ WHERE id = ?1
                         &finished_at,
                     )?;
                 }
+                let archive_bytes = match archive {
+                    Some(ArchiveSource::Bytes(bytes)) => Some(bytes),
+                    Some(ArchiveSource::File(path)) => {
+                        write_archive_file_tx(&tx, &job_id, &path)?;
+                        None
+                    }
+                    None => None,
+                };
                 let updated = tx.execute(
                     r#"
 UPDATE jobs
@@ -71,7 +131,7 @@ SET status = ?2, finished_at = ?3, summary_json = ?4,
     rollback_evidence_tar_zstd = COALESCE(?5, rollback_evidence_tar_zstd)
 WHERE id = ?1
 "#,
-                    params![job_id, status, finished_at, summary_json_str, archive],
+                    params![job_id, status, finished_at, summary_json_str, archive_bytes],
                 )?;
                 if updated == 0 {
                     return Ok(None);
@@ -266,4 +326,45 @@ WHERE id IN (
         }
         Ok(notification_event_enabled)
     }
+}
+
+pub(super) fn write_archive_file_tx(
+    tx: &rusqlite::Transaction<'_>,
+    job_id: &str,
+    archive_path: &Path,
+) -> anyhow::Result<bool> {
+    use std::io::Write as _;
+
+    let row_id = tx
+        .query_row(
+            "SELECT rowid FROM jobs WHERE id = ?1",
+            params![job_id],
+            |row| row.get::<_, i64>(0),
+        )
+        .optional()?;
+    let Some(row_id) = row_id else {
+        return Ok(false);
+    };
+
+    let mut archive = std::fs::File::open(archive_path)?;
+    let archive_size = archive.metadata()?.len();
+    let archive_size_sql = i64::try_from(archive_size)?;
+    tx.execute(
+        "UPDATE jobs SET rollback_evidence_tar_zstd = zeroblob(?2) WHERE id = ?1",
+        params![job_id, archive_size_sql],
+    )?;
+    let mut blob = tx.blob_open(
+        rusqlite::MAIN_DB,
+        "jobs",
+        "rollback_evidence_tar_zstd",
+        row_id,
+        false,
+    )?;
+    let copied = std::io::copy(&mut archive, &mut blob)?;
+    if copied != archive_size {
+        anyhow::bail!("rollback evidence archive changed while being stored");
+    }
+    blob.flush()?;
+    blob.close()?;
+    Ok(true)
 }

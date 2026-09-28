@@ -36,14 +36,14 @@ The existing `job.summary` may contain `rollbackEvidence` metadata when evidence
 - Change: Modify
 - Authorization: existing `require_user`
 
-Returns the original BLOB without decompression or JSON embedding.
+Streams the original BLOB in bounded chunks without decompression or JSON embedding; the response bytes remain identical to the stored archive.
 
 | Response | Meaning |
 | --- | --- |
-| `200 OK` | `Content-Type: application/zstd`; `Cache-Control: private, no-store`; attachment filename ends in `.tar.zst`; body is the job archive. |
+| `200 OK` | `Content-Type: application/zstd`; `Content-Length` equals the stored archive size; `Cache-Control: private, no-store`; attachment filename ends in `.tar.zst`; body is the original job archive. |
 | `401` or `403` | Existing authorization behavior for a request rejected by `require_user`. |
-| `404` | The job does not exist or has no completed archive. |
-| `500` | Stored archive cannot be read; the response body contains no archive bytes. |
+| `404` | The job does not exist or has no attached archive. |
+| `500` | The stored archive size cannot be read before the response starts. If a later chunk read fails after streaming begins, the response terminates early; `Content-Length` identifies the expected complete size. |
 
 - The endpoint is not included in jobs list, job events, or live terminal APIs.
 - Job Detail presents the download entry only when metadata reports `status=available`.

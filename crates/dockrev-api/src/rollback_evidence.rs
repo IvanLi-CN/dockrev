@@ -19,6 +19,7 @@ use crate::{
 const SPOOL_DIR_NAME: &str = "rollback-evidence-spool";
 const LOG_CAPTURE_TIMEOUT_SECONDS: u64 = 300;
 const CAPTURE_INTERRUPTED_REASON: &str = "logs capture interrupted before completion";
+static EVIDENCE_RECOVERY_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 
 #[derive(Clone)]
 pub struct RollbackEvidenceContext {
@@ -213,7 +214,7 @@ impl RollbackEvidenceContext {
                         .push(format!("logs file permissions: {error}"));
                     false
                 } else {
-                    match tokio::fs::rename(&log_part_path, service_dir.join("container.log")).await
+                    match promote_log_file(&log_part_path, &service_dir.join("container.log")).await
                     {
                         Ok(()) => true,
                         Err(error) => {
@@ -247,9 +248,11 @@ impl RollbackEvidenceContext {
             metadata.logs_bytes = bytes;
         }
         metadata.logs_truncated = !(logs_complete && log_file_committed);
-        metadata
-            .capture_errors
-            .retain(|error| error != CAPTURE_INTERRUPTED_REASON);
+        if log_file_committed {
+            metadata
+                .capture_errors
+                .retain(|error| error != CAPTURE_INTERRUPTED_REASON);
+        }
 
         if let Err(error) = write_capture(&service_dir, &state_json, &health_log).await {
             metadata
@@ -279,7 +282,7 @@ impl RollbackEvidenceContext {
     }
 
     pub async fn finalize(&self) -> EvidenceSummary {
-        let records = self.metadata();
+        let mut records = self.metadata();
         if records.is_empty() {
             return EvidenceSummary {
                 status: "absent",
@@ -292,6 +295,31 @@ impl RollbackEvidenceContext {
             };
         }
         let spool = self.job_spool_path();
+        if let Err(error) = Box::pin(prepare_capture_archive(&spool, &mut records)).await {
+            for record in &mut records {
+                if record
+                    .capture_errors
+                    .iter()
+                    .any(|item| item == CAPTURE_INTERRUPTED_REASON)
+                {
+                    record
+                        .capture_errors
+                        .push(format!("logs file promotion: {error}"));
+                }
+            }
+            let _ = write_manifest(&spool, &records).await;
+            let _ = tokio::fs::remove_file(spool.with_extension("tar.zst")).await;
+            let _ = tokio::fs::remove_file(spool.with_extension("tar.zst.part")).await;
+            return EvidenceSummary {
+                status: "incomplete",
+                failed_candidates: records.len(),
+                archive_format: "tar",
+                compression: "zstd",
+                archive_size_bytes: None,
+                services: records,
+                errors: vec![format!("logs file promotion: {error}")],
+            };
+        }
         let mut errors = records
             .iter()
             .flat_map(|record| record.capture_errors.iter().cloned())
@@ -301,16 +329,17 @@ impl RollbackEvidenceContext {
         }
         let archive_path = spool.with_extension("tar.zst");
         let archive_part = spool.with_extension("tar.zst.part");
-        let archive_size_bytes = match archive_dir(&spool, &archive_part, &archive_path).await {
-            Ok(()) => tokio::fs::metadata(&archive_path)
-                .await
-                .ok()
-                .map(|m| m.len()),
-            Err(error) => {
-                errors.push(format!("archive: {error}"));
-                None
-            }
-        };
+        let archive_size_bytes =
+            match Box::pin(archive_dir(&spool, &archive_part, &archive_path)).await {
+                Ok(()) => tokio::fs::metadata(&archive_path)
+                    .await
+                    .ok()
+                    .map(|m| m.len()),
+                Err(error) => {
+                    errors.push(format!("archive: {error}"));
+                    None
+                }
+            };
         EvidenceSummary {
             status: if archive_size_bytes.is_some() {
                 "available"
@@ -385,6 +414,15 @@ pub async fn cleanup_orphaned_spools(db: &crate::db::Db, db_path: &Path) {
 }
 
 pub async fn recover_orphaned_evidence(db: &crate::db::Db, db_path: &Path) {
+    Box::pin(recover_evidence(db, db_path, false)).await;
+}
+
+pub async fn recover_startup_interrupted_evidence(db: &crate::db::Db, db_path: &Path) {
+    Box::pin(recover_evidence(db, db_path, true)).await;
+}
+
+async fn recover_evidence(db: &crate::db::Db, db_path: &Path, allow_interrupted_nonterminal: bool) {
+    let _guard = EVIDENCE_RECOVERY_LOCK.lock().await;
     let root = spool_root(db_path);
     let Ok(mut entries) = tokio::fs::read_dir(&root).await else {
         return;
@@ -405,12 +443,10 @@ pub async fn recover_orphaned_evidence(db: &crate::db::Db, db_path: &Path) {
         let Some(job) = db.get_job(job_id).await.ok().flatten() else {
             continue;
         };
-        if !matches!(
+        let terminal = matches!(
             job.status.as_str(),
             "success" | "failed" | "rolled_back" | "cancelled"
-        ) {
-            continue;
-        }
+        );
         let manifest = spool.join("manifest.json");
         let Ok(manifest_bytes) = tokio::fs::read(&manifest).await else {
             continue;
@@ -419,14 +455,23 @@ pub async fn recover_orphaned_evidence(db: &crate::db::Db, db_path: &Path) {
         else {
             continue;
         };
-        if recover_interrupted_capture(&spool, &mut records)
+        let capture_interrupted = records.iter().any(|record| {
+            record
+                .capture_errors
+                .iter()
+                .any(|error| error == CAPTURE_INTERRUPTED_REASON)
+        });
+        if !(terminal || allow_interrupted_nonterminal && capture_interrupted) {
+            continue;
+        }
+        if Box::pin(recover_interrupted_capture(&spool, &mut records))
             .await
             .is_err()
         {
             continue;
         }
         if db
-            .get_rollback_evidence_archive(job_id)
+            .rollback_evidence_archive_size(job_id)
             .await
             .ok()
             .flatten()
@@ -445,7 +490,10 @@ pub async fn recover_orphaned_evidence(db: &crate::db::Db, db_path: &Path) {
         {
             continue;
         }
-        let Ok(archive) = tokio::fs::read(&archive_path).await else {
+        let Ok(archive_size_bytes) = tokio::fs::metadata(&archive_path)
+            .await
+            .map(|metadata| metadata.len())
+        else {
             continue;
         };
         let summary = EvidenceSummary {
@@ -453,14 +501,14 @@ pub async fn recover_orphaned_evidence(db: &crate::db::Db, db_path: &Path) {
             failed_candidates: records.len(),
             archive_format: "tar",
             compression: "zstd",
-            archive_size_bytes: Some(archive.len() as u64),
+            archive_size_bytes: Some(archive_size_bytes),
             services: records,
             errors: Vec::new(),
         };
         if db
-            .attach_rollback_evidence_archive(
+            .attach_rollback_evidence_archive_from_file(
                 job_id,
-                archive,
+                &archive_path,
                 &serde_json::to_value(&summary).unwrap_or_else(|_| serde_json::json!({})),
             )
             .await
@@ -491,32 +539,145 @@ async fn recover_interrupted_capture(
             .join(path_component(&record.candidate_id));
         let partial_path = candidate_dir.join("container.log.part");
         let log_path = candidate_dir.join("container.log");
+        let promotion_path = candidate_dir.join("container.log.promote.part");
+        match tokio::fs::remove_file(&promotion_path).await {
+            Ok(()) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => return Err(error.into()),
+        }
         match tokio::fs::metadata(&partial_path).await {
             Ok(_) => match tokio::fs::metadata(&log_path).await {
                 Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-                    tokio::fs::rename(&partial_path, &log_path).await?;
-                    set_owner_only(&log_path)?;
+                    promote_log_file(&partial_path, &log_path).await?;
                 }
-                Ok(_) => record
-                    .capture_errors
-                    .push("recovery found both complete and partial log files".to_string()),
+                Ok(_) => {
+                    if files_equal(&partial_path, &log_path).await? {
+                        tokio::fs::remove_file(&partial_path).await?;
+                    } else {
+                        record.capture_errors.push(
+                            "recovery found different complete and partial log files".to_string(),
+                        );
+                    }
+                }
                 Err(error) => return Err(error.into()),
             },
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
             Err(error) => return Err(error.into()),
         }
-        let stored_path = if tokio::fs::metadata(&log_path).await.is_ok() {
-            &log_path
-        } else {
-            &partial_path
+        if tokio::fs::metadata(&log_path).await.is_err()
+            && tokio::fs::metadata(&partial_path).await.is_err()
+        {
+            tokio::fs::write(&log_path, b"").await?;
+            set_owner_only(&log_path)?;
+        }
+        let stored_metadata = match tokio::fs::metadata(&log_path).await {
+            Ok(metadata) => metadata,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                tokio::fs::metadata(&partial_path).await?
+            }
+            Err(error) => return Err(error.into()),
         };
-        record.logs_bytes = tokio::fs::metadata(stored_path)
-            .await
-            .map(|metadata| metadata.len())
-            .unwrap_or_default();
+        record.logs_bytes = stored_metadata.len();
         record.logs_truncated = true;
     }
     write_manifest(spool, records).await
+}
+
+async fn prepare_capture_archive(
+    spool: &Path,
+    records: &mut [EvidenceMetadata],
+) -> anyhow::Result<()> {
+    let has_interrupted_capture = records.iter().any(|record| {
+        record
+            .capture_errors
+            .iter()
+            .any(|error| error == CAPTURE_INTERRUPTED_REASON)
+    });
+    if has_interrupted_capture {
+        recover_interrupted_capture(spool, records).await?;
+    }
+    Ok(())
+}
+
+async fn promote_log_file(partial_path: &Path, log_path: &Path) -> anyhow::Result<()> {
+    let rename_result = tokio::fs::rename(partial_path, log_path).await;
+    promote_log_file_after_rename(partial_path, log_path, rename_result).await
+}
+
+async fn promote_log_file_after_rename(
+    partial_path: &Path,
+    log_path: &Path,
+    rename_result: std::io::Result<()>,
+) -> anyhow::Result<()> {
+    match rename_result {
+        Ok(()) => {
+            set_owner_only(log_path)?;
+            Ok(())
+        }
+        Err(rename_error) => {
+            match tokio::fs::metadata(log_path).await {
+                Ok(_) => return Err(rename_error.into()),
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+                Err(error) => return Err(error.into()),
+            }
+            copy_log_file_atomically(partial_path, log_path)
+                .await
+                .with_context(|| format!("rename failed: {rename_error}"))?;
+            set_owner_only(log_path)?;
+            tokio::fs::remove_file(partial_path).await?;
+            Ok(())
+        }
+    }
+}
+
+async fn copy_log_file_atomically(partial_path: &Path, log_path: &Path) -> anyhow::Result<()> {
+    use tokio::io::AsyncWriteExt as _;
+
+    let promotion_path = log_path.with_file_name("container.log.promote.part");
+    match tokio::fs::remove_file(&promotion_path).await {
+        Ok(()) => {}
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+        Err(error) => return Err(error.into()),
+    }
+    let result = async {
+        let mut source = tokio::fs::File::open(partial_path).await?;
+        let mut destination = tokio::fs::OpenOptions::new()
+            .create_new(true)
+            .write(true)
+            .open(&promotion_path)
+            .await?;
+        tokio::io::copy(&mut source, &mut destination).await?;
+        destination.flush().await?;
+        destination.sync_all().await?;
+        drop(destination);
+        set_owner_only(&promotion_path)?;
+        tokio::fs::rename(&promotion_path, log_path).await?;
+        Ok::<(), anyhow::Error>(())
+    }
+    .await;
+    if result.is_err() {
+        let _ = tokio::fs::remove_file(&promotion_path).await;
+    }
+    result
+}
+
+async fn files_equal(left: &Path, right: &Path) -> anyhow::Result<bool> {
+    use tokio::io::AsyncReadExt as _;
+
+    let mut left = tokio::fs::File::open(left).await?;
+    let mut right = tokio::fs::File::open(right).await?;
+    let mut left_buffer = [0_u8; 64 * 1024];
+    let mut right_buffer = [0_u8; 64 * 1024];
+    loop {
+        let left_read = left.read(&mut left_buffer).await?;
+        let right_read = right.read(&mut right_buffer).await?;
+        if left_read != right_read || left_buffer[..left_read] != right_buffer[..right_read] {
+            return Ok(false);
+        }
+        if left_read == 0 {
+            return Ok(true);
+        }
+    }
 }
 
 fn record_log_command_result(
@@ -931,6 +1092,31 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn partial_log_promotion_fallback_keeps_the_stable_archive_path() {
+        let root =
+            std::env::temp_dir().join(format!("dockrev-log-promotion-{}", ulid::Ulid::new()));
+        fs::create_dir_all(&root).expect("test root");
+        let partial = root.join("container.log.part");
+        let committed = root.join("container.log");
+        let expected = b"partial raw candidate log\xff";
+        tokio::fs::write(&partial, expected)
+            .await
+            .expect("partial log");
+
+        promote_log_file_after_rename(
+            &partial,
+            &committed,
+            Err(std::io::Error::other("injected rename failure")),
+        )
+        .await
+        .expect("fallback promotion");
+
+        assert_eq!(tokio::fs::read(&committed).await.unwrap(), expected);
+        assert!(!partial.exists());
+        let _ = tokio::fs::remove_dir_all(root).await;
+    }
+
+    #[tokio::test]
     async fn timed_out_log_capture_keeps_partial_file_and_records_incomplete_status() {
         let root =
             std::env::temp_dir().join(format!("dockrev-rollback-timeout-{}", ulid::Ulid::new()));
@@ -1038,7 +1224,10 @@ mod tests {
         .await
         .expect("checkpoint manifest");
 
-        recover_orphaned_evidence(&db, &db_path).await;
+        let ((), ()) = tokio::join!(
+            recover_orphaned_evidence(&db, &db_path),
+            recover_orphaned_evidence(&db, &db_path)
+        );
 
         let archive = db
             .get_rollback_evidence_archive("job-interrupted")
@@ -1097,6 +1286,77 @@ mod tests {
         assert!(extracted.status.success());
         assert_eq!(extracted.stdout, b"partial raw log\xff");
 
+        let _ = tokio::fs::remove_dir_all(root).await;
+    }
+
+    #[tokio::test]
+    async fn startup_recovery_attaches_interrupted_partial_logs_for_nonterminal_jobs() {
+        let root = std::env::temp_dir().join(format!(
+            "dockrev-rollback-recovery-running-{}",
+            ulid::Ulid::new()
+        ));
+        fs::create_dir_all(&root).expect("test root");
+        let db_path = root.join("dockrev.sqlite");
+        let db = crate::db::Db::open(&db_path).await.expect("db");
+        let job = crate::api::types::JobRecord::new_running(
+            "job-interrupted-running".to_string(),
+            crate::api::types::JobType::Update,
+            crate::api::types::JobScope::Service,
+            None,
+            None,
+            "2026-08-28T00:00:00Z",
+        )
+        .to_db();
+        db.insert_job(job).await.expect("insert job");
+
+        let spool = spool_root(&db_path).join("job-interrupted-running");
+        let candidate_dir = spool.join("service-a/candidate-a");
+        tokio::fs::create_dir_all(&candidate_dir)
+            .await
+            .expect("candidate spool");
+        tokio::fs::write(candidate_dir.join("container.log.part"), b"partial log\xff")
+            .await
+            .expect("partial logs");
+        tokio::fs::write(candidate_dir.join("state.json"), b"{}")
+            .await
+            .expect("state");
+        tokio::fs::write(candidate_dir.join("health.log"), b"[]")
+            .await
+            .expect("health log");
+        write_manifest(
+            &spool,
+            &[EvidenceMetadata {
+                service_id: "service-a".to_string(),
+                candidate_id: "candidate-a".to_string(),
+                health_status: "unhealthy".to_string(),
+                logs_truncated: true,
+                capture_errors: vec![CAPTURE_INTERRUPTED_REASON.to_string()],
+                ..Default::default()
+            }],
+        )
+        .await
+        .expect("checkpoint manifest");
+
+        recover_startup_interrupted_evidence(&db, &db_path).await;
+
+        let job = db
+            .get_job("job-interrupted-running")
+            .await
+            .expect("load job")
+            .expect("job exists");
+        assert_eq!(job.status, "running");
+        assert_eq!(job.summary_json["rollbackEvidence"]["status"], "available");
+        assert_eq!(
+            job.summary_json["rollbackEvidence"]["services"][0]["logsTruncated"],
+            true
+        );
+        assert!(
+            db.get_rollback_evidence_archive("job-interrupted-running")
+                .await
+                .expect("load archive")
+                .is_some()
+        );
+        assert!(!spool.exists());
         let _ = tokio::fs::remove_dir_all(root).await;
     }
 

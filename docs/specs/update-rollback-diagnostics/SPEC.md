@@ -53,12 +53,12 @@ Docker 的 health policy 由镜像的 `HEALTHCHECK` 定义，也可由 Compose `
 - health-policy deadline 必须是保守上界：`startPeriod + max(interval, startInterval) + retries * (interval + timeout) + pollInterval`。`pollInterval` 是当前健康状态观察间隔。
 - health status 为 `healthy` 时必须接受候选；为 `unhealthy` 时必须立即进入证据采集后回滚；持续 `starting` 至 health-policy deadline 时必须以 deadline 为失败原因进入证据采集后回滚。
 - 只有候选进入自动回滚路径时才创建 rollback evidence spool、归档和下载附件。候选健康通过并完成更新时，不创建这些 Dockrev 证据文件；Docker 自己管理的正常容器日志不属于本证据附件。
-- 每个失败 candidate container 的原始 `docker logs --timestamps` stdout 与 stderr 必须按 Docker CLI 输出顺序合并到同一个 `container.log`，从 Docker 当前仍可提供的首条日志开始，以磁盘流式方式保存到 EOF；不得设置应用侧字节或行数上限，不得解析、脱敏、重编码或主动截断。日志命令使用 300 秒 watchdog；若 Docker 已轮转日志、命令未能读到 EOF、watchdog 到期、命令失败或写盘失败，必须保留已写入的部分文件并明确记录证据不完整及原因，不得将部分内容标记为完整。
+- 每个失败 candidate container 的原始 `docker logs --timestamps` stdout 与 stderr 必须按 Docker CLI 输出顺序合并到同一个 `container.log`，从 Docker 当前仍可提供的首条日志开始，以磁盘流式方式保存到 EOF；不得设置应用侧字节或行数上限，不得解析、脱敏、重编码或主动截断。日志命令使用 300 秒 watchdog；若命令未能读到 EOF、watchdog 到期、命令失败或写盘失败，必须保留已写入的部分文件并明确记录证据不完整及原因，不得将部分内容标记为完整。Dockrev 只能判断本次 Docker 命令是否完整读到 EOF，不能检测或恢复 Docker 在本次采集前已轮转、删除的历史日志；证据不声称包含 Docker 已不可提供的内容。
 - 每个失败候选必须在回滚前写入该 job 的私有临时 spool：候选 ID、服务 ID、健康期限与最后 health status、`State.Status`、`State.Error`、`ExitCode`、`RestartCount`、`State.Health.Log` 和该服务日志文件。
 - 已捕获的日志和 health log 必须原文保存，不做脱敏或内容变换。示例、测试夹具、UI 演示和文档不得包含真实凭据或敏感环境变量。
 - 一个 update job 的 archive 必须是单一 `tar.zst` BLOB；每个失败服务拥有独立 archive directory，服务之间不得混合日志。
 - spool 文件必须在候选自动回滚前以原子写入完成，并仅允许 Dockrev 运行用户读取。候选删除、证据采集失败、spool 失败、归档失败或 BLOB 持久化失败都不得阻止既有自动回滚。
-- 只有 BLOB 与终态 summary 均提交成功后才能删除对应 spool。启动恢复必须重新归档遗留 spool，或明确记录归档失败而不静默删除原始证据。
+- 归档 BLOB 与 `rollbackEvidence` summary 必须在同一数据库事务提交；只有提交成功后才能删除对应 spool。启动恢复必须重新归档遗留 spool，或明确记录归档失败而不静默删除原始证据。若进程在捕获中断且 job 尚未进入终态，启动恢复仍须把带中断检查点的部分证据附加到同一 job，保持 job 状态不变并将 `logsTruncated` 保持为 true。
 - 终态 job 的既有保留期清理必须同时删除与该 job 对应的遗留 spool；这属于 job 到期删除，不得产生无主原始日志文件。
 - jobs 列表、通用 job log、SSE 和实时终端不得包含 archive 内容；完整 archive 仅可由现有 `require_user` 授权路径读取。
 
@@ -75,7 +75,7 @@ Docker 的 health policy 由镜像的 `HEALTHCHECK` 定义，也可由 Compose `
 1. Compose 创建 candidate container 后，Dockrev 读取该候选的有效 health policy。项目开发者通过 Dockerfile `HEALTHCHECK` 调整 policy；运维通过 Compose `healthcheck` 覆盖该 policy。由于读取目标是实际创建的候选容器，两者都影响 deadline。
 2. Dockrev 观察 candidate container 的 health status。`healthy` 接受更新；`unhealthy` 或在推导 deadline 时仍为 `starting` 都进入同一失败处理。
 3. 在启动 Docker 日志命令前，先将私有 spool 的候选目录、占位状态文件和含“捕获中断”标记的 manifest 原子落盘，供进程中断后的启动恢复使用。随后并行读取状态、health log 和从首条可用记录开始的容器运行日志；Docker CLI stdout/stderr 在进程边界合并后分块直写 `container.log.part`，300 秒 watchdog 覆盖输出文件创建与流式写盘。命令正常退出、合并输出到 EOF 且写盘成功后，原子重命名为 `container.log` 并更新 manifest，标记 `logsTruncated=false`；超时、非零退出、未到 EOF 或写盘/重命名失败时保留部分文件、标记 `logsTruncated=true` 并记录原因，然后继续既有自动回滚。捕获错误不改变回滚决定。
-4. 任务结束时，Dockrev 将 spool 组装为 `tar.zst`。archive 含有无敏感样例的 manifest 和每服务的状态、health log、container log 文件。归档 BLOB 和 summary 在同一 jobs 更新中保存。
+4. 任务结束时，Dockrev 将 spool 组装为 `tar.zst`。archive 含有无敏感样例的 manifest 和每服务的状态、health log、container log 文件。归档文件按块写入现有 jobs BLOB，BLOB 和 summary 在同一事务中保存；启动恢复也以分块写入方式附加归档，不创建第二份持久归档。
 5. Job Detail 读取 summary 以显示 evidence 可用性；可用时，经现有授权下载原始 `tar.zst`。终态 job 被既有 GC 删除时，BLOB 与证据一并删除。
 
 ### Edge cases / errors
