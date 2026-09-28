@@ -294,6 +294,26 @@ with tempfile.TemporaryDirectory() as directory:
                 package.write_bytes(f"package-{binary}-{arch}-{libc}".encode())
                 package.with_suffix(package.suffix + ".sha256").write_text("fixture\n", encoding="utf-8")
     bundle = root / "bundle"
+    nested_manifest = binaries / "amd64" / "gnu" / "manifest.json"
+    nested_manifest.write_text("untracked source manifest\n", encoding="utf-8")
+    expect_error(
+        release_artifact_bundle.create_bundle,
+        binaries,
+        packages,
+        root / "rejected-bundle",
+        {
+            "source_sha": "c" * 40,
+            "merge_commit_sha": "d" * 40,
+            "identity_sha": identity_sha,
+            "baseline_version": "0.81.0",
+            "version_input": "patch",
+            "version": "0.81.1",
+            "channel": "stable",
+            "release_tag": "v0.81.1",
+        },
+        error=release_artifact_bundle.BundleError,
+    )
+    nested_manifest.unlink()
     manifest = release_artifact_bundle.create_bundle(binaries, packages, bundle, {
         "source_sha": "c" * 40,
         "merge_commit_sha": "d" * 40,
@@ -314,6 +334,24 @@ with tempfile.TemporaryDirectory() as directory:
         "channel": "stable",
         "release_tag": "v0.81.1",
     })["content_digest"]
+    nested_bundle_manifest = bundle / "release-assets/amd64/gnu/manifest.json"
+    nested_bundle_manifest.write_text("unlisted nested manifest\n", encoding="utf-8")
+    expect_error(
+        release_artifact_bundle.verify_bundle,
+        bundle,
+        {
+            "source_sha": "c" * 40,
+            "merge_commit_sha": "d" * 40,
+            "identity_sha": identity_sha,
+            "baseline_version": "0.81.0",
+            "version_input": "patch",
+            "version": "0.81.1",
+            "channel": "stable",
+            "release_tag": "v0.81.1",
+        },
+        error=release_artifact_bundle.BundleError,
+    )
+    nested_bundle_manifest.unlink()
     (bundle / "release-assets/amd64/gnu/dockrev").write_bytes(b"changed")
     expect_error(
         release_artifact_bundle.verify_bundle,

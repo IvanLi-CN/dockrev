@@ -60,8 +60,10 @@ def identity_projection(identity: dict[str, Any]) -> dict[str, str]:
 
 def file_index(root: Path) -> list[dict[str, Any]]:
     entries = []
-    for path in sorted(item for item in root.rglob("*") if item.is_file() and item.name != "manifest.json"):
+    for path in sorted(item for item in root.rglob("*") if item.is_file()):
         relative = path.relative_to(root).as_posix()
+        if relative == "manifest.json":
+            continue
         entries.append({"path": relative, "sha256": sha256(path), "size": path.stat().st_size})
     return entries
 
