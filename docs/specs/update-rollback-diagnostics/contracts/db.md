@@ -14,7 +14,9 @@ ALTER TABLE jobs
 ```
 
 - `NULL` means the job has no completed rollback evidence archive.
+- A successfully completed update with no candidate rollback leaves this column `NULL` and creates no evidence spool or archive file.
 - The column stores one complete `tar.zst` archive for the whole update job. The archive contains one directory per failed service.
+- Candidate stdout is streamed to a private per-service temporary file and atomically renamed to `container.log` after capture; a watchdog or write failure preserves any partial bytes and sets `logsTruncated=true` in metadata.
 - `summary_json.rollbackEvidence` stores only availability and diagnostic metadata. It does not duplicate archive content.
 - No additional index is required because the blob is read only by job ID and must not participate in jobs list queries.
 

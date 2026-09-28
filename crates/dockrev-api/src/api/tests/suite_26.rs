@@ -197,5 +197,9 @@ async fn rollback_evidence_api_download_requires_user_and_keeps_archive_out_of_j
         .unwrap();
     let detail_json = response_json(detail).await;
     assert_eq!(detail_json["job"]["summary"]["rollbackEvidence"]["status"], "available");
+    assert_eq!(
+        detail_json["job"]["summary"]["rollbackEvidence"]["services"][0]["logsTruncated"],
+        false
+    );
     assert!(!detail_json.to_string().contains("28b52ffd"));
 }
