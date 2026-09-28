@@ -43,3 +43,196 @@ fn backup_and_pull_progress_are_weighted_without_terminal_jump() {
     assert_eq!(combined_backup_pull_percent(0, 1, &pull, &backup), 75);
     assert_eq!(combined_backup_pull_percent(1, 2, &pull, &backup), 87);
 }
+
+#[tokio::test]
+async fn evidence_archive_persistence_failure_still_finishes_job_without_deleting_evidence() {
+    let root =
+        std::env::temp_dir().join(format!("dockrev-evidence-fallback-{}", ulid::Ulid::new()));
+    tokio::fs::create_dir_all(&root).await.expect("test root");
+    let db = crate::db::Db::open(&root.join("dockrev.sqlite"))
+        .await
+        .expect("db");
+    let job_id = "job-evidence-fallback";
+    db.insert_job(
+        crate::api::types::JobRecord::new_running(
+            job_id.to_string(),
+            crate::api::types::JobType::Update,
+            crate::api::types::JobScope::Service,
+            None,
+            None,
+            "2026-08-28T00:00:00Z",
+        )
+        .to_db(),
+    )
+    .await
+    .expect("insert job");
+
+    let evidence = RollbackEvidenceContext::new(job_id, &root.join("dockrev.sqlite"))
+        .expect("evidence context");
+    let candidate_dir = evidence
+        .job_spool_path()
+        .join("service-a")
+        .join("candidate-a");
+    tokio::fs::create_dir_all(&candidate_dir)
+        .await
+        .expect("evidence spool");
+    tokio::fs::write(candidate_dir.join("container.log"), b"partial evidence")
+        .await
+        .expect("evidence log");
+    tokio::fs::write(candidate_dir.join("state.json"), b"{}")
+        .await
+        .expect("state");
+    tokio::fs::write(candidate_dir.join("health.log"), b"[]")
+        .await
+        .expect("health log");
+    let manifest = vec![crate::rollback_evidence::EvidenceMetadata {
+        service_id: "service-a".to_string(),
+        candidate_id: "candidate-a".to_string(),
+        health_status: "unhealthy".to_string(),
+        logs_truncated: true,
+        ..Default::default()
+    }];
+    tokio::fs::write(
+        evidence.job_spool_path().join("manifest.json"),
+        serde_json::to_vec(&manifest).expect("manifest JSON"),
+    )
+    .await
+    .expect("manifest");
+    let mut summary = serde_json::json!({
+        "rollbackEvidence": {
+            "status": "available",
+            "archiveSizeBytes": 16,
+            "errors": []
+        }
+    });
+
+    let notification_enabled = crate::rollback_evidence_finalize::finish_job_with_evidence_archive(
+        &db,
+        job_id,
+        "rolled_back",
+        "2026-08-28T00:05:00Z",
+        &mut summary,
+        Some(evidence.archive_path()),
+        Some(&evidence),
+        None,
+        None,
+    )
+    .await
+    .expect("job should finish without archive");
+
+    let job = db.get_job(job_id).await.expect("load job").expect("job");
+    assert_eq!(job.status, "rolled_back");
+    assert_eq!(job.summary_json["rollbackEvidence"]["status"], "incomplete");
+    assert_eq!(
+        job.summary_json["rollbackEvidence"]["archiveSizeBytes"],
+        serde_json::Value::Null
+    );
+    assert!(
+        job.summary_json["rollbackEvidence"]["errors"]
+            .as_array()
+            .expect("errors")
+            .iter()
+            .any(|error| error
+                .as_str()
+                .is_some_and(|error| error.starts_with("archive persistence:")))
+    );
+    assert_eq!(notification_enabled, None);
+    assert!(candidate_dir.join("container.log").exists());
+    assert!(
+        db.get_rollback_evidence_archive(job_id)
+            .await
+            .expect("load archive")
+            .is_none()
+    );
+
+    crate::rollback_evidence::recover_orphaned_evidence(&db, &root.join("dockrev.sqlite")).await;
+    let recovered_job = db
+        .get_job(job_id)
+        .await
+        .expect("load recovered job")
+        .unwrap();
+    assert_eq!(recovered_job.status, "rolled_back");
+    assert_eq!(
+        recovered_job.summary_json["rollbackEvidence"]["status"],
+        "available"
+    );
+    assert!(
+        db.get_rollback_evidence_archive(job_id)
+            .await
+            .expect("load recovered archive")
+            .is_some()
+    );
+    assert!(!evidence.job_spool_path().exists());
+
+    let _ = tokio::fs::remove_dir_all(root).await;
+}
+
+#[tokio::test]
+async fn committed_evidence_is_cleaned_when_notifications_are_disabled() {
+    let root = std::env::temp_dir().join(format!(
+        "dockrev-evidence-no-notification-{}",
+        ulid::Ulid::new()
+    ));
+    tokio::fs::create_dir_all(&root).await.expect("test root");
+    let db_path = root.join("dockrev.sqlite");
+    let db = crate::db::Db::open(&db_path).await.expect("db");
+    let job_id = "job-evidence-no-notification";
+    db.insert_job(
+        crate::api::types::JobRecord::new_running(
+            job_id.to_string(),
+            crate::api::types::JobType::Update,
+            crate::api::types::JobScope::Service,
+            None,
+            None,
+            "2026-08-28T00:00:00Z",
+        )
+        .to_db(),
+    )
+    .await
+    .expect("insert job");
+
+    let evidence = RollbackEvidenceContext::new(job_id, &db_path).expect("evidence context");
+    tokio::fs::create_dir_all(evidence.job_spool_path())
+        .await
+        .expect("evidence spool");
+    tokio::fs::write(evidence.job_spool_path().join("marker"), b"spool")
+        .await
+        .expect("spool marker");
+    tokio::fs::write(evidence.archive_path(), b"archive bytes")
+        .await
+        .expect("archive file");
+    let mut summary = serde_json::json!({
+        "rollbackEvidence": {
+            "status": "available",
+            "archiveSizeBytes": 13,
+            "errors": []
+        }
+    });
+
+    let notification_enabled = crate::rollback_evidence_finalize::finish_job_with_evidence_archive(
+        &db,
+        job_id,
+        "rolled_back",
+        "2026-08-28T00:05:00Z",
+        &mut summary,
+        Some(evidence.archive_path()),
+        Some(&evidence),
+        None,
+        None,
+    )
+    .await
+    .expect("job should finish with archive");
+
+    assert_eq!(notification_enabled, None);
+    assert_eq!(
+        db.get_rollback_evidence_archive(job_id)
+            .await
+            .expect("load archive")
+            .expect("archive attached"),
+        b"archive bytes"
+    );
+    assert!(!evidence.job_spool_path().exists());
+    assert!(!evidence.archive_path().exists());
+
+    let _ = tokio::fs::remove_dir_all(root).await;
+}

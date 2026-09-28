@@ -2,7 +2,7 @@
   "schema_version": 1,
   "kind": "version-impact-record",
   "change": {
-    "description": "Capture the candidate Docker CLI stdout in the existing rollback evidence archive, retaining recoverable partial output after process interruption; keep bounded stderr only as command error context.",
+    "description": "Capture the combined raw stdout and stderr output of docker logs --timestamps in the existing rollback evidence archive, retaining recoverable partial output after process interruption.",
     "release_unit_description": "Dockrev application release unit.",
     "affected_contracts": [
       "public-api",

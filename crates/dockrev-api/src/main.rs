@@ -38,6 +38,7 @@ mod registry;
 mod repo_link_backfill;
 mod resource_usage;
 mod rollback_evidence;
+mod rollback_evidence_finalize;
 mod runner;
 mod runtime_scan;
 mod schedules;

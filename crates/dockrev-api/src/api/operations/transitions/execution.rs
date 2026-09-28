@@ -1428,22 +1428,19 @@ pub(crate) async fn run_update_job(
         &notify_summary,
     )
     .await?;
-    let archive_attached = archive_path.is_some();
-    let notification_event_enabled = state
-        .db
-        .finish_job_with_archive_file_and_settlement_and_notification(
+    let notification_event_enabled =
+        crate::rollback_evidence_finalize::finish_job_with_evidence_archive(
+            &state.db,
             &job_id,
             &final_status,
             &finished_at,
-            &final_summary,
+            &mut final_summary,
             archive_path,
+            evidence.as_ref(),
             (!settlements.is_empty()).then_some(settlements.as_slice()),
             notification.as_ref(),
         )
         .await?;
-    if archive_attached && let Some(evidence) = evidence.as_ref() {
-        evidence.cleanup_after_commit().await;
-    }
     if should_record_update_tag_history(&req, &final_status) {
         record_update_tag_history(state.as_ref(), &req, &finished_at).await;
     }
@@ -1491,6 +1488,7 @@ pub(crate) async fn run_update_job(
     state.update_stop_hub.remove(&job_id);
     Ok(())
 }
+
 fn should_record_update_tag_history(req: &TriggerUpdateRequest, final_status: &str) -> bool {
     final_status == "success" && matches!(&req.mode, UpdateMode::Apply)
 }

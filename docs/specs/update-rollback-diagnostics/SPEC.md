@@ -58,7 +58,7 @@ Docker 的 health policy 由镜像的 `HEALTHCHECK` 定义，也可由 Compose `
 - 已捕获的日志和 health log 必须原文保存，不做脱敏或内容变换。示例、测试夹具、UI 演示和文档不得包含真实凭据或敏感环境变量。
 - 一个 update job 的 archive 必须是单一 `tar.zst` BLOB；每个失败服务拥有独立 archive directory，服务之间不得混合日志。
 - spool 文件必须在候选自动回滚前以原子写入完成，并仅允许 Dockrev 运行用户读取。候选删除、证据采集失败、spool 失败、归档失败或 BLOB 持久化失败都不得阻止既有自动回滚。
-- 归档 BLOB 与 `rollbackEvidence` summary 必须在同一数据库事务提交；只有提交成功后才能删除对应 spool。启动恢复必须重新归档遗留 spool，或明确记录归档失败而不静默删除原始证据。若进程在捕获中断且 job 尚未进入终态，启动恢复仍须把带中断检查点的部分证据附加到同一 job，保持 job 状态不变并将 `logsTruncated` 保持为 true。
+- 归档 BLOB 与 `rollbackEvidence` summary 必须在同一数据库事务提交；只有提交成功后才能删除对应 spool。若归档写入失败，DockRev 必须在不带新 archive 的事务中完成既有 job 终态提交，将 evidence summary 标记为 `incomplete` 并记录有界错误；spool 保留供后续恢复，不能静默删除。启动恢复按既有 job 恢复顺序处理任务，再将带中断检查点的部分证据附加到同一 job；证据恢复不改变既有恢复流程确定的任务状态，并将 `logsTruncated` 保持为 true。
 - 终态 job 的既有保留期清理必须同时删除与该 job 对应的遗留 spool；这属于 job 到期删除，不得产生无主原始日志文件。
 - jobs 列表、通用 job log、SSE 和实时终端不得包含 archive 内容；完整 archive 仅可由现有 `require_user` 授权路径读取。
 
@@ -75,7 +75,7 @@ Docker 的 health policy 由镜像的 `HEALTHCHECK` 定义，也可由 Compose `
 1. Compose 创建 candidate container 后，Dockrev 读取该候选的有效 health policy。项目开发者通过 Dockerfile `HEALTHCHECK` 调整 policy；运维通过 Compose `healthcheck` 覆盖该 policy。由于读取目标是实际创建的候选容器，两者都影响 deadline。
 2. Dockrev 观察 candidate container 的 health status。`healthy` 接受更新；`unhealthy` 或在推导 deadline 时仍为 `starting` 都进入同一失败处理。
 3. 在启动 Docker 日志命令前，先将私有 spool 的候选目录、占位状态文件和含“捕获中断”标记的 manifest 原子落盘，供进程中断后的启动恢复使用。随后并行读取状态、health log 和从首条可用记录开始的容器运行日志；Docker CLI stdout/stderr 在进程边界合并后分块直写 `container.log.part`，300 秒 watchdog 覆盖输出文件创建与流式写盘。命令正常退出、合并输出到 EOF 且写盘成功后，原子重命名为 `container.log` 并更新 manifest，标记 `logsTruncated=false`；超时、非零退出、未到 EOF 或写盘/重命名失败时保留部分文件、标记 `logsTruncated=true` 并记录原因，然后继续既有自动回滚。捕获错误不改变回滚决定。
-4. 任务结束时，Dockrev 将 spool 组装为 `tar.zst`。archive 含有无敏感样例的 manifest 和每服务的状态、health log、container log 文件。归档文件按块写入现有 jobs BLOB，BLOB 和 summary 在同一事务中保存；启动恢复也以分块写入方式附加归档，不创建第二份持久归档。
+4. 任务结束时，Dockrev 将 spool 组装为 `tar.zst`。archive 含有无敏感样例的 manifest 和每服务的状态、health log、container log 文件。归档文件按块写入现有 jobs BLOB，BLOB 和 summary 在同一事务中保存；若 BLOB 写入失败，则以 `incomplete` summary 完成 job 终态提交并保留 spool。启动恢复也以分块写入方式附加归档，不创建第二份持久归档。
 5. Job Detail 读取 summary 以显示 evidence 可用性；可用时，经现有授权下载原始 `tar.zst`。终态 job 被既有 GC 删除时，BLOB 与证据一并删除。
 
 ### Edge cases / errors
@@ -84,7 +84,7 @@ Docker 的 health policy 由镜像的 `HEALTHCHECK` 定义，也可由 Compose `
 - 候选健康通过并完成更新时，任务的 evidence BLOB 保持为空、summary 不包含 `rollbackEvidence`，且不得留下该任务的 evidence spool 或 archive 文件。
 - Docker Engine 或 Compose 版本不提供 `startInterval` 时，使用 Docker 默认 `5s`；它只参与 deadline 推导，不要求改写镜像或 Compose 文件。
 - 候选存在 health status 但有效 policy 读取失败时，不套用固定期限；Dockrev 仅等待 Docker 明确报告 `healthy` 或 `unhealthy`，并在失败证据 metadata 中保留缺失的 policy/deadline 状态。
-- 日志命令超过 300 秒 watchdog、候选在采集时消失、磁盘写入失败或 archive 持久化失败时，任务仍继续 rollback。若 rollback 成功，job status 仍为 `rolled_back`；`rollbackEvidence.status` 使用 `available`、`incomplete` 或 `absent` 说明归档状态，服务级 `logsTruncated` 标记日志是否未完整捕获。
+- 日志命令超过 300 秒 watchdog、候选在采集时消失或磁盘写入失败时，既有 rollback 继续执行。若 rollback 成功，job status 为 `rolled_back`。其后的 archive 持久化失败不得阻止该终态提交；summary 使用 `incomplete` 并记录有界错误，spool 保留供启动恢复。`rollbackEvidence.status` 使用 `available`、`incomplete` 或 `absent` 说明归档状态，服务级 `logsTruncated` 标记日志是否未完整捕获。
 - 若进程在 spool 成功、archive 完成前退出，启动恢复依据 job ID 和 spool 状态尝试归档。恢复不得把未成功归档的 spool 当作可删除文件。
 - 一个批量 update job 可以包含多份失败证据。每个服务的 archive 大小随 Docker 可用日志量增长，并随 job 的既有保留期删除；不存在 Dockrev 侧的日志大小上限。
 

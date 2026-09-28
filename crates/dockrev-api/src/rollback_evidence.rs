@@ -1290,7 +1290,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn startup_recovery_attaches_interrupted_partial_logs_for_nonterminal_jobs() {
+    async fn startup_recovery_attaches_interrupted_partial_logs_after_job_recovery() {
         let root = std::env::temp_dir().join(format!(
             "dockrev-rollback-recovery-running-{}",
             ulid::Ulid::new()
@@ -1337,6 +1337,9 @@ mod tests {
         .await
         .expect("checkpoint manifest");
 
+        db.recover_incomplete_jobs("2026-08-28T00:01:00Z", "server_restart")
+            .await
+            .expect("recover interrupted job");
         recover_startup_interrupted_evidence(&db, &db_path).await;
 
         let job = db
@@ -1344,7 +1347,7 @@ mod tests {
             .await
             .expect("load job")
             .expect("job exists");
-        assert_eq!(job.status, "running");
+        assert_eq!(job.status, "failed");
         assert_eq!(job.summary_json["rollbackEvidence"]["status"], "available");
         assert_eq!(
             job.summary_json["rollbackEvidence"]["services"][0]["logsTruncated"],

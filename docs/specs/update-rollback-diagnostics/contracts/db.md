@@ -25,8 +25,8 @@ ALTER TABLE jobs
 
 - Candidate evidence is written to the private job spool before its rollback.
 - At job finalization, the archive BLOB and terminal `rollbackEvidence` metadata are updated in one database transaction.
-- The spool is deleted only after that transaction commits.
-- A checkpoint manifest is written before starting log capture. If capture is interrupted, recovery promotes the partial log file to `container.log`, keeps `logsTruncated=true`, and archives it with the same job. Startup may attach this interrupted evidence to a nonterminal job without changing its status; later job finalization preserves the attached BLOB and metadata. A spool that remains after an interrupted archive operation is also a recovery input. Recovery can attach its archive to the same job or record an explicit archive failure; it must not silently delete the spool.
+- If archive persistence fails, finalization retries without a new BLOB, records `rollbackEvidence.status=incomplete` with a bounded error, and keeps the spool for later recovery. The spool is deleted only after the archive transaction commits.
+- A checkpoint manifest is written before starting log capture. If capture is interrupted, recovery promotes the partial log file to `container.log`, keeps `logsTruncated=true`, and archives it with the same job. Startup applies the existing job-recovery flow before evidence recovery; attaching evidence does not change the status already determined by that flow. A spool that remains after an interrupted archive operation is also a recovery input. Recovery may attach its archive to the same job; if it cannot, it keeps the spool for a later retry instead of silently deleting it.
 - Concurrent recovery scans are serialized so only one scan can rebuild or attach a job archive at a time.
 
 ### Migration and Compatibility
