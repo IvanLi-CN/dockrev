@@ -1428,6 +1428,7 @@ pub(crate) async fn run_update_job(
         &notify_summary,
     )
     .await?;
+    let archive_attached = archive.is_some();
     let notification_event_enabled = state
         .db
         .finish_job_with_archive_and_settlement_and_notification(
@@ -1435,14 +1436,12 @@ pub(crate) async fn run_update_job(
             &final_status,
             &finished_at,
             &final_summary,
-            archive.clone(),
+            archive,
             (!settlements.is_empty()).then_some(settlements.as_slice()),
             notification.as_ref(),
         )
         .await?;
-    if archive.is_some()
-        && let Some(evidence) = evidence.as_ref()
-    {
+    if archive_attached && let Some(evidence) = evidence.as_ref() {
         evidence.cleanup_after_commit().await;
     }
     if should_record_update_tag_history(&req, &final_status) {

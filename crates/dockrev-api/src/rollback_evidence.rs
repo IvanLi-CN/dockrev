@@ -18,12 +18,14 @@ use crate::{
 
 const SPOOL_DIR_NAME: &str = "rollback-evidence-spool";
 const LOG_CAPTURE_TIMEOUT_SECONDS: u64 = 300;
+const CAPTURE_INTERRUPTED_REASON: &str = "logs capture interrupted before completion";
 
 #[derive(Clone)]
 pub struct RollbackEvidenceContext {
     job_id: String,
     root: PathBuf,
     records: Arc<Mutex<BTreeMap<String, EvidenceMetadata>>>,
+    manifest_lock: Arc<tokio::sync::Mutex<()>>,
 }
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
@@ -77,6 +79,7 @@ impl RollbackEvidenceContext {
             job_id: job_id.into(),
             root,
             records: Arc::new(Mutex::new(BTreeMap::new())),
+            manifest_lock: Arc::new(tokio::sync::Mutex::new(())),
         })
     }
 
@@ -109,33 +112,48 @@ impl RollbackEvidenceContext {
             .join(path_component(service_id))
             .join(path_component(candidate_id));
         let log_part_path = service_dir.join("container.log.part");
-        let state_future = runner.run_raw(
-            docker_runner::inspect_candidate_state(docker_cfg, candidate_id),
-            Duration::from_secs(10),
-        );
-        let logs_future = async {
-            tokio::fs::create_dir_all(&service_dir).await?;
-            set_owner_only(&service_dir)?;
-            runner
-                .run_raw_to_file(
-                    docker_runner::logs_with_timestamps(docker_cfg, candidate_id),
-                    Duration::from_secs(LOG_CAPTURE_TIMEOUT_SECONDS),
-                    &log_part_path,
-                )
-                .await
-        };
-        let (state_result, logs_result) = tokio::join!(state_future, logs_future);
-
         let mut metadata = EvidenceMetadata {
             service_id: service_id.to_string(),
             candidate_id: candidate_id.to_string(),
             health_status: health_status.to_string(),
             health_policy,
             health_policy_deadline_seconds: deadline.map(|value| value.as_secs()),
+            logs_truncated: true,
+            capture_errors: vec![CAPTURE_INTERRUPTED_REASON.to_string()],
             ..Default::default()
         };
         let mut state_json = serde_json::json!({});
         let mut health_log = Value::Array(Vec::new());
+        let setup_result = async {
+            tokio::fs::create_dir_all(&service_dir).await?;
+            set_owner_only(&service_dir)?;
+            write_capture(&service_dir, &state_json, &health_log).await
+        }
+        .await;
+        if let Err(error) = setup_result {
+            metadata
+                .capture_errors
+                .push(format!("spool setup: {error}"));
+        }
+        self.upsert_metadata(service_id, candidate_id, metadata.clone());
+        if let Err(error) = self.persist_manifest().await {
+            metadata
+                .capture_errors
+                .push(format!("manifest checkpoint: {error}"));
+            self.upsert_metadata(service_id, candidate_id, metadata.clone());
+        }
+
+        let state_future = runner.run_raw(
+            docker_runner::inspect_candidate_state(docker_cfg, candidate_id),
+            Duration::from_secs(10),
+        );
+        let logs_future = runner.run_raw_to_file(
+            docker_runner::logs_with_timestamps(docker_cfg, candidate_id),
+            Duration::from_secs(LOG_CAPTURE_TIMEOUT_SECONDS),
+            &log_part_path,
+        );
+        let (state_result, logs_result) = tokio::join!(state_future, logs_future);
+
         match state_result {
             Ok(output) if output.status == 0 => {
                 let raw_state =
@@ -229,18 +247,35 @@ impl RollbackEvidenceContext {
             metadata.logs_bytes = bytes;
         }
         metadata.logs_truncated = !(logs_complete && log_file_committed);
+        metadata
+            .capture_errors
+            .retain(|error| error != CAPTURE_INTERRUPTED_REASON);
 
-        let key = format!("{}\0{}", service_id, candidate_id);
         if let Err(error) = write_capture(&service_dir, &state_json, &health_log).await {
             metadata
                 .capture_errors
                 .push(format!("spool write: {error}"));
         }
+        self.upsert_metadata(service_id, candidate_id, metadata.clone());
+        if let Err(error) = self.persist_manifest().await {
+            metadata
+                .capture_errors
+                .push(format!("manifest update: {error}"));
+            self.upsert_metadata(service_id, candidate_id, metadata.clone());
+        }
+        metadata
+    }
+
+    fn upsert_metadata(&self, service_id: &str, candidate_id: &str, metadata: EvidenceMetadata) {
         self.records
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner())
-            .insert(key, metadata.clone());
-        metadata
+            .insert(format!("{}\0{}", service_id, candidate_id), metadata);
+    }
+
+    async fn persist_manifest(&self) -> anyhow::Result<()> {
+        let _guard = self.manifest_lock.lock().await;
+        write_manifest(&self.job_spool_path(), &self.metadata()).await
     }
 
     pub async fn finalize(&self) -> EvidenceSummary {
@@ -380,9 +415,16 @@ pub async fn recover_orphaned_evidence(db: &crate::db::Db, db_path: &Path) {
         let Ok(manifest_bytes) = tokio::fs::read(&manifest).await else {
             continue;
         };
-        let Ok(records) = serde_json::from_slice::<Vec<EvidenceMetadata>>(&manifest_bytes) else {
+        let Ok(mut records) = serde_json::from_slice::<Vec<EvidenceMetadata>>(&manifest_bytes)
+        else {
             continue;
         };
+        if recover_interrupted_capture(&spool, &mut records)
+            .await
+            .is_err()
+        {
+            continue;
+        }
         if db
             .get_rollback_evidence_archive(job_id)
             .await
@@ -429,6 +471,52 @@ pub async fn recover_orphaned_evidence(db: &crate::db::Db, db_path: &Path) {
             let _ = tokio::fs::remove_file(part_path).await;
         }
     }
+}
+
+async fn recover_interrupted_capture(
+    spool: &Path,
+    records: &mut [EvidenceMetadata],
+) -> anyhow::Result<()> {
+    for record in records.iter_mut() {
+        if !record
+            .capture_errors
+            .iter()
+            .any(|error| error == CAPTURE_INTERRUPTED_REASON)
+        {
+            continue;
+        }
+
+        let candidate_dir = spool
+            .join(path_component(&record.service_id))
+            .join(path_component(&record.candidate_id));
+        let partial_path = candidate_dir.join("container.log.part");
+        let log_path = candidate_dir.join("container.log");
+        match tokio::fs::metadata(&partial_path).await {
+            Ok(_) => match tokio::fs::metadata(&log_path).await {
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                    tokio::fs::rename(&partial_path, &log_path).await?;
+                    set_owner_only(&log_path)?;
+                }
+                Ok(_) => record
+                    .capture_errors
+                    .push("recovery found both complete and partial log files".to_string()),
+                Err(error) => return Err(error.into()),
+            },
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => return Err(error.into()),
+        }
+        let stored_path = if tokio::fs::metadata(&log_path).await.is_ok() {
+            &log_path
+        } else {
+            &partial_path
+        };
+        record.logs_bytes = tokio::fs::metadata(stored_path)
+            .await
+            .map(|metadata| metadata.len())
+            .unwrap_or_default();
+        record.logs_truncated = true;
+    }
+    write_manifest(spool, records).await
 }
 
 fn record_log_command_result(
@@ -587,7 +675,9 @@ mod tests {
     use crate::runner::{CommandOutput, CommandSpec, RawCommandOutput, RawFileCommandOutput};
     use tokio::io::AsyncWriteExt;
 
-    struct EvidenceRunner;
+    struct EvidenceRunner {
+        manifest_path: PathBuf,
+    }
 
     #[async_trait::async_trait]
     impl CommandRunner for EvidenceRunner {
@@ -608,7 +698,23 @@ mod tests {
             spec: CommandSpec,
             _timeout: Duration,
         ) -> anyhow::Result<RawCommandOutput> {
-            if spec.args.iter().any(|arg| arg == "--timestamps") {
+            if spec
+                .args
+                .iter()
+                .any(|arg| arg == "--timestamps" || arg.contains("logs --timestamps"))
+            {
+                let manifest: Vec<EvidenceMetadata> = serde_json::from_slice(
+                    &tokio::fs::read(&self.manifest_path)
+                        .await
+                        .expect("manifest checkpoint exists before logs start"),
+                )
+                .expect("manifest checkpoint is valid");
+                assert!(
+                    manifest[0]
+                        .capture_errors
+                        .iter()
+                        .any(|error| error == CAPTURE_INTERRUPTED_REASON)
+                );
                 return Ok(RawCommandOutput {
                     status: 0,
                     stdout: candidate_log_fixture(),
@@ -739,7 +845,9 @@ mod tests {
         let context = RollbackEvidenceContext::new("job-1", &db_path).expect("spool");
         let metadata = context
             .capture_failure(
-                &EvidenceRunner,
+                &EvidenceRunner {
+                    manifest_path: context.job_spool_path().join("manifest.json"),
+                },
                 &DockerRunnerConfig::default(),
                 "service-a",
                 "candidate-a",
@@ -853,6 +961,12 @@ mod tests {
                 .iter()
                 .any(|error| error.contains("timed out"))
         );
+        assert!(
+            !metadata
+                .capture_errors
+                .iter()
+                .any(|error| error == CAPTURE_INTERRUPTED_REASON)
+        );
         assert_eq!(
             tokio::fs::read(
                 context
@@ -863,6 +977,125 @@ mod tests {
             .expect("partial log should be retained"),
             b"partial candidate output"
         );
+
+        let _ = tokio::fs::remove_dir_all(root).await;
+    }
+
+    #[tokio::test]
+    async fn recovery_archives_partial_logs_from_an_interrupted_capture() {
+        let root =
+            std::env::temp_dir().join(format!("dockrev-rollback-recovery-{}", ulid::Ulid::new()));
+        fs::create_dir_all(&root).expect("test root");
+        let db_path = root.join("dockrev.sqlite");
+        let db = crate::db::Db::open(&db_path).await.expect("db");
+        let job = crate::api::types::JobRecord::new_running(
+            "job-interrupted".to_string(),
+            crate::api::types::JobType::Update,
+            crate::api::types::JobScope::Service,
+            None,
+            None,
+            "2026-08-28T00:00:00Z",
+        )
+        .to_db();
+        db.insert_job(job).await.expect("insert job");
+        db.finish_job(
+            "job-interrupted",
+            "rolled_back",
+            "2026-08-28T00:01:00Z",
+            &serde_json::json!({"status":"rolled_back"}),
+        )
+        .await
+        .expect("finish interrupted job");
+
+        let spool = spool_root(&db_path).join("job-interrupted");
+        let candidate_dir = spool.join("service-a/candidate-a");
+        tokio::fs::create_dir_all(&candidate_dir)
+            .await
+            .expect("candidate spool");
+        tokio::fs::write(
+            candidate_dir.join("container.log.part"),
+            b"partial raw log\xff",
+        )
+        .await
+        .expect("partial logs");
+        tokio::fs::write(candidate_dir.join("state.json"), b"{}")
+            .await
+            .expect("state");
+        tokio::fs::write(candidate_dir.join("health.log"), b"[]")
+            .await
+            .expect("health log");
+        write_manifest(
+            &spool,
+            &[EvidenceMetadata {
+                service_id: "service-a".to_string(),
+                candidate_id: "candidate-a".to_string(),
+                health_status: "unhealthy".to_string(),
+                logs_truncated: true,
+                capture_errors: vec![CAPTURE_INTERRUPTED_REASON.to_string()],
+                ..Default::default()
+            }],
+        )
+        .await
+        .expect("checkpoint manifest");
+
+        recover_orphaned_evidence(&db, &db_path).await;
+
+        let archive = db
+            .get_rollback_evidence_archive("job-interrupted")
+            .await
+            .expect("load recovered archive")
+            .expect("recovered archive is attached");
+        let job = db
+            .get_job("job-interrupted")
+            .await
+            .expect("load recovered job")
+            .expect("job exists");
+        let recovered_service = &job.summary_json["rollbackEvidence"]["services"][0];
+        assert_eq!(recovered_service["logsTruncated"], true);
+        assert_eq!(recovered_service["logsBytes"], b"partial raw log\xff".len());
+        assert!(
+            recovered_service["captureErrors"]
+                .as_array()
+                .expect("capture errors")
+                .iter()
+                .any(|error| error == CAPTURE_INTERRUPTED_REASON)
+        );
+        assert!(!spool.exists());
+
+        let archive_path = root.join("recovered.tar.zst");
+        tokio::fs::write(&archive_path, archive)
+            .await
+            .expect("write archive fixture");
+        let decompressed = tokio::process::Command::new("zstd")
+            .arg("-dc")
+            .arg(&archive_path)
+            .output()
+            .await
+            .expect("zstd should read evidence archive");
+        assert!(decompressed.status.success());
+        let mut tar = tokio::process::Command::new("tar")
+            .args(["-xOf", "-", "./service-a/candidate-a/container.log"])
+            .stdin(std::process::Stdio::piped())
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped())
+            .spawn()
+            .expect("tar should read evidence archive");
+        let mut tar_stdin = tar.stdin.take().expect("tar stdin");
+        let tar_bytes = decompressed.stdout;
+        let write_task = tokio::spawn(async move {
+            tar_stdin.write_all(&tar_bytes).await?;
+            anyhow::Ok(())
+        });
+        let extracted = tar
+            .wait_with_output()
+            .await
+            .expect("tar extraction should complete");
+        write_task
+            .await
+            .expect("tar input task")
+            .expect("tar input should be written");
+        assert!(extracted.status.success());
+        assert_eq!(extracted.stdout, b"partial raw log\xff");
 
         let _ = tokio::fs::remove_dir_all(root).await;
     }

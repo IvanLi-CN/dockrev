@@ -53,7 +53,7 @@ Docker 的 health policy 由镜像的 `HEALTHCHECK` 定义，也可由 Compose `
 - health-policy deadline 必须是保守上界：`startPeriod + max(interval, startInterval) + retries * (interval + timeout) + pollInterval`。`pollInterval` 是当前健康状态观察间隔。
 - health status 为 `healthy` 时必须接受候选；为 `unhealthy` 时必须立即进入证据采集后回滚；持续 `starting` 至 health-policy deadline 时必须以 deadline 为失败原因进入证据采集后回滚。
 - 只有候选进入自动回滚路径时才创建 rollback evidence spool、归档和下载附件。候选健康通过并完成更新时，不创建这些 Dockrev 证据文件；Docker 自己管理的正常容器日志不属于本证据附件。
-- 每个失败 candidate container 的原始 `docker logs --timestamps` 必须从 Docker 当前仍可提供的首条日志开始，以磁盘流式方式保存到 EOF；不得设置应用侧字节或行数上限，不得解析、脱敏、重编码或主动截断。日志命令使用 300 秒 watchdog；若 Docker 已轮转日志、命令未能读到 EOF、watchdog 到期、命令失败或写盘失败，必须保留已写入的部分文件并明确记录证据不完整及原因，不得将部分内容标记为完整。
+- 每个失败 candidate container 的原始 `docker logs --timestamps` stdout 与 stderr 必须按 Docker CLI 输出顺序合并到同一个 `container.log`，从 Docker 当前仍可提供的首条日志开始，以磁盘流式方式保存到 EOF；不得设置应用侧字节或行数上限，不得解析、脱敏、重编码或主动截断。日志命令使用 300 秒 watchdog；若 Docker 已轮转日志、命令未能读到 EOF、watchdog 到期、命令失败或写盘失败，必须保留已写入的部分文件并明确记录证据不完整及原因，不得将部分内容标记为完整。
 - 每个失败候选必须在回滚前写入该 job 的私有临时 spool：候选 ID、服务 ID、健康期限与最后 health status、`State.Status`、`State.Error`、`ExitCode`、`RestartCount`、`State.Health.Log` 和该服务日志文件。
 - 已捕获的日志和 health log 必须原文保存，不做脱敏或内容变换。示例、测试夹具、UI 演示和文档不得包含真实凭据或敏感环境变量。
 - 一个 update job 的 archive 必须是单一 `tar.zst` BLOB；每个失败服务拥有独立 archive directory，服务之间不得混合日志。
@@ -74,7 +74,7 @@ Docker 的 health policy 由镜像的 `HEALTHCHECK` 定义，也可由 Compose `
 
 1. Compose 创建 candidate container 后，Dockrev 读取该候选的有效 health policy。项目开发者通过 Dockerfile `HEALTHCHECK` 调整 policy；运维通过 Compose `healthcheck` 覆盖该 policy。由于读取目标是实际创建的候选容器，两者都影响 deadline。
 2. Dockrev 观察 candidate container 的 health status。`healthy` 接受更新；`unhealthy` 或在推导 deadline 时仍为 `starting` 都进入同一失败处理。
-3. 失败处理并行读取状态、health log 和从首条可用记录开始的容器运行日志；stdout 分块直写 `container.log.part`，最多运行 300 秒。命令正常退出、stdout 到达 EOF 且写盘成功后，原子重命名为 `container.log` 并标记 `logsTruncated=false`；超时、非零退出、未到 EOF 或写盘/重命名失败时保留部分文件、标记 `logsTruncated=true` 并记录原因，然后继续既有自动回滚。捕获错误不改变回滚决定。
+3. 在启动 Docker 日志命令前，先将私有 spool 的候选目录、占位状态文件和含“捕获中断”标记的 manifest 原子落盘，供进程中断后的启动恢复使用。随后并行读取状态、health log 和从首条可用记录开始的容器运行日志；Docker CLI stdout/stderr 在进程边界合并后分块直写 `container.log.part`，300 秒 watchdog 覆盖输出文件创建与流式写盘。命令正常退出、合并输出到 EOF 且写盘成功后，原子重命名为 `container.log` 并更新 manifest，标记 `logsTruncated=false`；超时、非零退出、未到 EOF 或写盘/重命名失败时保留部分文件、标记 `logsTruncated=true` 并记录原因，然后继续既有自动回滚。捕获错误不改变回滚决定。
 4. 任务结束时，Dockrev 将 spool 组装为 `tar.zst`。archive 含有无敏感样例的 manifest 和每服务的状态、health log、container log 文件。归档 BLOB 和 summary 在同一 jobs 更新中保存。
 5. Job Detail 读取 summary 以显示 evidence 可用性；可用时，经现有授权下载原始 `tar.zst`。终态 job 被既有 GC 删除时，BLOB 与证据一并删除。
 
@@ -96,7 +96,7 @@ Docker 的 health policy 由镜像的 `HEALTHCHECK` 定义，也可由 Compose `
 | --- | --- | --- | --- | --- | --- | --- | --- |
 | jobs rollback evidence storage | database | internal | Modify | ./contracts/db.md | dockrev-api | updater, job history GC | one nullable BLOB on jobs |
 | `GET /api/jobs/{job_id}` | HTTP API | external | Modify | ./contracts/http-api.md | dockrev-api | Job Detail | metadata only |
-| `GET /api/jobs/{job_id}/rollback-evidence` | HTTP API | external | New | ./contracts/http-api.md | dockrev-api | Job Detail, operators | authorized archive download |
+| `GET /api/jobs/{job_id}/rollback-evidence` | HTTP API | external | Modify | ./contracts/http-api.md | dockrev-api | Job Detail, operators | authorized archive download |
 
 ### 契约文档（按 Kind 拆分）
 
@@ -114,7 +114,7 @@ Docker 的 health policy 由镜像的 `HEALTHCHECK` 定义，也可由 Compose `
 - Given 批量更新中两个服务分别失败，When 下载 archive，Then 两组原始日志与状态位于独立服务目录，且每组均记录自己的采集完整性。
 - Given 状态采集、日志采集、spool、归档或 BLOB 写入失败，When 服务需要回滚，Then 自动回滚仍会执行；成功回滚的 job 保持 `rolled_back`，且 summary 精确说明 evidence 不可用原因。
 - Given archive 已提交，When 调用 jobs 列表、查看通用 job log 或订阅 SSE，Then 响应不包含 archive 正文；已授权用户下载专用 endpoint 时获得原始 `tar.zst`。
-- Given Dockrev 在 archive 提交前中断，When 服务恢复启动，Then 遗留 spool 被归档或被明确标记失败，且不会被静默删除。
+- Given Dockrev 在日志捕获或 archive 提交前中断，When 服务恢复启动，Then checkpoint manifest 与 partial `container.log` 被恢复并归档为不完整证据，或遗留 spool 被明确保留/记录失败，且不会被静默删除。
 - Given 终态 job 超过既有保留期，When job GC 删除该 job，Then evidence BLOB 与同 job 的遗留 spool 一同删除。
 
 ## 验收清单（Acceptance Checklist）

@@ -1,0 +1,80 @@
+{
+  "schema_version": 1,
+  "kind": "version-impact-record",
+  "change": {
+    "description": "Capture the candidate Docker CLI stdout and stderr in the existing rollback evidence archive, including recoverable partial output after process interruption.",
+    "release_unit_description": "Dockrev application release unit.",
+    "affected_contracts": [
+      "public-api",
+      "persistent-state"
+    ]
+  },
+  "classification": {
+    "allowed_impacts": [
+      "patch",
+      "minor",
+      "major"
+    ],
+    "planned": {
+      "impact": "patch",
+      "reasoning": "Reconstructed from the pre-implementation locked plan during delivery review: it keeps the existing authorized endpoint, summary fields, BLOB schema, tar.zst layout, and container.log path while completing compatible capture and recovery behavior.",
+      "assessed_at": "2026-09-29T05:33:47+08:00",
+      "evidence": [
+        "Locked implementation plan: existing archive/download contract retained; no API or database migration added."
+      ]
+    },
+    "current": {
+      "impact": "patch",
+      "scope_drift": {
+        "detected": false,
+        "description": "No new API surface or persistent schema; existing archive paths and summary fields are retained."
+      },
+      "reasoning": "The implementation merges raw CLI streams into the pre-existing container.log entry and makes interrupted captures recoverable without changing the public response or database shape.",
+      "reassessed_at": "2026-09-29T05:33:47+08:00",
+      "evidence": [
+        "docs/specs/update-rollback-diagnostics/SPEC.md",
+        "docs/specs/update-rollback-diagnostics/contracts/db.md",
+        "docs/specs/update-rollback-diagnostics/contracts/http-api.md"
+      ]
+    },
+    "verified": {
+      "impact": "patch",
+      "reasoning": "The authorized endpoint, existing tar.zst entry layout, logsTruncated field, and jobs BLOB schema remain compatible; regression tests verify exact archive bytes, interrupted recovery, successful-job absence, and authorization.",
+      "verified_at": "2026-09-29T05:33:47+08:00",
+      "evidence": [
+        "crates/dockrev-api/src/rollback_evidence.rs:rollback_evidence_archive_preserves_raw_bytes_and_service_layout",
+        "crates/dockrev-api/src/rollback_evidence.rs:recovery_archives_partial_logs_from_an_interrupted_capture",
+        "crates/dockrev-api/src/rollback_evidence.rs:successful_job_finalization_creates_no_job_evidence_files",
+        "crates/dockrev-api/src/api/tests/suite_26.rs:rollback_evidence_api_download_requires_user_and_keeps_archive_out_of_job_json"
+      ]
+    }
+  },
+  "compatibility_evidence": {
+    "public_api": {
+      "change": "none",
+      "supported_consumer_range": "Dockrev 0.81.0 and later 0.81.x consumers of the existing authorized rollback-evidence endpoint.",
+      "evidence": [
+        "Base 43388ae4 already registers GET /api/jobs/{job_id}/rollback-evidence in crates/dockrev-api/src/api/mod.rs.",
+        "The response remains application/zstd with private, no-store caching and unchanged summary fields."
+      ]
+    },
+    "persistent_state": {
+      "applicable": true,
+      "state_description": "The existing nullable jobs.rollback_evidence_tar_zstd BLOB retains its tar.zst format, per-service paths, and metadata contract; container.log now includes all Docker CLI log output, and interrupted partial captures remain marked incomplete.",
+      "source_program_compatibility_range": "Dockrev 0.81.0 and later 0.81.x versions that expose the existing archive as an opaque download; no application code parses the archive payload.",
+      "evidence": [
+        "The database schema and authorized download implementation exist at base 43388ae4.",
+        "Archive extraction tests verify the unchanged ./<service>/<candidate>/container.log path and exact bytes."
+      ]
+    }
+  },
+  "release_unit": {
+    "member_change_records": [
+      "rollback-evidence-log-capture"
+    ],
+    "maximum_verified_impact": "patch",
+    "calculation_evidence": [
+      "The sole member has verified public API impact none and compatible persistent-state impact; therefore the release-unit maximum is patch."
+    ]
+  }
+}

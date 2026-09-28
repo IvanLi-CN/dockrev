@@ -16,7 +16,7 @@ ALTER TABLE jobs
 - `NULL` means the job has no completed rollback evidence archive.
 - A successfully completed update with no candidate rollback leaves this column `NULL` and creates no evidence spool or archive file.
 - The column stores one complete `tar.zst` archive for the whole update job. The archive contains one directory per failed service.
-- Candidate stdout is streamed to a private per-service temporary file and atomically renamed to `container.log` after capture; a watchdog or write failure preserves any partial bytes and sets `logsTruncated=true` in metadata.
+- The Docker CLI stdout and stderr bytes for `docker logs --timestamps` are merged at the process boundary and streamed to one private per-service temporary file, then atomically renamed to `container.log`; no application-side parsing, redaction, re-encoding, or size cap is applied. A 300-second watchdog or write failure preserves partial bytes and sets `logsTruncated=true` in metadata.
 - `summary_json.rollbackEvidence` stores only availability and diagnostic metadata. It does not duplicate archive content.
 - No additional index is required because the blob is read only by job ID and must not participate in jobs list queries.
 
@@ -25,7 +25,7 @@ ALTER TABLE jobs
 - Candidate evidence is written to the private job spool before its rollback.
 - At job finalization, the archive BLOB and terminal `rollbackEvidence` metadata are updated in one database transaction.
 - The spool is deleted only after that transaction commits.
-- A spool that remains after an interrupted archive operation is a recovery input. Recovery can attach its archive to the same job or record an explicit archive failure; it must not silently delete the spool.
+- A checkpoint manifest is written before starting log capture. If capture is interrupted, recovery promotes the partial log file to `container.log`, keeps `logsTruncated=true`, and archives it with the same job. A spool that remains after an interrupted archive operation is also a recovery input. Recovery can attach its archive to the same job or record an explicit archive failure; it must not silently delete the spool.
 
 ### Migration and Compatibility
 
