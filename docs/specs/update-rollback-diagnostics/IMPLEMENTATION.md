@@ -16,7 +16,7 @@
 ## Implementation Order
 
 1. Completed the nullable jobs BLOB migration and database methods for evidence metadata, archive storage, terminal-job retention, and recovery lookup.
-2. Completed the private per-job spool and candidate log capture path: stdout is streamed byte-for-byte to disk without an application-side size cap, with a 300-second watchdog and explicit partial-capture metadata.
+2. Completed the private per-job spool and candidate log capture path: Docker CLI stdout/stderr are merged and streamed byte-for-byte to disk without an application-side size cap, with a 300-second watchdog, interrupted-capture manifest checkpoint, and explicit partial-capture metadata.
 3. Completed candidate effective-policy inspection and policy-derived health deadline calculation.
 4. Completed pre-rollback capture, job-boundary `tar.zst` assembly, startup recovery, and terminal cleanup integration. Candidate logs are captured before service rollback; successful updates create no per-job spool or archive.
 5. Completed job summary metadata and the authorized archive download endpoint.
@@ -24,7 +24,7 @@
 
 ## Remaining Gaps
 
-- Raw-to-file runner tests cover exact binary output larger than 1 MiB and watchdog partial retention; evidence tests verify extracted archive bytes, timeout metadata, and successful-job absence. Linux workspace tests, Clippy/check, and frontend lint/build passed on the shared testbox. Storybook browser interaction tests could not launch there because the host lacks Playwright system libraries; delivery checks remain an environment gate.
+- Raw-to-file runner tests cover exact binary output larger than 1 MiB, merged Docker CLI stdout/stderr, and watchdog partial retention; evidence tests verify extracted archive bytes, interrupted-capture recovery, timeout metadata, and successful-job absence. Linux workspace tests, Clippy/check, and frontend lint/build passed on the shared testbox. Storybook browser interaction tests could not launch there because the host lacks Playwright system libraries; delivery checks remain an environment gate.
 - No production update has been retried, so the root cause of the historical candidate failure remains unproven.
 
 ## Related Changes
