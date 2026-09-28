@@ -171,6 +171,15 @@ impl crate::runner::CommandRunner for DbLoggingRunner {
             .await
     }
 
+    async fn run_raw_to_file(
+        &self,
+        spec: crate::runner::CommandSpec,
+        timeout: std::time::Duration,
+        output_path: &std::path::Path,
+    ) -> anyhow::Result<crate::runner::RawFileCommandOutput> {
+        self.inner.run_raw_to_file(spec, timeout, output_path).await
+    }
+
     async fn run_stream(
         &self,
         spec: crate::runner::CommandSpec,
@@ -463,6 +472,8 @@ mod tests {
 
     struct ComposePullProgressRunner;
 
+    struct RawFileRunner;
+
     #[async_trait::async_trait]
     impl crate::runner::CommandRunner for StaticRunner {
         async fn run(
@@ -494,6 +505,34 @@ mod tests {
                     "f99586fca4fe Downloading 3.146MB",
                 ]
                 .join("\n"),
+            })
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl crate::runner::CommandRunner for RawFileRunner {
+        async fn run(
+            &self,
+            _spec: crate::runner::CommandSpec,
+            _timeout: Duration,
+        ) -> anyhow::Result<crate::runner::CommandOutput> {
+            anyhow::bail!("raw-file path must not use run")
+        }
+
+        async fn run_raw_to_file(
+            &self,
+            _spec: crate::runner::CommandSpec,
+            _timeout: Duration,
+            output_path: &Path,
+        ) -> anyhow::Result<crate::runner::RawFileCommandOutput> {
+            let output = b"private candidate log bytes";
+            tokio::fs::write(output_path, output).await?;
+            Ok(crate::runner::RawFileCommandOutput {
+                status: 0,
+                bytes_written: output.len() as u64,
+                stderr: Vec::new(),
+                eof_reached: true,
+                timed_out: false,
             })
         }
     }
@@ -565,6 +604,71 @@ mod tests {
                 .iter()
                 .any(|log| log.msg == "first" || log.msg == "second")
         );
+    }
+
+    #[tokio::test]
+    async fn raw_file_output_is_not_persisted_or_published() {
+        let db = crate::db::Db::open(Path::new(":memory:")).await.unwrap();
+        db.insert_job(crate::api::types::JobListItem {
+            id: "job-raw-file".to_string(),
+            r#type: crate::api::types::JobType::Update,
+            scope: crate::api::types::JobScope::All,
+            stack_id: None,
+            service_id: None,
+            status: "running".to_string(),
+            created_at: "2026-08-03T00:00:00Z".to_string(),
+            created_by: "test".to_string(),
+            reason: "test".to_string(),
+            started_at: Some("2026-08-03T00:00:00Z".to_string()),
+            finished_at: None,
+            allow_arch_mismatch: false,
+            backup_mode: "inherit".to_string(),
+            summary_json: serde_json::json!({}),
+        })
+        .await
+        .unwrap();
+
+        let hub = Arc::new(crate::job_live_logs::JobLiveLogHub::new());
+        let mut live = hub.subscribe("job-raw-file").await;
+        let runner = DbLoggingRunner {
+            db: db.clone(),
+            inner: Arc::new(RawFileRunner),
+            job_id: "job-raw-file".to_string(),
+            live_log_hub: hub,
+            stop_signal: None,
+        };
+        let path = std::env::temp_dir().join(format!(
+            "dockrev-db-raw-file-{}-{}.log",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+
+        runner
+            .run_raw_to_file(
+                crate::runner::CommandSpec {
+                    program: "docker".to_string(),
+                    args: vec!["logs".to_string(), "--timestamps".to_string()],
+                    env: Vec::new(),
+                },
+                Duration::from_secs(300),
+                &path,
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(
+            tokio::fs::read(&path).await.unwrap(),
+            b"private candidate log bytes"
+        );
+        assert!(db.list_job_logs("job-raw-file").await.unwrap().is_empty());
+        assert!(matches!(
+            live.try_recv(),
+            Err(tokio::sync::broadcast::error::TryRecvError::Empty)
+        ));
+        tokio::fs::remove_file(path).await.unwrap();
     }
 
     #[tokio::test]

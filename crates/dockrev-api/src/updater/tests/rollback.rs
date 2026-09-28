@@ -117,6 +117,8 @@ fn managed_override_keeps_candidate_tag_with_its_digest() {
 #[derive(Default)]
 struct HealthRollbackRunner {
     step: Mutex<usize>,
+    events: Mutex<Vec<&'static str>>,
+    timed_out: bool,
     expected_managed_override: Option<String>,
 }
 
@@ -264,6 +266,7 @@ impl CommandRunner for HealthRollbackRunner {
                 }
             }
             9 => {
+                self.events.lock().unwrap().push("rollback");
                 assert_eq!(spec.program, "docker");
                 assert_eq!(
                     spec.args,
@@ -342,15 +345,55 @@ impl CommandRunner for HealthRollbackRunner {
         *step += 1;
         Ok(out)
     }
+
+    async fn run_raw(
+        &self,
+        _spec: CommandSpec,
+        _timeout: Duration,
+    ) -> anyhow::Result<crate::runner::RawCommandOutput> {
+        Ok(crate::runner::RawCommandOutput {
+            status: 0,
+            stdout: br#"{"Status":"running","Error":"","ExitCode":0,"RestartCount":0,"Health":{"Status":"unhealthy","Log":[]}}"#.to_vec(),
+            stderr: Vec::new(),
+        })
+    }
+
+    async fn run_raw_to_file(
+        &self,
+        _spec: CommandSpec,
+        _timeout: Duration,
+        output_path: &std::path::Path,
+    ) -> anyhow::Result<crate::runner::RawFileCommandOutput> {
+        let bytes = b"candidate logs before rollback";
+        tokio::fs::write(output_path, bytes).await?;
+        self.events.lock().unwrap().push("logs-captured");
+        Ok(crate::runner::RawFileCommandOutput {
+            status: if self.timed_out { -1 } else { 0 },
+            bytes_written: bytes.len() as u64,
+            stderr: Vec::new(),
+            eof_reached: !self.timed_out,
+            timed_out: self.timed_out,
+        })
+    }
 }
 
 #[tokio::test]
 async fn healthcheck_failure_rolls_back_with_attempted_and_final_digests() {
     let stack = single_service_stack("ghcr.io/org/web:1.0", None);
-    let runner = HealthRollbackRunner::default();
+    let runner = HealthRollbackRunner {
+        timed_out: true,
+        ..Default::default()
+    };
     let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<UpdateProgressEvent>();
+    let root = std::env::temp_dir().join(format!("dockrev-health-evidence-{}", ulid::Ulid::new()));
+    std::fs::create_dir_all(&root).unwrap();
+    let evidence = crate::rollback_evidence::RollbackEvidenceContext::new(
+        "job-health-failure",
+        &root.join("dockrev.sqlite"),
+    )
+    .unwrap();
 
-    let outcome = run_update_job(
+    let outcome = run_update_job_with_gate_using_root_unlocked(
         &runner,
         "docker-compose",
         None,
@@ -368,6 +411,11 @@ async fn healthcheck_failure_rolls_back_with_attempted_and_final_digests() {
         "ui",
         None,
         Some(tx),
+        false,
+        &[],
+        None,
+        None,
+        Some(evidence.clone()),
     )
     .await
     .unwrap();
@@ -414,6 +462,28 @@ async fn healthcheck_failure_rolls_back_with_attempted_and_final_digests() {
             .any(|msg| msg.contains("rolled back after healthcheck failure"))
     );
     assert_eq!(*runner.step.lock().unwrap(), 14);
+    assert_eq!(
+        *runner.events.lock().unwrap(),
+        vec!["logs-captured", "rollback"]
+    );
+    assert!(evidence.metadata()[0].logs_truncated);
+    assert!(
+        evidence.metadata()[0]
+            .capture_errors
+            .iter()
+            .any(|error| error.contains("timed out"))
+    );
+    assert_eq!(
+        tokio::fs::read(
+            evidence
+                .job_spool_path()
+                .join("svc_1/new_container/container.log")
+        )
+        .await
+        .unwrap(),
+        b"candidate logs before rollback"
+    );
+    std::fs::remove_dir_all(root).unwrap();
 }
 
 #[tokio::test]

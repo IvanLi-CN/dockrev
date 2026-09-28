@@ -13,11 +13,11 @@ use serde_json::Value;
 use crate::{
     backup_helper,
     docker_runner::{self, DockerRunnerConfig},
-    runner::CommandRunner,
+    runner::{CommandRunner, RawFileCommandOutput},
 };
 
-pub const MAX_LOG_BYTES: usize = 1024 * 1024;
 const SPOOL_DIR_NAME: &str = "rollback-evidence-spool";
+const LOG_CAPTURE_TIMEOUT_SECONDS: u64 = 300;
 
 #[derive(Clone)]
 pub struct RollbackEvidenceContext {
@@ -38,7 +38,7 @@ pub struct EvidenceMetadata {
     pub state_error: Option<String>,
     pub exit_code: Option<i64>,
     pub restart_count: Option<i64>,
-    pub logs_bytes: usize,
+    pub logs_bytes: u64,
     pub logs_truncated: bool,
     pub capture_errors: Vec<String>,
 }
@@ -104,15 +104,26 @@ impl RollbackEvidenceContext {
         health_policy: Option<HealthPolicy>,
         deadline: Option<Duration>,
     ) -> EvidenceMetadata {
+        let service_dir = self
+            .job_spool_path()
+            .join(path_component(service_id))
+            .join(path_component(candidate_id));
+        let log_part_path = service_dir.join("container.log.part");
         let state_future = runner.run_raw(
             docker_runner::inspect_candidate_state(docker_cfg, candidate_id),
             Duration::from_secs(10),
         );
-        let logs_future = runner.run_raw_bounded(
-            docker_runner::logs_with_timestamps(docker_cfg, candidate_id),
-            Duration::from_secs(10),
-            MAX_LOG_BYTES,
-        );
+        let logs_future = async {
+            tokio::fs::create_dir_all(&service_dir).await?;
+            set_owner_only(&service_dir)?;
+            runner
+                .run_raw_to_file(
+                    docker_runner::logs_with_timestamps(docker_cfg, candidate_id),
+                    Duration::from_secs(LOG_CAPTURE_TIMEOUT_SECONDS),
+                    &log_part_path,
+                )
+                .await
+        };
         let (state_result, logs_result) = tokio::join!(state_future, logs_future);
 
         let mut metadata = EvidenceMetadata {
@@ -164,31 +175,63 @@ impl RollbackEvidenceContext {
                 .push(format!("state command: {error}")),
         }
 
-        let (log_bytes, truncated) = match logs_result {
-            Ok(output) if output.status == 0 => truncate_complete_lines(&output.stdout),
+        let logs_complete = match logs_result {
             Ok(output) => {
-                metadata
-                    .capture_errors
-                    .push(format!("logs command exited with {}", output.status));
-                truncate_complete_lines(&output.stdout)
+                metadata.logs_bytes = output.bytes_written;
+                record_log_command_result(&mut metadata, &output)
             }
             Err(error) => {
                 metadata
                     .capture_errors
-                    .push(format!("logs command: {error}"));
-                (Vec::new(), false)
+                    .push(format!("logs capture: {error}"));
+                false
             }
         };
-        metadata.logs_bytes = log_bytes.len();
-        metadata.logs_truncated = truncated;
+        let log_file_committed = match tokio::fs::metadata(&log_part_path).await {
+            Ok(_) => {
+                if let Err(error) = set_owner_only(&log_part_path) {
+                    metadata
+                        .capture_errors
+                        .push(format!("logs file permissions: {error}"));
+                    false
+                } else {
+                    match tokio::fs::rename(&log_part_path, service_dir.join("container.log")).await
+                    {
+                        Ok(()) => true,
+                        Err(error) => {
+                            metadata
+                                .capture_errors
+                                .push(format!("logs file commit: {error}"));
+                            false
+                        }
+                    }
+                }
+            }
+            Err(error) => {
+                if error.kind() != std::io::ErrorKind::NotFound {
+                    metadata
+                        .capture_errors
+                        .push(format!("logs file inspect: {error}"));
+                }
+                false
+            }
+        };
+        let stored_log_path = if log_file_committed {
+            service_dir.join("container.log")
+        } else {
+            log_part_path.clone()
+        };
+        if let Some(bytes) = tokio::fs::metadata(&stored_log_path)
+            .await
+            .ok()
+            .map(|value| value.len())
+        {
+            metadata.logs_bytes = bytes;
+        }
+        metadata.logs_truncated = !(logs_complete && log_file_committed);
 
         let key = format!("{}\0{}", service_id, candidate_id);
-        let service_dir = self
-            .job_spool_path()
-            .join(path_component(service_id))
-            .join(path_component(candidate_id));
-        if let Err(error) = write_capture(&service_dir, &state_json, &health_log, &log_bytes).await
-        {
+        if let Err(error) = write_capture(&service_dir, &state_json, &health_log).await {
             metadata
                 .capture_errors
                 .push(format!("spool write: {error}"));
@@ -388,31 +431,36 @@ pub async fn recover_orphaned_evidence(db: &crate::db::Db, db_path: &Path) {
     }
 }
 
-fn truncate_complete_lines(input: &[u8]) -> (Vec<u8>, bool) {
-    if input.len() <= MAX_LOG_BYTES {
-        return (input.to_vec(), false);
+fn record_log_command_result(
+    metadata: &mut EvidenceMetadata,
+    output: &RawFileCommandOutput,
+) -> bool {
+    if output.timed_out {
+        metadata.capture_errors.push(format!(
+            "logs command timed out after {LOG_CAPTURE_TIMEOUT_SECONDS} seconds"
+        ));
+        return false;
     }
-    let mut end = 0;
-    for line in input.split_inclusive(|byte| *byte == b'\n') {
-        if end + line.len() > MAX_LOG_BYTES {
-            return (input[..end].to_vec(), true);
-        }
-        end += line.len();
+    if output.status != 0 {
+        metadata
+            .capture_errors
+            .push(format!("logs command exited with {}", output.status));
+        return false;
     }
-    (input[..end].to_vec(), end < input.len())
+    if !output.eof_reached {
+        metadata
+            .capture_errors
+            .push("logs command did not reach EOF".to_string());
+        return false;
+    }
+    true
 }
 
-async fn write_capture(
-    dir: &Path,
-    state: &Value,
-    health_log: &Value,
-    logs: &[u8],
-) -> anyhow::Result<()> {
+async fn write_capture(dir: &Path, state: &Value, health_log: &Value) -> anyhow::Result<()> {
     tokio::fs::create_dir_all(dir).await?;
     set_owner_only(dir)?;
     atomic_write(dir.join("state.json"), serde_json::to_vec(state)?).await?;
     atomic_write(dir.join("health.log"), serde_json::to_vec(health_log)?).await?;
-    atomic_write(dir.join("container.log"), logs.to_vec()).await?;
     Ok(())
 }
 
@@ -536,7 +584,8 @@ pub fn parse_health_policy(raw: &[u8]) -> Option<HealthPolicy> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::runner::{CommandOutput, CommandSpec, RawCommandOutput};
+    use crate::runner::{CommandOutput, CommandSpec, RawCommandOutput, RawFileCommandOutput};
+    use tokio::io::AsyncWriteExt;
 
     struct EvidenceRunner;
 
@@ -560,12 +609,9 @@ mod tests {
             _timeout: Duration,
         ) -> anyhow::Result<RawCommandOutput> {
             if spec.args.iter().any(|arg| arg == "--timestamps") {
-                let mut logs = b"candidate raw bytes\n".to_vec();
-                logs.extend(std::iter::repeat_n(b'a', MAX_LOG_BYTES));
-                logs.extend_from_slice(b"\n");
                 return Ok(RawCommandOutput {
                     status: 0,
-                    stdout: logs,
+                    stdout: candidate_log_fixture(),
                     stderr: Vec::new(),
                 });
             }
@@ -577,12 +623,56 @@ mod tests {
         }
     }
 
-    #[test]
-    fn truncates_only_complete_lines() {
-        let input = vec![b'a'; MAX_LOG_BYTES + 10];
-        let (output, truncated) = truncate_complete_lines(&input);
-        assert!(output.is_empty());
-        assert!(truncated);
+    struct TimedOutEvidenceRunner;
+
+    #[async_trait::async_trait]
+    impl CommandRunner for TimedOutEvidenceRunner {
+        async fn run(
+            &self,
+            _spec: CommandSpec,
+            _timeout: Duration,
+        ) -> anyhow::Result<CommandOutput> {
+            Ok(CommandOutput {
+                status: 0,
+                stdout: String::new(),
+                stderr: String::new(),
+            })
+        }
+
+        async fn run_raw(
+            &self,
+            _spec: CommandSpec,
+            _timeout: Duration,
+        ) -> anyhow::Result<RawCommandOutput> {
+            Ok(RawCommandOutput {
+                status: 0,
+                stdout: br#"{"Status":"running","Error":"","ExitCode":0,"RestartCount":0,"Health":{"Log":[]}}"#.to_vec(),
+                stderr: Vec::new(),
+            })
+        }
+
+        async fn run_raw_to_file(
+            &self,
+            _spec: CommandSpec,
+            _timeout: Duration,
+            output_path: &Path,
+        ) -> anyhow::Result<RawFileCommandOutput> {
+            let partial = b"partial candidate output";
+            tokio::fs::write(output_path, partial).await?;
+            Ok(RawFileCommandOutput {
+                status: -1,
+                bytes_written: partial.len() as u64,
+                stderr: Vec::new(),
+                eof_reached: false,
+                timed_out: true,
+            })
+        }
+    }
+
+    fn candidate_log_fixture() -> Vec<u8> {
+        let mut bytes = (0..=250).cycle().take(1_048_593).collect::<Vec<_>>();
+        bytes.push(0xff);
+        bytes
     }
 
     #[test]
@@ -641,7 +731,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn rollback_evidence_archive_preserves_complete_lines_and_service_layout() {
+    async fn rollback_evidence_archive_preserves_raw_bytes_and_service_layout() {
         let root =
             std::env::temp_dir().join(format!("dockrev-rollback-evidence-{}", ulid::Ulid::new()));
         fs::create_dir_all(&root).expect("test root");
@@ -659,8 +749,9 @@ mod tests {
             )
             .await;
 
-        assert_eq!(metadata.logs_bytes, b"candidate raw bytes\n".len());
-        assert!(metadata.logs_truncated);
+        let expected_logs = candidate_log_fixture();
+        assert_eq!(metadata.logs_bytes, expected_logs.len() as u64);
+        assert!(!metadata.logs_truncated);
         let service_dir = context
             .job_spool_path()
             .join("service-a")
@@ -668,12 +759,9 @@ mod tests {
         let logs = tokio::fs::read(service_dir.join("container.log"))
             .await
             .expect("raw logs");
-        assert_eq!(logs.len(), b"candidate raw bytes\n".len());
-        assert!(logs.ends_with(b"\n"));
-        assert!(
-            logs.windows(b"candidate raw bytes".len())
-                .any(|window| window == b"candidate raw bytes")
-        );
+        assert_eq!(logs, expected_logs);
+        assert!(logs.len() > 1024 * 1024);
+        assert_eq!(logs.last(), Some(&0xff));
         let state: Value = serde_json::from_slice(
             &tokio::fs::read(service_dir.join("state.json"))
                 .await
@@ -697,9 +785,134 @@ mod tests {
         assert!(summary.archive_size_bytes.unwrap_or_default() > 0);
         assert!(context.archive_path().exists());
 
+        let decompressed = tokio::process::Command::new("zstd")
+            .arg("-dc")
+            .arg(context.archive_path())
+            .output()
+            .await
+            .expect("zstd should read evidence archive");
+        assert!(decompressed.status.success());
+        let mut tar = tokio::process::Command::new("tar")
+            .args(["-xOf", "-", "./service-a/candidate-a/container.log"])
+            .stdin(std::process::Stdio::piped())
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped())
+            .spawn()
+            .expect("tar should read evidence archive");
+        let mut tar_stdin = tar.stdin.take().expect("tar stdin");
+        let tar_bytes = decompressed.stdout;
+        let write_task = tokio::spawn(async move {
+            tar_stdin.write_all(&tar_bytes).await?;
+            anyhow::Ok(())
+        });
+        let extracted = tar
+            .wait_with_output()
+            .await
+            .expect("tar extraction should complete");
+        write_task
+            .await
+            .expect("tar input task")
+            .expect("tar input should be written");
+        assert!(extracted.status.success());
+        assert_eq!(extracted.stdout, expected_logs);
+
         context.cleanup_after_commit().await;
         assert!(!context.job_spool_path().exists());
         assert!(!context.archive_path().exists());
+        let _ = tokio::fs::remove_dir_all(root).await;
+    }
+
+    #[tokio::test]
+    async fn timed_out_log_capture_keeps_partial_file_and_records_incomplete_status() {
+        let root =
+            std::env::temp_dir().join(format!("dockrev-rollback-timeout-{}", ulid::Ulid::new()));
+        fs::create_dir_all(&root).expect("test root");
+        let context = RollbackEvidenceContext::new("job-timeout", &root.join("dockrev.sqlite"))
+            .expect("spool");
+
+        let metadata = context
+            .capture_failure(
+                &TimedOutEvidenceRunner,
+                &DockerRunnerConfig::default(),
+                "service-a",
+                "candidate-a",
+                "unhealthy",
+                None,
+                None,
+            )
+            .await;
+
+        assert!(metadata.logs_truncated);
+        assert_eq!(
+            metadata.logs_bytes,
+            b"partial candidate output".len() as u64
+        );
+        assert!(
+            metadata
+                .capture_errors
+                .iter()
+                .any(|error| error.contains("timed out"))
+        );
+        assert_eq!(
+            tokio::fs::read(
+                context
+                    .job_spool_path()
+                    .join("service-a/candidate-a/container.log")
+            )
+            .await
+            .expect("partial log should be retained"),
+            b"partial candidate output"
+        );
+
+        let _ = tokio::fs::remove_dir_all(root).await;
+    }
+
+    #[tokio::test]
+    async fn successful_job_finalization_creates_no_job_evidence_files() {
+        let root =
+            std::env::temp_dir().join(format!("dockrev-rollback-absent-{}", ulid::Ulid::new()));
+        fs::create_dir_all(&root).expect("test root");
+        let db_path = root.join("dockrev.sqlite");
+        let db = crate::db::Db::open(&db_path).await.expect("db");
+        let job = crate::api::types::JobRecord::new_running(
+            "job-success".to_string(),
+            crate::api::types::JobType::Update,
+            crate::api::types::JobScope::Service,
+            None,
+            None,
+            "2026-08-28T00:00:00Z",
+        )
+        .to_db();
+        db.insert_job(job).await.expect("insert job");
+        let context = RollbackEvidenceContext::new("job-success", &db_path).expect("spool context");
+
+        let summary = context.finalize().await;
+        db.finish_job_with_archive(
+            "job-success",
+            "success",
+            "2026-08-28T00:01:00Z",
+            &serde_json::json!({"status":"success"}),
+            None,
+        )
+        .await
+        .expect("finish successful job without evidence");
+
+        assert_eq!(summary.status, "absent");
+        assert!(context.metadata().is_empty());
+        assert!(!context.job_spool_path().exists());
+        assert!(!context.archive_path().exists());
+        let job = db
+            .get_job("job-success")
+            .await
+            .expect("load job")
+            .expect("job exists");
+        assert!(job.summary_json.get("rollbackEvidence").is_none());
+        assert!(
+            db.get_rollback_evidence_archive("job-success")
+                .await
+                .expect("load archive")
+                .is_none()
+        );
         let _ = tokio::fs::remove_dir_all(root).await;
     }
 
