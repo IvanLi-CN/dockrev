@@ -119,6 +119,7 @@ struct HealthRollbackRunner {
     step: Mutex<usize>,
     events: Mutex<Vec<&'static str>>,
     timed_out: bool,
+    fail_log_write: bool,
     fail_rollback_image_inspect: bool,
     expected_managed_override: Option<String>,
 }
@@ -371,6 +372,10 @@ impl CommandRunner for HealthRollbackRunner {
     ) -> anyhow::Result<crate::runner::RawFileCommandOutput> {
         let bytes = b"candidate logs before rollback";
         tokio::fs::write(output_path, bytes).await?;
+        if self.fail_log_write {
+            self.events.lock().unwrap().push("logs-write-failed");
+            return Err(anyhow::anyhow!("injected file write failure"));
+        }
         self.events.lock().unwrap().push("logs-captured");
         Ok(crate::runner::RawFileCommandOutput {
             status: if self.timed_out { -1 } else { 0 },
@@ -520,6 +525,80 @@ async fn healthcheck_failure_rolls_back_with_attempted_and_final_digests() {
             .capture_errors
             .iter()
             .any(|error| error.contains("timed out"))
+    );
+    assert_eq!(
+        tokio::fs::read(
+            evidence
+                .job_spool_path()
+                .join("svc_1/new_container/container.log")
+        )
+        .await
+        .unwrap(),
+        b"candidate logs before rollback"
+    );
+    std::fs::remove_dir_all(root).unwrap();
+}
+
+#[tokio::test]
+async fn log_file_write_failure_preserves_partial_evidence_and_rolls_back() {
+    let stack = single_service_stack("ghcr.io/org/web:1.0", None);
+    let runner = HealthRollbackRunner {
+        fail_log_write: true,
+        ..Default::default()
+    };
+    let root =
+        std::env::temp_dir().join(format!("dockrev-health-write-error-{}", ulid::Ulid::new()));
+    std::fs::create_dir_all(&root).unwrap();
+    let evidence = crate::rollback_evidence::RollbackEvidenceContext::new(
+        "job-health-write-error",
+        &root.join("dockrev.sqlite"),
+    )
+    .unwrap();
+
+    let outcome = run_update_job_with_gate_using_root_unlocked(
+        &runner,
+        "docker-compose",
+        None,
+        IdempotentRetryPolicy {
+            max_attempts: 1,
+            base_ms: 1,
+            max_ms: 2,
+        },
+        &stack,
+        &JobScope::Service,
+        Some("svc_1"),
+        "live",
+        None,
+        false,
+        "ui",
+        None,
+        None,
+        false,
+        &[],
+        None,
+        None,
+        Some(evidence.clone()),
+        None,
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(outcome.status, "rolled_back");
+    assert_eq!(
+        *runner.events.lock().unwrap(),
+        vec!["logs-write-failed", "rollback"]
+    );
+    let metadata = &evidence.metadata()[0];
+    assert!(metadata.logs_truncated);
+    assert!(
+        metadata
+            .capture_errors
+            .iter()
+            .any(|error| error.contains("injected file write failure"))
+    );
+    assert_eq!(
+        metadata.logs_bytes,
+        b"candidate logs before rollback".len() as u64
     );
     assert_eq!(
         tokio::fs::read(

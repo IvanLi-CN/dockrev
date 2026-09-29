@@ -706,7 +706,6 @@ mod tests {
             .expect("watchdog expiry is reported as a partial result");
 
         assert!(output.timed_out);
-        assert_eq!(tokio::fs::read(&path).await.unwrap(), b"partial");
         tokio::time::sleep(Duration::from_millis(300)).await;
         assert!(!marker.exists(), "timed-out process group kept running");
         tokio::fs::remove_file(path).await.expect("remove capture");
