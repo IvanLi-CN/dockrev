@@ -1,4 +1,5 @@
 use super::*;
+use crate::rollback_evidence::RollbackEvidenceContext;
 
 fn update_req(mode: UpdateMode) -> TriggerUpdateRequest {
     TriggerUpdateRequest {

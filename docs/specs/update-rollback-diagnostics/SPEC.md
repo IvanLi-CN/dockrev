@@ -58,13 +58,13 @@ Docker 的 health policy 由镜像的 `HEALTHCHECK` 定义，也可由 Compose `
 - 已捕获的日志和 health log 必须原文保存，不做脱敏或内容变换。示例、测试夹具、UI 演示和文档不得包含真实凭据或敏感环境变量。
 - 一个 update job 的 archive 必须是单一 `tar.zst` BLOB；每个失败服务拥有独立 archive directory，服务之间不得混合日志。
 - spool 文件必须在候选自动回滚前以原子写入完成，并仅允许 Dockrev 运行用户读取。候选删除、证据采集失败、spool 失败、归档失败或 BLOB 持久化失败都不得阻止既有自动回滚。
-- 归档 BLOB 与 `rollbackEvidence` summary 必须在同一数据库事务提交；只有提交成功后才能删除对应 spool。若归档写入失败，DockRev 必须在不带新 archive 的事务中完成既有 job 终态提交，将 evidence summary 标记为 `incomplete` 并记录有界错误；spool 保留供后续恢复，不能静默删除。启动恢复按既有 job 恢复顺序处理任务，再将带中断检查点的部分证据附加到同一 job；证据恢复不改变既有恢复流程确定的任务状态，并将 `logsTruncated` 保持为 true。
+- 归档 BLOB 与 `rollbackEvidence` summary 必须在同一数据库事务提交；只有提交成功后才能删除对应 spool。若归档写入失败，DockRev 必须在不带新 archive 的事务中完成既有 job 终态提交，将 evidence summary 标记为 `incomplete` 并记录有界错误；spool 保留供后续恢复，不能静默删除。若 evidence spool 初始化失败且候选健康检查随后触发回滚，任务 summary 必须记录 `rollbackEvidence.status=incomplete` 和有界初始化错误，不得创建下载附件。启动时先运行既有通用 job 恢复，再尝试附加带中断检查点的部分证据；对于仍由既有延后 update-backup recovery 处理的任务，证据可能先于该延后恢复完成而附加。证据恢复本身不改变任务状态，后续状态仍由既有恢复流程决定，并将 `logsTruncated` 保持为 true。
 - 终态 job 的既有保留期清理必须同时删除与该 job 对应的遗留 spool；这属于 job 到期删除，不得产生无主原始日志文件。
 - jobs 列表、通用 job log、SSE 和实时终端不得包含 archive 内容；完整 archive 仅可由现有 `require_user` 授权路径读取。
 
 ### SHOULD
 
-- summary 必须包含 `rollbackEvidence` 元数据：状态、失败候选数、archive format、compression、每服务日志完整性、归档大小和采集/归档错误。它不得包含原始日志正文。
+- summary 必须包含 `rollbackEvidence` 元数据：状态、已采集并纳入证据的失败候选数、archive format、compression、每服务日志完整性、归档大小和采集/归档错误。它不得包含原始日志正文。
 - 状态采集与日志流采集应并行执行；日志采集不得使用固定字节上限，300 秒 watchdog 只用于终止阻塞的日志命令并保护回滚时序。无法完成流式采集时必须独立记录不完整原因，且不阻止既有自动回滚。
 - 已有 job 记录、没有 evidence 的 job 和没有 healthcheck 的服务必须保持 API 兼容。
 

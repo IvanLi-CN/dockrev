@@ -21,6 +21,10 @@ const LOG_CAPTURE_TIMEOUT_SECONDS: u64 = 300;
 const CAPTURE_INTERRUPTED_REASON: &str = "logs capture interrupted before completion";
 static EVIDENCE_RECOVERY_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 
+#[cfg(test)]
+#[path = "rollback_evidence_test_support.rs"]
+mod test_support;
+
 #[derive(Clone)]
 pub struct RollbackEvidenceContext {
     job_id: String,
@@ -391,10 +395,9 @@ pub async fn cleanup_orphaned_spools(db: &crate::db::Db, db_path: &Path) {
             let job_id = name
                 .strip_suffix(".tar.zst")
                 .or_else(|| name.strip_suffix(".tar.zst.part"));
-            if let Some(job_id) = job_id
-                && db.get_job(job_id).await.ok().flatten().is_none()
-            {
-                let _ = tokio::fs::remove_file(path).await;
+            if let Some(job_id) = job_id {
+                let lookup = db.get_job(job_id).await.map(|job| job.map(|_| ()));
+                cleanup_orphaned_entry(&path, false, lookup).await;
             }
             continue;
         }
@@ -404,11 +407,34 @@ pub async fn cleanup_orphaned_spools(db: &crate::db::Db, db_path: &Path) {
         let Some(job_id) = path.file_name().and_then(|name| name.to_str()) else {
             continue;
         };
-        if db.get_job(job_id).await.ok().flatten().is_none() {
-            let _ = tokio::fs::remove_dir_all(&path).await;
+        let lookup = db.get_job(job_id).await.map(|job| job.map(|_| ()));
+        cleanup_orphaned_entry(&path, true, lookup).await;
+    }
+}
+
+async fn cleanup_orphaned_entry(
+    path: &Path,
+    is_directory: bool,
+    job_lookup: anyhow::Result<Option<()>>,
+) {
+    match job_lookup {
+        Ok(None) if is_directory => {
+            let _ = tokio::fs::remove_dir_all(path).await;
             let _ = tokio::fs::remove_file(path.with_extension("tar.zst")).await;
-        } else {
-            let _ = set_owner_only(&path);
+        }
+        Ok(None) => {
+            let _ = tokio::fs::remove_file(path).await;
+        }
+        Ok(Some(())) => {
+            if is_directory {
+                let _ = set_owner_only(path);
+            }
+        }
+        Err(error) => {
+            tracing::warn!(error = %error, "preserving rollback evidence after job lookup failure");
+            if is_directory {
+                let _ = set_owner_only(path);
+            }
         }
     }
 }
@@ -834,10 +860,11 @@ pub fn parse_health_policy(raw: &[u8]) -> Option<HealthPolicy> {
 mod tests {
     use super::*;
     use crate::runner::{CommandOutput, CommandSpec, RawCommandOutput, RawFileCommandOutput};
-    use tokio::io::AsyncWriteExt;
+    use tokio::io::AsyncWriteExt as _;
 
     struct EvidenceRunner {
         manifest_path: PathBuf,
+        log_bytes: Vec<u8>,
     }
 
     #[async_trait::async_trait]
@@ -870,15 +897,15 @@ mod tests {
                         .expect("manifest checkpoint exists before logs start"),
                 )
                 .expect("manifest checkpoint is valid");
-                assert!(
-                    manifest[0]
+                assert!(manifest.iter().any(|record| {
+                    record
                         .capture_errors
                         .iter()
                         .any(|error| error == CAPTURE_INTERRUPTED_REASON)
-                );
+                }));
                 return Ok(RawCommandOutput {
                     status: 0,
-                    stdout: candidate_log_fixture(),
+                    stdout: self.log_bytes.clone(),
                     stderr: Vec::new(),
                 });
             }
@@ -1004,10 +1031,12 @@ mod tests {
         fs::create_dir_all(&root).expect("test root");
         let db_path = root.join("dockrev.sqlite");
         let context = RollbackEvidenceContext::new("job-1", &db_path).expect("spool");
+        let expected_logs = candidate_log_fixture();
         let metadata = context
             .capture_failure(
                 &EvidenceRunner {
                     manifest_path: context.job_spool_path().join("manifest.json"),
+                    log_bytes: expected_logs.clone(),
                 },
                 &DockerRunnerConfig::default(),
                 "service-a",
@@ -1018,7 +1047,6 @@ mod tests {
             )
             .await;
 
-        let expected_logs = candidate_log_fixture();
         assert_eq!(metadata.logs_bytes, expected_logs.len() as u64);
         assert!(!metadata.logs_truncated);
         let service_dir = context
@@ -1048,42 +1076,67 @@ mod tests {
         .expect("health log json");
         assert_eq!(health_log[0]["Output"], "not ready");
 
+        let second_logs = b"service-b candidate bytes\xff".to_vec();
+        let second_metadata = context
+            .capture_failure(
+                &EvidenceRunner {
+                    manifest_path: context.job_spool_path().join("manifest.json"),
+                    log_bytes: second_logs.clone(),
+                },
+                &DockerRunnerConfig::default(),
+                "service-b",
+                "candidate-b",
+                "unhealthy",
+                None,
+                Some(Duration::from_secs(90)),
+            )
+            .await;
+        assert_eq!(second_metadata.logs_bytes, second_logs.len() as u64);
+        assert!(!second_metadata.logs_truncated);
+        let second_service_dir = context
+            .job_spool_path()
+            .join("service-b")
+            .join("candidate-b");
+        assert_eq!(
+            tokio::fs::read(second_service_dir.join("container.log"))
+                .await
+                .expect("second service raw logs"),
+            second_logs
+        );
+
         let summary = context.finalize().await;
         assert_eq!(summary.status, "available");
-        assert_eq!(summary.failed_candidates, 1);
+        assert_eq!(summary.failed_candidates, 2);
         assert!(summary.archive_size_bytes.unwrap_or_default() > 0);
         assert!(context.archive_path().exists());
+        let manifest: Vec<EvidenceMetadata> = serde_json::from_slice(
+            &super::test_support::archive_member(&context.archive_path(), "./manifest.json").await,
+        )
+        .expect("archive manifest");
+        assert_eq!(manifest.len(), 2);
+        assert_eq!(manifest[0].service_id, "service-a");
+        assert_eq!(manifest[0].health_status, "starting");
+        assert!(!manifest[0].logs_truncated);
+        assert_eq!(manifest[1].service_id, "service-b");
+        assert_eq!(manifest[1].health_status, "unhealthy");
+        assert!(!manifest[1].logs_truncated);
 
-        let decompressed = tokio::process::Command::new("zstd")
-            .arg("-dc")
-            .arg(context.archive_path())
-            .output()
-            .await
-            .expect("zstd should read evidence archive");
-        assert!(decompressed.status.success());
-        let mut tar = tokio::process::Command::new("tar")
-            .args(["-xOf", "-", "./service-a/candidate-a/container.log"])
-            .stdin(std::process::Stdio::piped())
-            .stdout(std::process::Stdio::piped())
-            .stderr(std::process::Stdio::piped())
-            .spawn()
-            .expect("tar should read evidence archive");
-        let mut tar_stdin = tar.stdin.take().expect("tar stdin");
-        let tar_bytes = decompressed.stdout;
-        let write_task = tokio::spawn(async move {
-            tar_stdin.write_all(&tar_bytes).await?;
-            anyhow::Ok(())
-        });
-        let extracted = tar
-            .wait_with_output()
-            .await
-            .expect("tar extraction should complete");
-        write_task
-            .await
-            .expect("tar input task")
-            .expect("tar input should be written");
-        assert!(extracted.status.success());
-        assert_eq!(extracted.stdout, expected_logs);
+        assert_eq!(
+            super::test_support::archive_member(
+                &context.archive_path(),
+                "./service-a/candidate-a/container.log"
+            )
+            .await,
+            expected_logs
+        );
+        assert_eq!(
+            super::test_support::archive_member(
+                &context.archive_path(),
+                "./service-b/candidate-b/container.log"
+            )
+            .await,
+            second_logs
+        );
 
         context.cleanup_after_commit().await;
         assert!(!context.job_spool_path().exists());

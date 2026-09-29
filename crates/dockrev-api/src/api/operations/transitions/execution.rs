@@ -1,7 +1,6 @@
 use super::*;
 use crate::backup::BackupRecoveryStore;
 use crate::managed_override;
-use crate::rollback_evidence::RollbackEvidenceContext;
 use std::sync::atomic::{AtomicU32, Ordering};
 
 pub(crate) type UpdateStackSummaries = Vec<serde_json::Value>;
@@ -117,17 +116,12 @@ pub(crate) async fn run_update_job(
         .unwrap_or(TransitionJobKind::Update);
     let stop_signal = (job_kind == TransitionJobKind::Update && req.mode.as_str() == "apply")
         .then(|| state.update_stop_hub.subscribe(&job_id));
-    let evidence = if job_kind == TransitionJobKind::Update && req.mode.as_str() == "apply" {
-        match RollbackEvidenceContext::new(&job_id, &state.config.db_path) {
-            Ok(context) => Some(context),
-            Err(error) => {
-                tracing::warn!(job_id = %job_id, error = %error, "rollback evidence spool unavailable");
-                None
-            }
-        }
-    } else {
-        None
-    };
+    let (evidence, evidence_setup_error) =
+        crate::rollback_evidence_finalize::initialize_evidence_context(
+            job_kind == TransitionJobKind::Update && req.mode.as_str() == "apply",
+            &job_id,
+            &state.config.db_path,
+        );
     let outcome: anyhow::Result<UpdateJobOutcome> = async {
         if matches!(job_kind, TransitionJobKind::Rollback)
             || matches!(&req.mode, UpdateMode::Apply)
@@ -1418,6 +1412,13 @@ pub(crate) async fn run_update_job(
         }
         archive_path
     } else {
+        crate::rollback_evidence_finalize::record_spool_setup_failure(
+            &mut final_summary,
+            evidence_setup_error.as_deref(),
+            job_kind == TransitionJobKind::Update
+                && req.mode.as_str() == "apply"
+                && transition_failure_step(job_kind, &stack_summaries) == Some("healthcheck"),
+        );
         None
     };
     let notification = notify::prepare_job_notification_item_for_finish(
