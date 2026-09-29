@@ -333,25 +333,40 @@ pub(super) fn write_archive_file_tx(
     job_id: &str,
     archive_path: &Path,
 ) -> anyhow::Result<bool> {
-    use std::io::Write as _;
+    write_archive_file_tx_inner(tx, job_id, archive_path, false)
+}
 
-    let row_id = tx
-        .query_row(
-            "SELECT rowid FROM jobs WHERE id = ?1",
-            params![job_id],
-            |row| row.get::<_, i64>(0),
-        )
-        .optional()?;
-    let Some(row_id) = row_id else {
-        return Ok(false);
-    };
+pub(super) fn write_archive_file_tx_if_absent(
+    tx: &rusqlite::Transaction<'_>,
+    job_id: &str,
+    archive_path: &Path,
+) -> anyhow::Result<bool> {
+    write_archive_file_tx_inner(tx, job_id, archive_path, true)
+}
+
+fn write_archive_file_tx_inner(
+    tx: &rusqlite::Transaction<'_>,
+    job_id: &str,
+    archive_path: &Path,
+    only_if_absent: bool,
+) -> anyhow::Result<bool> {
+    use std::io::Write as _;
 
     let mut archive = std::fs::File::open(archive_path)?;
     let archive_size = archive.metadata()?.len();
     let archive_size_sql = i64::try_from(archive_size)?;
-    tx.execute(
-        "UPDATE jobs SET rollback_evidence_tar_zstd = zeroblob(?2) WHERE id = ?1",
-        params![job_id, archive_size_sql],
+    let update = if only_if_absent {
+        "UPDATE jobs SET rollback_evidence_tar_zstd = zeroblob(?2) WHERE id = ?1 AND rollback_evidence_tar_zstd IS NULL"
+    } else {
+        "UPDATE jobs SET rollback_evidence_tar_zstd = zeroblob(?2) WHERE id = ?1"
+    };
+    if tx.execute(update, params![job_id, archive_size_sql])? == 0 {
+        return Ok(false);
+    }
+    let row_id = tx.query_row(
+        "SELECT rowid FROM jobs WHERE id = ?1",
+        params![job_id],
+        |row| row.get::<_, i64>(0),
     )?;
     let mut blob = tx.blob_open(
         rusqlite::MAIN_DB,

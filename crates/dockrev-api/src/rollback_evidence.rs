@@ -27,6 +27,13 @@ pub(crate) use recovery::cleanup_orphaned_spools;
 const SPOOL_DIR_NAME: &str = "rollback-evidence-spool";
 const LOG_CAPTURE_TIMEOUT_SECONDS: u64 = 300;
 const CAPTURE_INTERRUPTED_REASON: &str = "logs capture interrupted before completion";
+const MAX_SUMMARY_SERVICES: usize = 32;
+const MAX_SUMMARY_CAPTURE_ERRORS: usize = 4;
+const MAX_SUMMARY_FIELD_CHARS: usize = 256;
+const MAX_SUMMARY_ERRORS: usize = 16;
+const MAX_SUMMARY_ERROR_CHARS: usize = 512;
+const SUMMARY_TRUNCATION_NOTE: &str =
+    "rollback evidence summary metadata was truncated to remain bounded";
 
 #[cfg(test)]
 #[path = "rollback_evidence_test_support.rs"]
@@ -77,6 +84,64 @@ pub struct EvidenceSummary {
     pub archive_size_bytes: Option<u64>,
     pub services: Vec<EvidenceMetadata>,
     pub errors: Vec<String>,
+}
+
+fn bounded_summary_services(records: &[EvidenceMetadata]) -> (Vec<EvidenceMetadata>, bool) {
+    let mut truncated = records.len() > MAX_SUMMARY_SERVICES;
+    let mut services = records
+        .iter()
+        .take(MAX_SUMMARY_SERVICES)
+        .cloned()
+        .collect::<Vec<_>>();
+    for service in &mut services {
+        truncated |= truncate_summary_text(&mut service.service_id, MAX_SUMMARY_FIELD_CHARS);
+        truncated |= truncate_summary_text(&mut service.candidate_id, MAX_SUMMARY_FIELD_CHARS);
+        truncated |= truncate_summary_text(&mut service.health_status, MAX_SUMMARY_FIELD_CHARS);
+        if let Some(value) = service.state_status.as_mut() {
+            truncated |= truncate_summary_text(value, MAX_SUMMARY_FIELD_CHARS);
+        }
+        if let Some(value) = service.state_error.as_mut() {
+            truncated |= truncate_summary_text(value, MAX_SUMMARY_FIELD_CHARS);
+        }
+        if service.capture_errors.len() > MAX_SUMMARY_CAPTURE_ERRORS {
+            service.capture_errors.truncate(MAX_SUMMARY_CAPTURE_ERRORS);
+            truncated = true;
+        }
+        for error in &mut service.capture_errors {
+            truncated |= truncate_summary_text(error, MAX_SUMMARY_FIELD_CHARS);
+        }
+    }
+    (services, truncated)
+}
+
+pub(crate) fn bounded_summary_errors(
+    mut errors: Vec<String>,
+    metadata_truncated: bool,
+) -> Vec<String> {
+    let mut truncated = metadata_truncated || errors.len() > MAX_SUMMARY_ERRORS;
+    errors.truncate(MAX_SUMMARY_ERRORS);
+    for error in &mut errors {
+        truncated |= truncate_summary_text(error, MAX_SUMMARY_ERROR_CHARS);
+    }
+    if truncated {
+        if errors.len() == MAX_SUMMARY_ERRORS {
+            errors.pop();
+        }
+        errors.push(SUMMARY_TRUNCATION_NOTE.to_string());
+    }
+    errors
+}
+
+fn truncate_summary_text(value: &mut String, max_chars: usize) -> bool {
+    if value.chars().count() <= max_chars {
+        return false;
+    }
+    let prefix = value
+        .chars()
+        .take(max_chars.saturating_sub(3))
+        .collect::<String>();
+    *value = format!("{prefix}...");
+    true
 }
 
 impl RollbackEvidenceContext {
@@ -328,14 +393,19 @@ impl RollbackEvidenceContext {
             let _ = write_manifest(&spool, &records).await;
             let _ = tokio::fs::remove_file(spool.with_extension("tar.zst")).await;
             let _ = tokio::fs::remove_file(spool.with_extension("tar.zst.part")).await;
+            let failed_candidates = records.len();
+            let (services, services_truncated) = bounded_summary_services(&records);
             return EvidenceSummary {
                 status: "incomplete",
-                failed_candidates: records.len(),
+                failed_candidates,
                 archive_format: "tar",
                 compression: "zstd",
                 archive_size_bytes: None,
-                services: records,
-                errors: vec![format!("logs file promotion: {error}")],
+                services,
+                errors: bounded_summary_errors(
+                    vec![format!("logs file promotion: {error}")],
+                    services_truncated,
+                ),
             };
         }
         let mut errors = records
@@ -358,18 +428,20 @@ impl RollbackEvidenceContext {
                     None
                 }
             };
+        let failed_candidates = records.len();
+        let (services, services_truncated) = bounded_summary_services(&records);
         EvidenceSummary {
             status: if archive_size_bytes.is_some() {
                 "available"
             } else {
                 "incomplete"
             },
-            failed_candidates: records.len(),
+            failed_candidates,
             archive_format: "tar",
             compression: "zstd",
             archive_size_bytes,
-            services: records,
-            errors,
+            services,
+            errors: bounded_summary_errors(errors, services_truncated),
         }
     }
 
@@ -377,10 +449,30 @@ impl RollbackEvidenceContext {
         self.job_spool_path().with_extension("tar.zst")
     }
 
-    pub async fn cleanup_after_commit(&self) {
-        let _ = tokio::fs::remove_dir_all(self.job_spool_path()).await;
-        let _ = tokio::fs::remove_file(self.archive_path()).await;
-        let _ = tokio::fs::remove_file(self.job_spool_path().with_extension("tar.zst.part")).await;
+    pub async fn cleanup_after_commit(&self) -> anyhow::Result<()> {
+        let spool = self.job_spool_path();
+        let archive = self.archive_path();
+        let part = spool.with_extension("tar.zst.part");
+        let mut errors = Vec::new();
+
+        if let Err(error) = tokio::fs::remove_dir_all(&spool).await
+            && error.kind() != std::io::ErrorKind::NotFound
+        {
+            errors.push(format!("remove spool {}: {error}", spool.display()));
+        }
+        for (label, path) in [("archive", archive), ("partial archive", part)] {
+            if let Err(error) = tokio::fs::remove_file(&path).await
+                && error.kind() != std::io::ErrorKind::NotFound
+            {
+                errors.push(format!("remove {label} {}: {error}", path.display()));
+            }
+        }
+
+        if errors.is_empty() {
+            Ok(())
+        } else {
+            anyhow::bail!(errors.join("; "))
+        }
     }
 }
 
@@ -965,9 +1057,152 @@ mod tests {
             second_logs
         );
 
-        context.cleanup_after_commit().await;
+        context.cleanup_after_commit().await.expect("cleanup");
         assert!(!context.job_spool_path().exists());
         assert!(!context.archive_path().exists());
+        let _ = tokio::fs::remove_dir_all(root).await;
+    }
+
+    #[tokio::test]
+    async fn committed_cleanup_reports_failures_and_attempts_remaining_copies() {
+        let root = std::env::temp_dir().join(format!(
+            "dockrev-evidence-cleanup-error-{}",
+            ulid::Ulid::new()
+        ));
+        fs::create_dir_all(&root).expect("test root");
+        let evidence =
+            RollbackEvidenceContext::new("job-cleanup-error", &root.join("dockrev.sqlite"))
+                .expect("evidence context");
+        tokio::fs::write(evidence.job_spool_path(), b"blocks directory cleanup")
+            .await
+            .expect("spool blocker");
+        tokio::fs::write(evidence.archive_path(), b"committed archive copy")
+            .await
+            .expect("archive copy");
+        let part = evidence.job_spool_path().with_extension("tar.zst.part");
+        tokio::fs::write(&part, b"partial archive copy")
+            .await
+            .expect("partial archive copy");
+
+        let error = evidence
+            .cleanup_after_commit()
+            .await
+            .expect_err("spool deletion failure must be reported");
+
+        assert!(error.to_string().contains("remove spool"));
+        assert!(evidence.job_spool_path().exists());
+        assert!(!evidence.archive_path().exists());
+        assert!(!part.exists());
+        let _ = tokio::fs::remove_dir_all(root).await;
+    }
+
+    #[tokio::test]
+    async fn finalized_summary_bounds_metadata_without_changing_archive_contents() {
+        let root = std::env::temp_dir().join(format!(
+            "dockrev-evidence-summary-bounds-{}",
+            ulid::Ulid::new()
+        ));
+        fs::create_dir_all(&root).expect("test root");
+        let context =
+            RollbackEvidenceContext::new("job-summary-bounds", &root.join("dockrev.sqlite"))
+                .expect("evidence context");
+        let long = "x".repeat(2_000);
+        let records = (0..34)
+            .map(|index| {
+                let (service_id, candidate_id) = if index == 0 {
+                    ("service-00".to_string(), "candidate-00".to_string())
+                } else {
+                    (
+                        format!("service-{index:02}-{long}"),
+                        format!("candidate-{index:02}-{long}"),
+                    )
+                };
+                EvidenceMetadata {
+                    service_id,
+                    candidate_id,
+                    health_status: long.clone(),
+                    state_status: Some(long.clone()),
+                    state_error: Some(long.clone()),
+                    capture_errors: vec![long.clone(); 8],
+                    logs_truncated: false,
+                    ..Default::default()
+                }
+            })
+            .collect::<Vec<_>>();
+        for record in &records {
+            context.upsert_metadata(&record.service_id, &record.candidate_id, record.clone());
+        }
+        let first = &records[0];
+        let candidate_dir = context
+            .job_spool_path()
+            .join(path_component(&first.service_id))
+            .join(path_component(&first.candidate_id));
+        tokio::fs::create_dir_all(&candidate_dir)
+            .await
+            .expect("candidate directory");
+        let expected_logs = b"raw candidate log\0\xff\n";
+        tokio::fs::write(candidate_dir.join("container.log"), expected_logs)
+            .await
+            .expect("candidate log");
+
+        let summary = context.finalize().await;
+
+        assert_eq!(summary.status, "available");
+        assert_eq!(summary.failed_candidates, 34);
+        assert_eq!(summary.services.len(), 32);
+        for service in &summary.services {
+            for value in [
+                Some(service.service_id.as_str()),
+                Some(service.candidate_id.as_str()),
+                Some(service.health_status.as_str()),
+                service.state_status.as_deref(),
+                service.state_error.as_deref(),
+            ]
+            .into_iter()
+            .flatten()
+            {
+                assert!(value.chars().count() <= 256);
+            }
+            assert!(service.capture_errors.len() <= 4);
+            assert!(
+                service
+                    .capture_errors
+                    .iter()
+                    .all(|error| error.chars().count() <= 256)
+            );
+        }
+        assert!(summary.errors.len() <= 16);
+        assert!(
+            summary
+                .errors
+                .iter()
+                .any(|error| error == SUMMARY_TRUNCATION_NOTE)
+        );
+        assert!(
+            summary
+                .errors
+                .iter()
+                .all(|error| error.chars().count() <= 512)
+        );
+
+        let manifest: Vec<Value> = serde_json::from_slice(
+            &test_support::archive_member(&context.archive_path(), "./manifest.json").await,
+        )
+        .expect("full archive manifest");
+        assert_eq!(manifest.len(), records.len());
+        assert_eq!(manifest[0], serde_json::to_value(first).unwrap());
+        assert_eq!(
+            test_support::archive_member(
+                &context.archive_path(),
+                &format!(
+                    "./{}/{}/container.log",
+                    path_component(&first.service_id),
+                    path_component(&first.candidate_id)
+                )
+            )
+            .await,
+            expected_logs
+        );
         let _ = tokio::fs::remove_dir_all(root).await;
     }
 

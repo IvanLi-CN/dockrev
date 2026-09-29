@@ -167,6 +167,73 @@ async fn recovery_incomplete_metadata_never_replaces_a_committed_archive_summary
 }
 
 #[tokio::test]
+async fn recovery_archive_attach_never_replaces_a_committed_archive_or_summary() {
+    let root = std::env::temp_dir().join(format!(
+        "dockrev-job-evidence-attach-race-{}",
+        ulid::Ulid::new()
+    ));
+    std::fs::create_dir_all(&root).unwrap();
+    let db = Db::open(&root.join("dockrev.sqlite")).await.unwrap();
+    let job_id = "job-evidence-attach-race";
+    db.insert_job(job(
+        job_id,
+        JobType::Update,
+        "running",
+        "2026-01-01T00:00:00Z",
+    ))
+    .await
+    .unwrap();
+
+    let committed_summary = serde_json::json!({
+        "result": "original",
+        "rollbackEvidence": {
+            "status": "available",
+            "archiveSizeBytes": 7,
+            "origin": "finalizer"
+        }
+    });
+    db.finish_job_with_archive(
+        job_id,
+        "rolled_back",
+        "2026-01-01T00:01:00Z",
+        &committed_summary,
+        Some(b"archive".to_vec()),
+    )
+    .await
+    .unwrap();
+
+    let replacement = root.join("replacement.tar.zst");
+    tokio::fs::write(&replacement, b"replacement archive")
+        .await
+        .unwrap();
+    let attached = db
+        .attach_rollback_evidence_archive_from_file(
+            job_id,
+            &replacement,
+            &serde_json::json!({
+                "status": "available",
+                "archiveSizeBytes": 19,
+                "origin": "recovery"
+            }),
+        )
+        .await
+        .unwrap();
+
+    assert!(!attached);
+    let job = db.get_job(job_id).await.unwrap().unwrap();
+    assert_eq!(job.summary_json, committed_summary);
+    assert_eq!(
+        db.get_rollback_evidence_archive(job_id)
+            .await
+            .unwrap()
+            .unwrap(),
+        b"archive"
+    );
+
+    let _ = tokio::fs::remove_dir_all(root).await;
+}
+
+#[tokio::test]
 async fn rollback_evidence_migration_and_recovery() {
     let root = std::env::temp_dir().join(format!("dockrev-job-evidence-{}", ulid::Ulid::new()));
     std::fs::create_dir_all(&root).unwrap();

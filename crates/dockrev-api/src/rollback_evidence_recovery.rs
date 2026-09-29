@@ -1,10 +1,6 @@
 use super::*;
 
 static EVIDENCE_RECOVERY_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
-const MAX_INCOMPLETE_SERVICES: usize = 32;
-const MAX_INCOMPLETE_CAPTURE_ERRORS: usize = 4;
-const MAX_INCOMPLETE_FIELD_CHARS: usize = 256;
-const MAX_RECOVERY_ERROR_CHARS: usize = 512;
 
 pub(crate) async fn cleanup_orphaned_spools(db: &crate::db::Db, db_path: &Path) {
     let root = spool_root(db_path);
@@ -161,14 +157,15 @@ pub(super) async fn recover_evidence(
                 continue;
             }
         };
+        let (services, services_truncated) = bounded_summary_services(&records);
         let summary = EvidenceSummary {
             status: "available",
             failed_candidates: records.len(),
             archive_format: "tar",
             compression: "zstd",
             archive_size_bytes: Some(archive_size_bytes),
-            services: records.clone(),
-            errors: Vec::new(),
+            services,
+            errors: bounded_summary_errors(Vec::new(), services_truncated),
         };
         let metadata = serde_json::to_value(&summary).unwrap_or_else(|_| serde_json::json!({}));
         match db
@@ -274,13 +271,10 @@ async fn record_recovery_failure(
     error: impl std::fmt::Display,
 ) {
     let mut message = format!("{stage}: {error}");
-    let mut metadata_truncated = truncate_text(&mut message, MAX_RECOVERY_ERROR_CHARS);
-    let (services, services_truncated) = bounded_incomplete_services(records);
+    let mut metadata_truncated = truncate_summary_text(&mut message, MAX_SUMMARY_ERROR_CHARS);
+    let (services, services_truncated) = bounded_summary_services(records);
     metadata_truncated |= services_truncated;
-    let mut errors = vec![message];
-    if metadata_truncated {
-        errors.push("recovery metadata was truncated to keep the job summary bounded".to_string());
-    }
+    let errors = bounded_summary_errors(vec![message], metadata_truncated);
     let summary = EvidenceSummary {
         status: "incomplete",
         failed_candidates: records.len(),
@@ -307,46 +301,6 @@ async fn record_recovery_failure(
     {
         tracing::warn!(job_id = %job_id, error = %error, "could not record incomplete rollback evidence recovery");
     }
-}
-
-fn bounded_incomplete_services(records: &[EvidenceMetadata]) -> (Vec<EvidenceMetadata>, bool) {
-    let mut truncated = records.len() > MAX_INCOMPLETE_SERVICES;
-    let mut services = records
-        .iter()
-        .take(MAX_INCOMPLETE_SERVICES)
-        .cloned()
-        .collect::<Vec<_>>();
-    for service in &mut services {
-        truncated |= truncate_text(&mut service.service_id, MAX_INCOMPLETE_FIELD_CHARS);
-        truncated |= truncate_text(&mut service.candidate_id, MAX_INCOMPLETE_FIELD_CHARS);
-        truncated |= truncate_text(&mut service.health_status, MAX_INCOMPLETE_FIELD_CHARS);
-        if let Some(value) = service.state_status.as_mut() {
-            truncated |= truncate_text(value, MAX_INCOMPLETE_FIELD_CHARS);
-        }
-        if let Some(value) = service.state_error.as_mut() {
-            truncated |= truncate_text(value, MAX_INCOMPLETE_FIELD_CHARS);
-        }
-        if service.capture_errors.len() > MAX_INCOMPLETE_CAPTURE_ERRORS {
-            service
-                .capture_errors
-                .truncate(MAX_INCOMPLETE_CAPTURE_ERRORS);
-            truncated = true;
-        }
-        for error in &mut service.capture_errors {
-            truncated |= truncate_text(error, MAX_INCOMPLETE_FIELD_CHARS);
-        }
-    }
-    (services, truncated)
-}
-
-fn truncate_text(value: &mut String, max_chars: usize) -> bool {
-    if value.chars().count() <= max_chars {
-        return false;
-    }
-    let prefix_chars = max_chars.saturating_sub(3);
-    let prefix = value.chars().take(prefix_chars).collect::<String>();
-    *value = format!("{prefix}...");
-    true
 }
 
 #[cfg(test)]
@@ -458,7 +412,7 @@ mod tests {
         assert_eq!(summary["status"], "incomplete");
         assert_eq!(summary["failedCandidates"], records.len());
         let services = summary["services"].as_array().expect("services");
-        assert_eq!(services.len(), MAX_INCOMPLETE_SERVICES);
+        assert_eq!(services.len(), MAX_SUMMARY_SERVICES);
         for service in services {
             for field in [
                 "serviceId",
@@ -468,13 +422,13 @@ mod tests {
                 "stateError",
             ] {
                 if let Some(value) = service[field].as_str() {
-                    assert!(value.chars().count() <= MAX_INCOMPLETE_FIELD_CHARS);
+                    assert!(value.chars().count() <= MAX_SUMMARY_FIELD_CHARS);
                 }
             }
             let errors = service["captureErrors"].as_array().expect("capture errors");
-            assert_eq!(errors.len(), MAX_INCOMPLETE_CAPTURE_ERRORS);
+            assert_eq!(errors.len(), MAX_SUMMARY_CAPTURE_ERRORS);
             assert!(errors.iter().all(|error| {
-                error.as_str().expect("capture error").chars().count() <= MAX_INCOMPLETE_FIELD_CHARS
+                error.as_str().expect("capture error").chars().count() <= MAX_SUMMARY_FIELD_CHARS
             }));
             assert_eq!(service["logsTruncated"], true);
         }
@@ -490,8 +444,146 @@ mod tests {
                 .expect("recovery error")
                 .chars()
                 .count(),
-            MAX_RECOVERY_ERROR_CHARS
+            MAX_SUMMARY_ERROR_CHARS
         );
-        assert!(summary["errors"].as_array().expect("errors").len() > 1);
+        let errors = summary["errors"].as_array().expect("errors");
+        assert!(errors.len() <= MAX_SUMMARY_ERRORS);
+        assert!(
+            errors
+                .iter()
+                .any(|error| { error.as_str() == Some(SUMMARY_TRUNCATION_NOTE) })
+        );
+    }
+
+    #[tokio::test]
+    async fn recovered_archive_summary_bounds_metadata_and_preserves_archive_contents() {
+        let root = std::env::temp_dir().join(format!(
+            "dockrev-recovered-summary-bounds-{}",
+            ulid::Ulid::new()
+        ));
+        tokio::fs::create_dir_all(&root).await.expect("test root");
+        let db_path = root.join("dockrev.sqlite");
+        let db = crate::db::Db::open(&db_path).await.expect("db");
+        let job_id = "job-recovered-summary-bounds";
+        insert_running_job(&db, job_id).await;
+        db.finish_job(
+            job_id,
+            "failed",
+            "2026-08-28T00:05:00Z",
+            &serde_json::json!({}),
+        )
+        .await
+        .expect("finish job");
+
+        let long = "x".repeat(300);
+        let records = (0..34)
+            .map(|index| {
+                let (service_id, candidate_id) = if index == 0 {
+                    ("service-00".to_string(), "candidate-00".to_string())
+                } else {
+                    (
+                        format!("service-{index:02}-{long}"),
+                        format!("candidate-{index:02}-{long}"),
+                    )
+                };
+                EvidenceMetadata {
+                    service_id,
+                    candidate_id,
+                    health_status: long.clone(),
+                    state_status: Some(long.clone()),
+                    state_error: Some(long.clone()),
+                    capture_errors: vec![long.clone(); 5],
+                    logs_truncated: false,
+                    ..Default::default()
+                }
+            })
+            .collect::<Vec<_>>();
+        let spool = spool_root(&db_path).join(job_id);
+        tokio::fs::create_dir_all(&spool).await.expect("spool");
+        write_manifest(&spool, &records)
+            .await
+            .expect("full recovery manifest");
+        let first = &records[0];
+        let candidate_dir = spool
+            .join(path_component(&first.service_id))
+            .join(path_component(&first.candidate_id));
+        tokio::fs::create_dir_all(&candidate_dir)
+            .await
+            .expect("candidate directory");
+        let expected_logs = b"recovered raw log\0\xff\n";
+        tokio::fs::write(candidate_dir.join("container.log"), expected_logs)
+            .await
+            .expect("candidate log");
+
+        recover_orphaned_evidence(&db, &db_path).await;
+
+        let job = db.get_job(job_id).await.expect("load job").expect("job");
+        let summary = &job.summary_json["rollbackEvidence"];
+        assert_eq!(summary["status"], "available");
+        assert_eq!(summary["failedCandidates"], records.len());
+        let services = summary["services"].as_array().expect("services");
+        assert_eq!(services.len(), 32);
+        for service in services {
+            for field in [
+                "serviceId",
+                "candidateId",
+                "healthStatus",
+                "stateStatus",
+                "stateError",
+            ] {
+                if let Some(value) = service[field].as_str() {
+                    assert!(value.chars().count() <= 256);
+                }
+            }
+            let errors = service["captureErrors"].as_array().expect("capture errors");
+            assert_eq!(errors.len(), 4);
+            assert!(
+                errors
+                    .iter()
+                    .all(|error| { error.as_str().expect("capture error").chars().count() <= 256 })
+            );
+        }
+        let errors = summary["errors"].as_array().expect("summary errors");
+        assert!(errors.len() <= 16);
+        assert!(
+            errors
+                .iter()
+                .all(|error| { error.as_str().expect("summary error").chars().count() <= 512 })
+        );
+        assert!(
+            errors
+                .iter()
+                .any(|error| { error.as_str() == Some(SUMMARY_TRUNCATION_NOTE) })
+        );
+
+        let archive = root.join("recovered.tar.zst");
+        tokio::fs::write(
+            &archive,
+            db.get_rollback_evidence_archive(job_id)
+                .await
+                .expect("read archive")
+                .expect("archive exists"),
+        )
+        .await
+        .expect("write extracted archive fixture");
+        let manifest: Vec<serde_json::Value> = serde_json::from_slice(
+            &super::test_support::archive_member(&archive, "./manifest.json").await,
+        )
+        .expect("full archive manifest");
+        assert_eq!(manifest.len(), records.len());
+        assert_eq!(manifest[0], serde_json::to_value(first).unwrap());
+        assert_eq!(
+            super::test_support::archive_member(
+                &archive,
+                &format!(
+                    "./{}/{}/container.log",
+                    path_component(&first.service_id),
+                    path_component(&first.candidate_id)
+                )
+            )
+            .await,
+            expected_logs
+        );
+        let _ = tokio::fs::remove_dir_all(root).await;
     }
 }

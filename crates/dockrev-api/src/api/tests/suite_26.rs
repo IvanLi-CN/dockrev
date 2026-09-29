@@ -187,7 +187,7 @@ async fn rollback_evidence_api_download_preserves_raw_candidate_logs_end_to_end(
         )
         .await
         .unwrap();
-    evidence.cleanup_after_commit().await;
+    evidence.cleanup_after_commit().await.expect("cleanup");
     assert!(!evidence.job_spool_path().exists());
     assert!(!archive_path.exists());
 

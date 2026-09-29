@@ -1398,7 +1398,7 @@ WHERE id = ?1
             if let Some(object) = summary.as_object_mut() {
                 object.insert("rollbackEvidence".to_string(), metadata);
             }
-            if !jobs_finish::write_archive_file_tx(&tx, &job_id, &archive_path)? {
+            if !jobs_finish::write_archive_file_tx_if_absent(&tx, &job_id, &archive_path)? {
                 tx.commit()?;
                 return Ok(false);
             }

@@ -82,11 +82,16 @@ pub(super) async fn archive_member(archive: &Path, member: &str) -> Vec<u8> {
         .wait_with_output()
         .await
         .expect("tar extraction should complete");
-    write_task
-        .await
-        .expect("tar input task")
-        .expect("tar input should be written");
+    let write_result = write_task.await.expect("tar input task");
     assert!(extracted.status.success());
+    if let Err(error) = write_result {
+        assert!(
+            error
+                .downcast_ref::<std::io::Error>()
+                .is_some_and(|error| error.kind() == std::io::ErrorKind::BrokenPipe),
+            "tar input should be written unless extraction closes the pipe early: {error}"
+        );
+    }
     extracted.stdout
 }
 

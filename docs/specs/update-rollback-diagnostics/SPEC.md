@@ -73,7 +73,8 @@ Docker 的 health policy 由镜像的 `HEALTHCHECK` 定义，也可由 Compose `
 ### REQ-ROLLBACK-012
 - 终态 job 的既有保留期清理必须同时删除与该 job 对应的遗留 spool；这属于 job 到期删除，不得产生无主原始日志文件。
 ### REQ-ROLLBACK-013
-- 对带有 archive BLOB 的终态 job，启动恢复必须在读取 manifest 前清理 spool、`.tar.zst` 和 `.tar.zst.part`，包括 spool 目录已缺失的 archive-only/part-only 文件。删除失败时必须记录告警并保留未删副本，不得覆盖已提交的归档状态。恢复失败写入的 `incomplete` summary 最多包含 32 条服务记录、每服务最多 4 条捕获错误、每个文本字段最多 256 个字符、顶层错误最多 512 个字符；发生截断时保留失败候选总数并附带有界说明。
+- 对带有 archive BLOB 的终态 job，启动恢复必须在读取 manifest 前清理 spool、`.tar.zst` 和 `.tar.zst.part`，包括 spool 目录已缺失的 archive-only/part-only 文件。删除失败时必须记录告警并保留未删副本，不得覆盖已提交的归档状态。恢复附加必须只在 evidence BLOB 尚为空时执行；已有 BLOB 及其 summary 对恢复过程不可覆盖。
+- 每种 `rollbackEvidence` summary（包括常规终结与恢复失败）最多包含 32 条服务记录、每服务最多 4 条捕获错误、每个元数据文本字段最多 256 个字符、最多 16 条顶层错误且每条最多 512 个字符。发生截断时必须附带有界说明并保留失败候选总数。这些上限只适用于 summary；归档 manifest 和已采集日志必须保持原始内容。
 ### REQ-ROLLBACK-014
 - jobs 列表、通用 job log、SSE 和实时终端不得包含 archive 内容；完整 archive 仅可由现有 `require_user` 授权路径读取。
 
@@ -85,6 +86,9 @@ Docker 的 health policy 由镜像的 `HEALTHCHECK` 定义，也可由 Compose `
 - 状态采集与日志流采集应并行执行；日志采集不得使用固定字节上限，300 秒 watchdog 只用于终止阻塞的日志命令并保护回滚时序。无法完成流式采集时必须独立记录不完整原因，且不阻止既有自动回滚。
 ### REQ-ROLLBACK-017
 - 已有 job 记录、没有 evidence 的 job 和没有 healthcheck 的服务必须保持 API 兼容。
+
+### REQ-ROLLBACK-018
+- 常规完成与恢复成功产生的 `rollbackEvidence` summary 也必须遵守 `REQ-ROLLBACK-013` 的元数据上限；被省略或缩短的数据不得影响 archive manifest、`container.log` 原始字节、`logsBytes`、`logsTruncated` 或总失败候选数。
 
 ## Behavior Details
 
@@ -149,9 +153,9 @@ Docker 的 health policy 由镜像的 `HEALTHCHECK` 定义，也可由 Compose `
 - Pass condition: each service remains isolated in the single archive, archive and summary commit atomically, and failed persistence preserves recoverable spool data.
 
 ### VER-ROLLBACK-006
-- Method: Run startup recovery, cleanup, and terminal-job retention tests.
+- Method: Run startup recovery, committed-archive cleanup, archive-attachment race, summary-bound, and terminal-job retention tests.
 - covers: `REQ-ROLLBACK-012`, `REQ-ROLLBACK-013`
-- Pass condition: committed archives lose local residue including archive-only files; cleanup failures are reported without overwriting committed metadata; incomplete summaries obey their bounds; job GC removes matching evidence.
+- Pass condition: committed archives lose local residue including archive-only files; cleanup failures are reported without overwriting committed metadata; recovery cannot replace a committed BLOB or summary; normal and incomplete summaries obey the same bounds while archive contents remain unmodified; job GC removes matching evidence.
 
 ### VER-ROLLBACK-007
 - Method: Exercise job API authorization and ordinary-output assertions.
@@ -160,8 +164,13 @@ Docker 的 health policy 由镜像的 `HEALTHCHECK` 定义，也可由 Compose `
 
 ### VER-ROLLBACK-008
 - Method: Inspect summary fixtures and concurrent candidate-capture tests.
-- covers: `REQ-ROLLBACK-015`, `REQ-ROLLBACK-016`
+- covers: `REQ-ROLLBACK-015`, `REQ-ROLLBACK-016`, `REQ-ROLLBACK-018`
 - Pass condition: summaries contain required structured metadata only, and state/log capture runs concurrently without an application-side byte cap.
+
+### VER-ROLLBACK-009
+- Method: Finalize and recover oversized candidate metadata, extract both archive manifests and raw logs, and inspect each summary.
+- covers: `REQ-ROLLBACK-013`, `REQ-ROLLBACK-018`
+- Pass condition: normal and recovered archive summaries keep service/error counts and text fields within limits, `failedCandidates` remains exact, and both archive manifests/logs retain their original contents.
 
 ## Visual Evidence
 

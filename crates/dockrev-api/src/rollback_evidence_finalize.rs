@@ -2,7 +2,7 @@ use std::path::PathBuf;
 
 use anyhow::Context as _;
 
-use crate::rollback_evidence::RollbackEvidenceContext;
+use crate::rollback_evidence::{RollbackEvidenceContext, bounded_summary_errors};
 
 #[allow(clippy::too_many_arguments)]
 pub(crate) async fn finish_job_with_evidence_archive(
@@ -80,8 +80,14 @@ async fn finish_after_archive_error(
 ) -> anyhow::Result<Option<bool>> {
     match archive_commit_is_visible(db, job_id, status, finished_at).await {
         Ok(true) => {
-            if let Some(evidence) = evidence {
-                evidence.cleanup_after_commit().await;
+            if let Some(evidence) = evidence
+                && let Err(cleanup_error) = evidence.cleanup_after_commit().await
+            {
+                tracing::warn!(
+                    job_id = %job_id,
+                    error = %cleanup_error,
+                    "committed rollback evidence local cleanup failed"
+                );
             }
             return Err(
                 error.context("job and rollback evidence committed before a post-commit failure")
@@ -185,12 +191,19 @@ fn record_archive_persistence_failure(summary_json: &mut serde_json::Value, erro
     };
     evidence.insert("status".to_string(), serde_json::json!("incomplete"));
     evidence.insert("archiveSizeBytes".to_string(), serde_json::Value::Null);
-    let errors = evidence
-        .entry("errors")
-        .or_insert_with(|| serde_json::json!([]));
-    if let Some(errors) = errors.as_array_mut() {
-        errors.push(serde_json::json!(bounded_archive_error(error)));
-    }
+    let mut errors = evidence
+        .get("errors")
+        .and_then(serde_json::Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(serde_json::Value::as_str)
+        .map(str::to_owned)
+        .collect::<Vec<_>>();
+    errors.insert(0, bounded_archive_error(error));
+    evidence.insert(
+        "errors".to_string(),
+        serde_json::json!(bounded_summary_errors(errors, false)),
+    );
 }
 
 fn bounded_archive_error(error: &anyhow::Error) -> String {
@@ -214,7 +227,15 @@ async fn cleanup_evidence_after_archive_lookup(
     archive_lookup: anyhow::Result<Option<u64>>,
 ) {
     match (evidence, archive_lookup) {
-        (Some(evidence), Ok(Some(_))) => evidence.cleanup_after_commit().await,
+        (Some(evidence), Ok(Some(_))) => {
+            if let Err(error) = evidence.cleanup_after_commit().await {
+                tracing::warn!(
+                    job_id = %job_id,
+                    error = %error,
+                    "committed rollback evidence local cleanup failed"
+                );
+            }
+        }
         (Some(_), Ok(None)) => tracing::warn!(
             job_id = %job_id,
             "preserving rollback evidence because the committed archive is absent"
@@ -309,6 +330,38 @@ mod tests {
             serde_json::json!([])
         );
         assert_eq!(summary["rollbackEvidence"]["errors"][0], error);
+    }
+
+    #[test]
+    fn archive_persistence_failure_keeps_summary_errors_bounded_and_visible() {
+        let mut summary = serde_json::json!({
+            "rollbackEvidence": {
+                "status": "available",
+                "archiveSizeBytes": 123,
+                "errors": (0..16).map(|index| format!("capture error {index}")).collect::<Vec<_>>()
+            }
+        });
+
+        record_archive_persistence_failure(
+            &mut summary,
+            &anyhow::anyhow!("injected archive write failure"),
+        );
+
+        assert_eq!(summary["rollbackEvidence"]["status"], "incomplete");
+        let errors = summary["rollbackEvidence"]["errors"]
+            .as_array()
+            .expect("summary errors");
+        assert!(errors.len() <= 16);
+        assert!(
+            errors[0]
+                .as_str()
+                .expect("new persistence error")
+                .starts_with("archive persistence:")
+        );
+        assert!(errors.iter().any(|error| {
+            error.as_str()
+                == Some("rollback evidence summary metadata was truncated to remain bounded")
+        }));
     }
 
     #[tokio::test]

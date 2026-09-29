@@ -13,7 +13,7 @@
 - The fixed 90-second health wait observed only the health status and destroyed candidate evidence during automatic rollback.
 - The durable contract replaces that observability gap with candidate-effective policy waiting, private per-job spool files, and one per-job `tar.zst` archive.
 - The archive layout preserves service boundaries while keeping the confirmed single BLOB storage boundary.
-- Recovery now removes local archive residue after the BLOB commits and bounds incomplete recovery metadata without changing the storage or authorization boundary.
+- Recovery now removes local archive residue after the BLOB commits, never replaces an existing archive, reports cleanup failures, and applies the same bounded summary projection during normal finalization and recovery. Archive bytes and the storage/authorization boundary remain unchanged.
 
 ## References
 
