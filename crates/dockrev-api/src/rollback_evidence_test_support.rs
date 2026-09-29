@@ -317,5 +317,82 @@ async fn recovery_cleans_spool_without_overwriting_an_existing_archive() {
     );
     assert!(!spool.exists());
 
+    for (suffix, manifest) in [
+        ("missing-manifest", None),
+        ("corrupt-manifest", Some(&b"{ invalid"[..])),
+    ] {
+        let job_id = format!("job-existing-archive-{suffix}");
+        db.insert_job(
+            crate::api::types::JobRecord::new_running(
+                job_id.clone(),
+                crate::api::types::JobType::Update,
+                crate::api::types::JobScope::Service,
+                None,
+                None,
+                "2026-08-28T00:00:00Z",
+            )
+            .to_db(),
+        )
+        .await
+        .expect("insert job");
+        let original_archive = format!("committed archive {suffix}").into_bytes();
+        db.finish_job_with_archive(
+            &job_id,
+            "rolled_back",
+            "2026-08-28T00:05:00Z",
+            &serde_json::json!({
+                "rollbackEvidence": {
+                    "status": "available",
+                    "archiveSizeBytes": original_archive.len()
+                }
+            }),
+            Some(original_archive.clone()),
+        )
+        .await
+        .expect("commit archive");
+
+        let spool = spool_root(&db_path).join(&job_id);
+        let candidate = spool.join("service-a/candidate-a");
+        tokio::fs::create_dir_all(&candidate).await.expect("spool");
+        tokio::fs::write(candidate.join("container.log"), b"raw candidate logs")
+            .await
+            .expect("candidate logs");
+        if let Some(manifest) = manifest {
+            tokio::fs::write(spool.join("manifest.json"), manifest)
+                .await
+                .expect("manifest");
+        }
+        let archive_path = spool.with_extension("tar.zst");
+        let partial_archive_path = spool.with_extension("tar.zst.part");
+        tokio::fs::write(&archive_path, b"local archive copy")
+            .await
+            .expect("local archive");
+        tokio::fs::write(&partial_archive_path, b"partial archive")
+            .await
+            .expect("partial archive");
+
+        recover_orphaned_evidence(&db, &db_path).await;
+
+        assert_eq!(
+            db.get_rollback_evidence_archive(&job_id)
+                .await
+                .expect("load archive")
+                .expect("archive exists"),
+            original_archive
+        );
+        let recovered_job = db
+            .get_job(&job_id)
+            .await
+            .expect("load job")
+            .expect("job exists");
+        assert_eq!(
+            recovered_job.summary_json["rollbackEvidence"]["status"],
+            "available"
+        );
+        assert!(!spool.exists());
+        assert!(!archive_path.exists());
+        assert!(!partial_archive_path.exists());
+    }
+
     let _ = tokio::fs::remove_dir_all(root).await;
 }

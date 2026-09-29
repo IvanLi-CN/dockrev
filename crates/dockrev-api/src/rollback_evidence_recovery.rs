@@ -99,6 +99,16 @@ pub(super) async fn recover_evidence(
             job.status.as_str(),
             "success" | "failed" | "rolled_back" | "cancelled"
         );
+        if terminal {
+            match cleanup_spool_for_committed_archive(db, job_id, &spool).await {
+                Ok(true) => continue,
+                Ok(false) => {}
+                Err(error) => {
+                    record_recovery_failure(db, job_id, &[], "check archive", error).await;
+                    continue;
+                }
+            }
+        }
         let manifest = spool.join("manifest.json");
         let manifest_bytes = match tokio::fs::read(&manifest).await {
             Ok(bytes) => bytes,
@@ -127,14 +137,9 @@ pub(super) async fn recover_evidence(
             record_recovery_failure(db, job_id, &records, "recover partial logs", error).await;
             continue;
         }
-        match db.rollback_evidence_archive_size(job_id).await {
-            Ok(Some(_)) => {
-                let _ = tokio::fs::remove_dir_all(&spool).await;
-                let _ = tokio::fs::remove_file(spool.with_extension("tar.zst")).await;
-                let _ = tokio::fs::remove_file(spool.with_extension("tar.zst.part")).await;
-                continue;
-            }
-            Ok(None) => {}
+        match cleanup_spool_for_committed_archive(db, job_id, &spool).await {
+            Ok(true) => continue,
+            Ok(false) => {}
             Err(error) => {
                 record_recovery_failure(db, job_id, &records, "check archive", error).await;
                 continue;
@@ -180,6 +185,20 @@ pub(super) async fn recover_evidence(
             }
         }
     }
+}
+
+async fn cleanup_spool_for_committed_archive(
+    db: &crate::db::Db,
+    job_id: &str,
+    spool: &Path,
+) -> anyhow::Result<bool> {
+    if db.rollback_evidence_archive_size(job_id).await?.is_none() {
+        return Ok(false);
+    }
+    let _ = tokio::fs::remove_dir_all(spool).await;
+    let _ = tokio::fs::remove_file(spool.with_extension("tar.zst")).await;
+    let _ = tokio::fs::remove_file(spool.with_extension("tar.zst.part")).await;
+    Ok(true)
 }
 
 async fn record_recovery_failure(
