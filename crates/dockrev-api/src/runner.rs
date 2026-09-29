@@ -681,14 +681,14 @@ mod tests {
                 .as_nanos()
         ));
         std::fs::create_dir(&test_dir).expect("create process-group test directory");
-        let started = test_dir.join("started.marker");
         let child_started = test_dir.join("child-started.marker");
+        let trigger = test_dir.join("trigger.marker");
         let marker = test_dir.join("late.marker");
         let path = test_dir.join("capture.log");
         let command = format!(
-            "touch {}; (touch {}; sleep 3; touch {}) & wait",
-            shell_quote(&started.display().to_string()),
+            "(touch {}; while [ ! -e {} ]; do sleep 0.01; done; touch {}) & wait",
             shell_quote(&child_started.display().to_string()),
+            shell_quote(&trigger.display().to_string()),
             shell_quote(&marker.display().to_string())
         );
         let watchdog = tokio::spawn(async move {
@@ -719,8 +719,15 @@ mod tests {
             .expect("watchdog task should complete without panicking");
 
         assert!(output.timed_out);
-        tokio::time::sleep(Duration::from_millis(1500)).await;
-        assert!(!marker.exists(), "timed-out process group kept running");
+        std::fs::write(&trigger, []).expect("trigger surviving process");
+        let marker_written = tokio::time::timeout(Duration::from_secs(2), async {
+            while !marker.exists() {
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .is_ok();
+        assert!(!marker_written, "timed-out process group kept running");
         std::fs::remove_dir_all(test_dir).expect("remove process-group test directory");
     }
 
