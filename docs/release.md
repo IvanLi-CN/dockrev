@@ -93,7 +93,10 @@ failed. When that run produced the complete release bundle, recovery reuses
 that bundle and verifies the same artifact digest before publishing; it never
 recalculates the version or rebuilds a completed bundle. If the failure
 happened before a complete bundle existed, the workflow can rebuild for that
-same immutable identity.
+same immutable identity. Recovery reads the original failure context to tell
+those cases apart. If a digest was recorded but the original bundle is missing
+or expired, it stops and asks maintainers to restore that exact bundle before
+retrying.
 
 Release failures upload structured context with the verified identity and the
 artifact digest when one exists. The selected Oidrune/OIDC notification route

@@ -65,7 +65,7 @@ jobs:
       - name: Checkout trusted release helpers
         uses: actions/checkout@v4
         with:
-          ref: ${{ inputs.merge_sha || github.sha }}
+          ref: ${{ github.sha }}
           path: .workflow-src
           fetch-depth: 1
 
@@ -92,10 +92,13 @@ jobs:
           git fetch --no-tags origin main
           git merge-base --is-ancestor "${MERGE_SHA}" origin/main
           if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
-            python3 .workflow-src/.github/scripts/release_recovery_artifact.py \
+            if ! python3 .workflow-src/.github/scripts/release_recovery_artifact.py \
               --repository "${GITHUB_REPOSITORY}" \
               --merge-sha "${MERGE_SHA}" \
-              --token "${GITHUB_TOKEN}" > recovery-artifact.json
+              --token "${GITHUB_TOKEN}" > recovery-artifact.json; then
+              echo "identity_failure_kind=same-sha-recovery-preflight" >> "$GITHUB_OUTPUT"
+              exit 2
+            fi
           fi
           set +e
           python3 .workflow-src/.github/scripts/release_identity.py \
@@ -154,12 +157,16 @@ jobs:
           merge_sha = os.environ["MERGE_SHA"]
           if not re.fullmatch(r"[0-9a-f]{40}", merge_sha):
               merge_sha = os.environ["GITHUB_SHA"]
+          failure_kind = os.environ["FAILURE_KIND"]
+          recovery_instruction = "verify the merged VERSION identity; retry Release with the same merge SHA only after identity is confirmed"
+          if failure_kind == "same-sha-recovery-preflight":
+              recovery_instruction = "inspect the original Release failure context; restore its exact bundle and digest before retrying if a digest was recorded, or retry the same merge SHA to rebuild only when no bundle digest was created; do not create a new version identity"
           payload = {
               "merge_commit_sha": merge_sha,
               "run_url": f"{os.environ['GITHUB_SERVER_URL']}/{os.environ['GITHUB_REPOSITORY']}/actions/runs/{os.environ['GITHUB_RUN_ID']}",
-              "recovery_instruction": "verify the merged VERSION identity; retry Release with the same merge SHA only after identity is confirmed",
+              "recovery_instruction": recovery_instruction,
               "identity_resolution_failed": True,
-              "identity_failure_kind": os.environ["FAILURE_KIND"],
+              "identity_failure_kind": failure_kind,
               "repository": os.environ["GITHUB_REPOSITORY"],
               "workflow": "Release",
               "event": os.environ["GITHUB_EVENT_NAME"],
@@ -477,6 +484,13 @@ jobs:
           ref: ${{ env.MERGE_SHA }}
           fetch-depth: 0
 
+      - name: Checkout trusted release helpers
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          path: .workflow-src
+          fetch-depth: 1
+
       - name: Verify immutable release artifact digest
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -485,9 +499,10 @@ jobs:
           set -euo pipefail
           test -n "${EXPECTED_DIGEST}"
           artifact_name="release-bundle-${MERGE_SHA}"
-          metadata="$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${ARTIFACT_RUN_ID}/artifacts?per_page=100")"
-          matches="$(jq --arg name "${artifact_name}" --arg digest "${EXPECTED_DIGEST}" '[.artifacts[] | select(.name == $name and .expired == false and .digest == $digest)] | length' <<<"${metadata}")"
-          test "${matches}" = "1" || { echo "release artifact digest no longer matches the immutable identity bundle" >&2; exit 1; }
+          gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${ARTIFACT_RUN_ID}/artifacts?per_page=100" \
+            | python3 .workflow-src/.github/scripts/check_release_artifact_digest.py \
+                --artifact-name "${artifact_name}" \
+                --expected-digest "${EXPECTED_DIGEST}"
 
       - name: Download identity-bound release bundle
         uses: actions/download-artifact@v4
