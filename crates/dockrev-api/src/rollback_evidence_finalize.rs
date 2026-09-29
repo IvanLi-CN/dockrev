@@ -174,7 +174,7 @@ pub(crate) fn record_spool_setup_failure(
             "compression": "zstd",
             "archiveSizeBytes": null,
             "services": [],
-            "errors": [error]
+            "errors": bounded_summary_errors(vec![error.to_owned()], false)
         }),
     );
 }
@@ -330,6 +330,24 @@ mod tests {
             serde_json::json!([])
         );
         assert_eq!(summary["rollbackEvidence"]["errors"][0], error);
+    }
+
+    #[test]
+    fn long_spool_setup_failure_is_bounded_and_marked_as_truncated() {
+        let error = bounded_error("spool setup", &anyhow::anyhow!("x".repeat(700)));
+        let mut summary = serde_json::json!({"status":"rolled_back"});
+
+        record_spool_setup_failure(&mut summary, Some(&error), true);
+
+        let errors = summary["rollbackEvidence"]["errors"]
+            .as_array()
+            .expect("summary errors");
+        let error = errors[0].as_str().expect("spool setup error");
+        assert!(error.chars().count() <= 512);
+        assert!(errors.iter().any(|error| {
+            error.as_str()
+                == Some("rollback evidence summary metadata was truncated to remain bounded")
+        }));
     }
 
     #[test]
