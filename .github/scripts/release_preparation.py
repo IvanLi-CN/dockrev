@@ -259,7 +259,12 @@ def create_identity_commit(
             "expectedHeadOid": source_sha,
             "message": {"headline": "chore(release): prepare VERSION", "body": body},
             "fileChanges": {
-                "additions": [{"path": "VERSION", "contents": decision["version"] + "\n"}]
+                "additions": [{
+                    "path": "VERSION",
+                    "contents": base64.b64encode(
+                        (decision["version"] + "\n").encode("utf-8")
+                    ).decode("ascii"),
+                }]
             },
         }
     }

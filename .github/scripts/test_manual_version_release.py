@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import base64
 import json
 import os
 import tempfile
@@ -116,6 +117,20 @@ Product-Version: 0.81.1
 Release-Baseline-Version: 0.81.0
 Release-Intent: patch
 """
+
+with patch.object(
+    release_preparation,
+    "graphql",
+    return_value={"createCommitOnBranch": {"commit": {"oid": release_identity_sha}}},
+) as create_commit:
+    created_identity = release_preparation.create_identity_commit(
+        "https://api.github.test", "token", "IvanLi-CN/dockrev",
+        "release-preparation/v0.81.1", old_main_sha,
+        release_policy.compute_target("0.81.0", "patch"),
+    )
+assert created_identity == release_identity_sha
+encoded_version = create_commit.call_args.args[3]["input"]["fileChanges"]["additions"][0]["contents"]
+assert base64.b64decode(encoded_version, validate=True) == b"0.81.1\n"
 
 def identity_api(_api_root, _token, _method, path, _payload=None):
     if path.endswith(f"/commits/{release_identity_sha}"):
