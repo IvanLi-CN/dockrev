@@ -544,7 +544,7 @@ jobs:
           set -euo pipefail
           expected_identity_sha="$(jq -r '.identity_sha // empty' <<<"${EXPECTED_IDENTITY_JSON}")"
           [[ "${expected_identity_sha}" =~ ^[0-9a-f]{40}$ ]] || { echo "resolved identity is missing identity_sha" >&2; exit 2; }
-          identity_ref_name="release-preparation/v${VERSION}"
+          identity_ref_name="release-reservation/v${VERSION}"
           live_identity_sha="$(gh api "repos/${GITHUB_REPOSITORY}/git/ref/heads/${identity_ref_name}" --jq '.object.sha')"
           test "${live_identity_sha}" = "${expected_identity_sha}"
 

@@ -143,7 +143,8 @@ release = read(".github/workflows/release.yml")
 assert "branches: [main]" in release
 assert "merge_sha:" in release and "recovery_reason:" in release
 assert "cancel-in-progress: false" in release
-assert "release-preparation/v${VERSION}" in release
+assert 'identity_ref_name="release-reservation/v${VERSION}"' in release
+assert 'identity_ref_name="release-preparation/v${VERSION}"' not in release
 assert "release-bundle-${{ needs.identity.outputs.merge_sha }}" in release
 assert "release-bundle-${{ env.MERGE_SHA }}" in release
 assert "ARTIFACT_DIGEST" in release and "artifact digest" in release.lower()
