@@ -555,6 +555,45 @@ cross_host_redirect = redirect_handler.redirect_request(
 )
 assert cross_host_redirect.get_header("Authorization") is None
 
+
+class RedirectProbeResponse:
+    headers = SimpleNamespace(get_content_charset=lambda: "utf-8")
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *_args):
+        return False
+
+    def read(self):
+        return b"{}"
+
+
+class RedirectProbeOpener:
+    def __init__(self, handler_type):
+        self.handler = handler_type()
+
+    def open(self, request, timeout):
+        assert timeout == 30
+        assert request.get_header("Authorization") == "Bearer test-token"
+        redirected = self.handler.redirect_request(
+            request, None, 302, "Found", {},
+            "http://api.github.test/repos/IvanLi-CN/dockrev/actions/runs/102",
+        )
+        assert redirected.get_header("Authorization") is None
+        return RedirectProbeResponse()
+
+
+with patch.object(
+    urllib.request, "build_opener", side_effect=RedirectProbeOpener,
+) as build_api_opener, patch.object(
+    urllib.request, "urlopen", side_effect=AssertionError("api_json bypassed redirect-safe opener"),
+):
+    assert release_recovery_artifact.api_json(
+        "https://api.github.test", "test-token", "/repos/IvanLi-CN/dockrev/actions/runs/102",
+    ) == {}
+    build_api_opener.assert_called_once_with(release_recovery_artifact.ArtifactRedirectHandler)
+
 recovery_merge_sha = "d" * 40
 recovery_context_artifact = {
     "id": 902,

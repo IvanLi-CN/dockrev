@@ -191,8 +191,9 @@ def api_json(api_root: str, token: str, path: str) -> Any:
             "User-Agent": "dockrev-release-recovery",
         },
     )
+    opener = urllib.request.build_opener(ArtifactRedirectHandler)
     try:
-        with urllib.request.urlopen(request, timeout=30) as response:
+        with opener.open(request, timeout=30) as response:
             return json.loads(response.read().decode(response.headers.get_content_charset() or "utf-8"))
     except urllib.error.HTTPError as error:
         detail = error.read().decode(errors="replace")
