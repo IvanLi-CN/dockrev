@@ -1,4 +1,5 @@
 use super::*;
+use crate::runner::{CommandOutput, CommandSpec, RawCommandOutput};
 use tokio::io::AsyncWriteExt;
 
 #[tokio::test]
@@ -86,4 +87,156 @@ pub(super) async fn archive_member(archive: &Path, member: &str) -> Vec<u8> {
         .expect("tar input should be written");
     assert!(extracted.status.success());
     extracted.stdout
+}
+
+pub(super) struct FailedLogCommandRunner;
+
+#[async_trait::async_trait]
+impl CommandRunner for FailedLogCommandRunner {
+    async fn run(&self, _spec: CommandSpec, _timeout: Duration) -> anyhow::Result<CommandOutput> {
+        Ok(CommandOutput {
+            status: 0,
+            stdout: String::new(),
+            stderr: String::new(),
+        })
+    }
+
+    async fn run_raw(
+        &self,
+        _spec: CommandSpec,
+        _timeout: Duration,
+    ) -> anyhow::Result<RawCommandOutput> {
+        Ok(RawCommandOutput {
+            status: 0,
+            stdout: br#"{"Status":"running","Health":{"Log":[]}}"#.to_vec(),
+            stderr: Vec::new(),
+        })
+    }
+
+    async fn run_raw_to_file(
+        &self,
+        _spec: CommandSpec,
+        _timeout: Duration,
+        output_path: &Path,
+    ) -> anyhow::Result<RawFileCommandOutput> {
+        let partial = b"partial raw output before nonzero exit\xff";
+        tokio::fs::write(output_path, partial).await?;
+        Ok(RawFileCommandOutput {
+            status: 2,
+            bytes_written: partial.len() as u64,
+            stderr: Vec::new(),
+            eof_reached: true,
+            timed_out: false,
+        })
+    }
+}
+
+#[tokio::test]
+async fn nonzero_log_exit_keeps_partial_file_and_records_incomplete_status() {
+    let root =
+        std::env::temp_dir().join(format!("dockrev-rollback-log-exit-{}", ulid::Ulid::new()));
+    fs::create_dir_all(&root).expect("test root");
+    let context =
+        RollbackEvidenceContext::new("job-log-exit", &root.join("dockrev.sqlite")).expect("spool");
+
+    let metadata = context
+        .capture_failure(
+            &FailedLogCommandRunner,
+            &DockerRunnerConfig::default(),
+            "service-a",
+            "candidate-a",
+            "unhealthy",
+            None,
+            None,
+        )
+        .await;
+
+    assert!(metadata.logs_truncated);
+    assert!(
+        metadata
+            .capture_errors
+            .iter()
+            .any(|error| error == "logs command exited with 2")
+    );
+    assert_eq!(
+        tokio::fs::read(
+            context
+                .job_spool_path()
+                .join("service-a/candidate-a/container.log")
+        )
+        .await
+        .expect("partial log should be retained"),
+        b"partial raw output before nonzero exit\xff"
+    );
+
+    let _ = tokio::fs::remove_dir_all(root).await;
+}
+
+#[tokio::test]
+async fn recovery_cleans_spool_without_overwriting_an_existing_archive() {
+    let root = std::env::temp_dir().join(format!(
+        "dockrev-rollback-preserve-archive-{}",
+        ulid::Ulid::new()
+    ));
+    fs::create_dir_all(&root).expect("test root");
+    let db_path = root.join("dockrev.sqlite");
+    let db = crate::db::Db::open(&db_path).await.expect("db");
+    let job_id = "job-existing-archive";
+    db.insert_job(
+        crate::api::types::JobRecord::new_running(
+            job_id.to_string(),
+            crate::api::types::JobType::Update,
+            crate::api::types::JobScope::Service,
+            None,
+            None,
+            "2026-08-28T00:00:00Z",
+        )
+        .to_db(),
+    )
+    .await
+    .expect("insert job");
+    let original_archive = b"previously committed archive bytes";
+    db.finish_job_with_archive(
+        job_id,
+        "rolled_back",
+        "2026-08-28T00:05:00Z",
+        &serde_json::json!({
+            "rollbackEvidence": {
+                "status": "available",
+                "archiveSizeBytes": original_archive.len()
+            }
+        }),
+        Some(original_archive.to_vec()),
+    )
+    .await
+    .expect("commit archive");
+
+    let spool = spool_root(&db_path).join(job_id);
+    tokio::fs::create_dir_all(spool.join("service-a/candidate-a"))
+        .await
+        .expect("spool");
+    write_manifest(
+        &spool,
+        &[EvidenceMetadata {
+            service_id: "service-a".to_string(),
+            candidate_id: "candidate-a".to_string(),
+            health_status: "unhealthy".to_string(),
+            ..Default::default()
+        }],
+    )
+    .await
+    .expect("manifest");
+
+    recover_orphaned_evidence(&db, &db_path).await;
+
+    assert_eq!(
+        db.get_rollback_evidence_archive(job_id)
+            .await
+            .expect("load archive")
+            .expect("archive exists"),
+        original_archive
+    );
+    assert!(!spool.exists());
+
+    let _ = tokio::fs::remove_dir_all(root).await;
 }

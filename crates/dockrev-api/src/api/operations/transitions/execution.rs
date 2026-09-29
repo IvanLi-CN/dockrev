@@ -1417,7 +1417,7 @@ pub(crate) async fn run_update_job(
             evidence_setup_error.as_deref(),
             job_kind == TransitionJobKind::Update
                 && req.mode.as_str() == "apply"
-                && transition_failure_step(job_kind, &stack_summaries) == Some("healthcheck"),
+                && transition_has_failure_step(job_kind, &stack_summaries, "healthcheck"),
         );
         None
     };

@@ -45,6 +45,32 @@ fn backup_and_pull_progress_are_weighted_without_terminal_jump() {
     assert_eq!(combined_backup_pull_percent(1, 2, &pull, &backup), 87);
 }
 
+#[test]
+fn evidence_setup_failure_checks_healthchecks_across_all_stack_summaries() {
+    let summaries = vec![
+        serde_json::json!({"update":{"failureStep":"pull_services"}}),
+        serde_json::json!({"update":{"failureStep":"healthcheck"}}),
+    ];
+
+    assert_eq!(
+        transition_failure_step(TransitionJobKind::Update, &summaries),
+        Some("pull_services")
+    );
+    assert!(transition_has_failure_step(
+        TransitionJobKind::Update,
+        &summaries,
+        "healthcheck"
+    ));
+
+    let mut summary = serde_json::json!({"status":"rolled_back"});
+    crate::rollback_evidence_finalize::record_spool_setup_failure(
+        &mut summary,
+        Some("spool setup: permission denied"),
+        transition_has_failure_step(TransitionJobKind::Update, &summaries, "healthcheck"),
+    );
+    assert_eq!(summary["rollbackEvidence"]["status"], "incomplete");
+}
+
 #[tokio::test]
 async fn evidence_archive_persistence_failure_still_finishes_job_without_deleting_evidence() {
     let root =

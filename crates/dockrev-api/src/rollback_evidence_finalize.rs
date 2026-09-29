@@ -31,7 +31,7 @@ pub(crate) async fn finish_job_with_evidence_archive(
         return Ok(notification_enabled);
     };
 
-    let (notification_enabled, archive_committed) = match db
+    let notification_enabled = match db
         .finish_job_with_archive_file_and_settlement_and_notification(
             job_id,
             status,
@@ -43,47 +43,71 @@ pub(crate) async fn finish_job_with_evidence_archive(
         )
         .await
     {
-        Ok(notification_enabled) => {
-            let archive_committed = db.rollback_evidence_archive_size(job_id).await?.is_some();
-            (notification_enabled, archive_committed)
-        }
+        Ok(notification_enabled) => notification_enabled,
         Err(error) => {
-            match archive_commit_is_visible(db, job_id, status, finished_at).await {
-                Ok(true) => {
-                    if let Some(evidence) = evidence {
-                        evidence.cleanup_after_commit().await;
-                    }
-                    return Err(error.context(
-                        "job and rollback evidence committed before a post-commit failure",
-                    ));
-                }
-                Ok(false) => {}
-                Err(inspection_error) => {
-                    return Err(error.context(format!(
-                        "could not verify rollback evidence commit after finish error: {inspection_error:#}"
-                    )));
-                }
-            }
-            record_archive_persistence_failure(summary_json, &error);
-            let notification_enabled = db
-                .finish_job_with_archive_file_and_settlement_and_notification(
-                    job_id,
-                    status,
-                    finished_at,
-                    summary_json,
-                    None,
-                    settlements,
-                    notification,
-                )
-                .await
-                .context("finish job after rollback evidence archive persistence failure")?;
-            (notification_enabled, false)
+            return finish_after_archive_error(
+                db,
+                job_id,
+                status,
+                finished_at,
+                summary_json,
+                evidence,
+                settlements,
+                notification,
+                error,
+            )
+            .await;
         }
     };
-    if archive_committed && let Some(evidence) = evidence {
+    if db.rollback_evidence_archive_size(job_id).await?.is_some()
+        && let Some(evidence) = evidence
+    {
         evidence.cleanup_after_commit().await;
     }
     Ok(notification_enabled)
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn finish_after_archive_error(
+    db: &crate::db::Db,
+    job_id: &str,
+    status: &str,
+    finished_at: &str,
+    summary_json: &mut serde_json::Value,
+    evidence: Option<&RollbackEvidenceContext>,
+    settlements: Option<&[crate::db::ServiceAcceptedStateSettlement]>,
+    notification: Option<&crate::db::NotificationItemDraft>,
+    error: anyhow::Error,
+) -> anyhow::Result<Option<bool>> {
+    match archive_commit_is_visible(db, job_id, status, finished_at).await {
+        Ok(true) => {
+            if let Some(evidence) = evidence {
+                evidence.cleanup_after_commit().await;
+            }
+            return Err(
+                error.context("job and rollback evidence committed before a post-commit failure")
+            );
+        }
+        Ok(false) => {}
+        Err(inspection_error) => {
+            return Err(error.context(format!(
+                "could not verify rollback evidence commit after finish error: {inspection_error:#}"
+            )));
+        }
+    }
+
+    record_archive_persistence_failure(summary_json, &error);
+    db.finish_job_with_archive_file_and_settlement_and_notification(
+        job_id,
+        status,
+        finished_at,
+        summary_json,
+        None,
+        settlements,
+        notification,
+    )
+    .await
+    .context("finish job after rollback evidence archive persistence failure")
 }
 
 async fn archive_commit_is_visible(
@@ -266,5 +290,121 @@ mod tests {
             serde_json::json!([])
         );
         assert_eq!(summary["rollbackEvidence"]["errors"][0], error);
+    }
+
+    #[tokio::test]
+    async fn spool_initialization_error_is_reported_in_healthcheck_failure_summary() {
+        let root = std::env::temp_dir().join(format!(
+            "dockrev-evidence-spool-setup-{}",
+            ulid::Ulid::new()
+        ));
+        tokio::fs::create_dir_all(&root).await.expect("test root");
+        let spool_root = root.join("rollback-evidence-spool");
+        tokio::fs::write(&spool_root, b"blocks directory creation")
+            .await
+            .expect("spool blocker");
+
+        let (context, setup_error) =
+            initialize_evidence_context(true, "job-spool-setup", &root.join("dockrev.sqlite"));
+        assert!(context.is_none());
+        let error = setup_error.expect("setup error");
+        assert!(error.starts_with("spool setup:"));
+
+        let mut summary = serde_json::json!({"status":"rolled_back"});
+        record_spool_setup_failure(&mut summary, Some(&error), true);
+        assert_eq!(summary["rollbackEvidence"]["status"], "incomplete");
+        assert_eq!(summary["rollbackEvidence"]["errors"][0], error);
+
+        let _ = tokio::fs::remove_dir_all(root).await;
+    }
+
+    #[tokio::test]
+    async fn postcommit_error_keeps_committed_summary_and_cleans_temporary_evidence() {
+        let root =
+            std::env::temp_dir().join(format!("dockrev-evidence-postcommit-{}", ulid::Ulid::new()));
+        tokio::fs::create_dir_all(&root).await.expect("test root");
+        let db_path = root.join("dockrev.sqlite");
+        let db = crate::db::Db::open(&db_path).await.expect("db");
+        let job_id = "job-evidence-postcommit";
+        db.insert_job(
+            crate::api::types::JobRecord::new_running(
+                job_id.to_string(),
+                crate::api::types::JobType::Update,
+                crate::api::types::JobScope::Service,
+                None,
+                None,
+                "2026-08-28T00:00:00Z",
+            )
+            .to_db(),
+        )
+        .await
+        .expect("insert job");
+        let evidence = RollbackEvidenceContext::new(job_id, &db_path).expect("evidence context");
+        tokio::fs::create_dir_all(evidence.job_spool_path())
+            .await
+            .expect("evidence spool");
+        tokio::fs::write(
+            evidence.job_spool_path().join("container.log"),
+            b"raw candidate log",
+        )
+        .await
+        .expect("candidate log");
+        let archive_path = evidence.archive_path();
+        tokio::fs::write(&archive_path, b"committed archive")
+            .await
+            .expect("archive");
+        let summary = serde_json::json!({
+            "rollbackEvidence": {
+                "status": "available",
+                "archiveSizeBytes": b"committed archive".len(),
+                "errors": []
+            }
+        });
+        db.finish_job_with_archive_file_and_settlement_and_notification(
+            job_id,
+            "rolled_back",
+            "2026-08-28T00:05:00Z",
+            &summary,
+            Some(archive_path.clone()),
+            None,
+            None,
+        )
+        .await
+        .expect("commit archive");
+
+        let mut summary_after_error = summary.clone();
+        let result = finish_after_archive_error(
+            &db,
+            job_id,
+            "rolled_back",
+            "2026-08-28T00:05:00Z",
+            &mut summary_after_error,
+            Some(&evidence),
+            None,
+            None,
+            anyhow::anyhow!("injected post-commit failure"),
+        )
+        .await;
+
+        let error = result.expect_err("post-commit failure must propagate");
+        assert!(
+            error
+                .to_string()
+                .contains("committed before a post-commit failure")
+        );
+        let job = db.get_job(job_id).await.expect("load job").expect("job");
+        assert_eq!(job.status, "rolled_back");
+        assert_eq!(job.summary_json["rollbackEvidence"]["status"], "available");
+        assert_eq!(
+            db.get_rollback_evidence_archive(job_id)
+                .await
+                .expect("load committed archive")
+                .expect("committed archive"),
+            b"committed archive"
+        );
+        assert!(!evidence.job_spool_path().exists());
+        assert!(!archive_path.exists());
+
+        let _ = tokio::fs::remove_dir_all(root).await;
     }
 }

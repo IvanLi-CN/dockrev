@@ -314,6 +314,21 @@ services:
 
     let job = wait_for_job_terminal(&state, &job_id).await;
     assert_eq!(job.status, "success");
+    assert!(job.summary_json.get("rollbackEvidence").is_none());
+    assert!(state
+        .db
+        .get_rollback_evidence_archive(&job_id)
+        .await
+        .unwrap()
+        .is_none());
+    let evidence_spool = state
+        .config
+        .db_path
+        .parent()
+        .unwrap()
+        .join("rollback-evidence-spool");
+    assert!(!evidence_spool.join(&job_id).exists());
+    assert!(!evidence_spool.join(&job_id).with_extension("tar.zst").exists());
 
     let stack = state.db.get_stack(&stack_id).await.unwrap().unwrap();
     let service = stack.services.iter().find(|svc| svc.name == "web").unwrap();

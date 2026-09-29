@@ -496,17 +496,22 @@ async fn recover_evidence(db: &crate::db::Db, db_path: &Path, allow_interrupted_
         {
             continue;
         }
-        if db
-            .rollback_evidence_archive_size(job_id)
-            .await
-            .ok()
-            .flatten()
-            .is_some()
-        {
-            let _ = tokio::fs::remove_dir_all(&spool).await;
-            let _ = tokio::fs::remove_file(spool.with_extension("tar.zst")).await;
-            let _ = tokio::fs::remove_file(spool.with_extension("tar.zst.part")).await;
-            continue;
+        match db.rollback_evidence_archive_size(job_id).await {
+            Ok(Some(_)) => {
+                let _ = tokio::fs::remove_dir_all(&spool).await;
+                let _ = tokio::fs::remove_file(spool.with_extension("tar.zst")).await;
+                let _ = tokio::fs::remove_file(spool.with_extension("tar.zst.part")).await;
+                continue;
+            }
+            Ok(None) => {}
+            Err(error) => {
+                tracing::warn!(
+                    job_id = %job_id,
+                    error = %error,
+                    "preserving rollback evidence after archive lookup failure"
+                );
+                continue;
+            }
         }
         let archive_path = spool.with_extension("tar.zst");
         let part_path = spool.with_extension("tar.zst.part");
