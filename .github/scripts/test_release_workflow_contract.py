@@ -73,9 +73,10 @@ for expected in quality["expected_pr_workflows"]:
 assert all(item["workflow"] != "Release Preparation" for item in quality["expected_pr_workflows"])
 
 completion_workflow = read(".github/workflows/release-completion-pr.yml")
-assert "pull_request_target:" in completion_workflow and "pull_request:" in completion_workflow
-assert "github.event.pull_request.number == 421" in completion_workflow
-assert "github.event.pull_request.base.sha == '43388ae4fa915c64bafaf7643ee2717c336d791e'" in completion_workflow
+assert "pull_request_target:" in completion_workflow and "\n  pull_request:" not in completion_workflow
+assert "github.event.pull_request.number == 421" not in completion_workflow
+assert "github.event.pull_request.head.sha" not in completion_workflow.split("Checkout trusted release helpers", 1)[1].split("- name: Verify", 1)[0]
+assert "ref: ${{ github.workflow_sha }}" in completion_workflow
 assert "name: Manual Version Release Completion" in completion_workflow
 assert "labeled" not in completion_workflow and "unlabeled" not in completion_workflow
 assert "--pull-number" in completion_workflow

@@ -43,6 +43,9 @@ unsupported prerelease channel. Other values MUST fail closed.
 Every new preparation MUST read the latest `main:VERSION` and use it as the
 only baseline. For baseline `X.Y.Z`, `major` MUST calculate `(X+1).0.0`,
 `minor` MUST calculate `X.(Y+1).0`, and `patch` MUST calculate `X.Y.(Z+1)`.
+These numeric calculations MUST use the baseline's numeric core whether the
+baseline is stable or prerelease; prerelease channel progression applies to
+prerelease inputs.
 Missing, empty, or invalid `VERSION` MUST fail closed. A valid root `VERSION`
 MUST be added through the protected mainline path before release preparation
 can run when the file does not exist.
@@ -65,8 +68,10 @@ transitions MUST fail. Prereleases MUST never advance stable `latest`.
 Preparation MUST freeze the observed main SHA, baseline, input, and target. It
 MUST create a signed, single-parent identity commit changing only root
 `VERSION`, and reserve the target version with one immutable ref directly to
-that commit. A repeated dispatch for the same target and unchanged baseline
-MUST reuse that identity; a reservation owned by another SHA MUST fail closed.
+that commit. Before reserving, preparation MUST confirm that `main:VERSION`
+still matches the frozen baseline and that no different release identity PR is
+open. A repeated dispatch for the same target and unchanged baseline MUST
+reuse that identity; a reservation owned by another SHA MUST fail closed.
 The identity MUST pass the existing main branch protection and `Release
 completion` gate. `Release` MUST publish only after that identity reaches
 `main`, and the next allocation MUST read the resulting main `VERSION`.

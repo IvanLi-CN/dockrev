@@ -30,6 +30,11 @@ For a baseline `X.Y.Z`, the numeric decisions calculate:
 | `minor` | `X.(Y+1).0` |
 | `patch` | `X.Y.(Z+1)` |
 
+Numeric decisions always calculate from the numeric core of the latest main
+`VERSION`, including when that baseline is a prerelease. An exact stable input
+must match one of those calculated targets or promote the current RC on its
+same core. The alpha/beta/RC progression applies to prerelease channel inputs.
+
 From a stable baseline, `alpha` and `beta` start at the next patch core with
 sequence `.1`. Alpha can increment or advance to beta. Beta can increment or
 advance to RC. RC can increment or promote to stable on the same core. A stable
@@ -42,11 +47,17 @@ must match a calculated numeric target or the same-core RC promotion.
 Preparation freezes the current main commit, baseline, input, and target. It
 creates a signed, single-parent commit that changes only root `VERSION`, then
 reserves that target with `release-reservation/v<VERSION>`. The
-`release-preparation/v<VERSION>` branch is opened as a PR to `main`; the
-existing branch protection and `Release completion` check remain the merge
-boundary. GitHub places pull request workflows created with `GITHUB_TOKEN` in
-an approval-required state; a user with write access must approve those runs
-from the PR before the checks can complete ([GitHub Actions event behavior](https://docs.github.com/en/actions/reference/workflows-and-actions/events-that-trigger-workflows)).
+`release-preparation/v<VERSION>` branch is opened as a PR to `main`. The
+checked-in `.github/quality-gates.json` declares `Review Policy Gate` and
+`Manual Version Release Completion`; the active repository ruleset still
+requires the legacy `Label Gate` and `Release completion` contexts, so the
+required-check migration remains a separate bootstrap constraint. The
+completion workflow uses `pull_request_target` and checks out
+`github.workflow_sha`, keeping its validation code tied to the workflow source
+instead of executing PR-head code. GitHub places pull request workflows created
+with `GITHUB_TOKEN` in an approval-required state; a user with write access
+must approve those runs from the PR before the checks can complete
+([GitHub Actions event behavior](https://docs.github.com/en/actions/reference/workflows-and-actions/events-that-trigger-workflows)).
 
 After the identity PR merges, `Release` resolves the signed provenance from the
 merged commit and rechecks the direct immutable reservation. It builds one

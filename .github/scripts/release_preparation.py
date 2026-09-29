@@ -109,6 +109,66 @@ def version_at_ref(api_root: str, token: str, repository: str, ref: str) -> str:
     return version
 
 
+def main_sha(api_root: str, token: str, repository: str) -> str:
+    owner, name = repository_parts(repository)
+    response = api_request(api_root, token, "GET", f"/repos/{owner}/{name}/git/ref/heads/main")
+    if not isinstance(response, dict):
+        raise PreparationError("main branch could not be read")
+    sha = str((response.get("object") or {}).get("sha", ""))
+    release_policy.validate_sha(sha, "main SHA")
+    return sha
+
+
+def open_release_preparation_pull_requests(
+    api_root: str, token: str, repository: str,
+) -> list[dict[str, Any]]:
+    owner, name = repository_parts(repository)
+    prefix = "release-preparation/v"
+    matches: list[dict[str, Any]] = []
+    page = 1
+    while True:
+        query = urllib.parse.urlencode({"state": "open", "base": "main", "per_page": 100, "page": page})
+        pulls = api_request(api_root, token, "GET", f"/repos/{owner}/{name}/pulls?{query}")
+        if not isinstance(pulls, list):
+            raise PreparationError("GitHub did not return the open pull request list")
+        for pull in pulls:
+            if not isinstance(pull, dict):
+                raise PreparationError("GitHub returned an invalid pull request entry")
+            head = pull.get("head") or {}
+            if pull.get("base", {}).get("ref") == "main" and str(head.get("ref", "")).startswith(prefix):
+                matches.append(pull)
+        if len(pulls) < 100:
+            return matches
+        page += 1
+
+
+def assert_no_competing_release_preparation(
+    api_root: str, token: str, repository: str, expected_branch: str,
+) -> None:
+    pulls = open_release_preparation_pull_requests(api_root, token, repository)
+    branches = [str((pull.get("head") or {}).get("ref", "")) for pull in pulls]
+    expected_count = branches.count(expected_branch)
+    if expected_count > 1:
+        raise PreparationError("multiple open PRs exist for one release identity branch")
+    competing = sorted(set(branch for branch in branches if branch != expected_branch))
+    if competing:
+        raise PreparationError(
+            "another release identity PR is open; finish it before preparing a new version: "
+            + ", ".join(competing)
+        )
+
+
+def assert_baseline_current(
+    api_root: str, token: str, repository: str, baseline: str,
+) -> None:
+    latest_sha = main_sha(api_root, token, repository)
+    latest_baseline = version_at_ref(api_root, token, repository, latest_sha)
+    if latest_baseline != baseline:
+        raise PreparationError(
+            f"main:VERSION changed during release preparation ({baseline} -> {latest_baseline}); retry from the new baseline"
+        )
+
+
 def inspect_identity(
     api_root: str, token: str, repository: str, identity_sha: str,
     main_sha: str, baseline: str, decision: dict[str, str],
@@ -243,15 +303,11 @@ def find_or_create_pull_request(
 
 def prepare(args: argparse.Namespace) -> dict[str, Any]:
     release_policy.load_policy()
-    owner, name = repository_parts(args.repository)
-    main_ref = api_request(args.api_root, args.token, "GET", f"/repos/{owner}/{name}/git/ref/heads/main")
-    if not isinstance(main_ref, dict):
-        raise PreparationError("main branch could not be read")
-    source_sha = str((main_ref.get("object") or {}).get("sha", ""))
-    release_policy.validate_sha(source_sha, "main SHA")
+    source_sha = main_sha(args.api_root, args.token, args.repository)
     baseline = version_at_ref(args.api_root, args.token, args.repository, source_sha)
     decision = release_policy.compute_target(baseline, args.version)
     branch = f"release-preparation/v{decision['version']}"
+    assert_no_competing_release_preparation(args.api_root, args.token, args.repository, branch)
 
     live_branch_sha = branch_ref(args.api_root, args.token, args.repository, branch)
     if live_branch_sha is None:
@@ -266,6 +322,8 @@ def prepare(args: argparse.Namespace) -> dict[str, Any]:
         args.api_root, args.token, args.repository, identity_sha,
         source_sha, baseline, decision,
     )
+    assert_baseline_current(args.api_root, args.token, args.repository, baseline)
+    assert_no_competing_release_preparation(args.api_root, args.token, args.repository, branch)
     reserve_version(args.api_root, args.token, args.repository, decision["version"], identity_sha)
     pull = find_or_create_pull_request(
         args.api_root, args.token, args.repository, branch, decision["version"], identity_sha
