@@ -59,10 +59,9 @@ pub(crate) async fn finish_job_with_evidence_archive(
             .await;
         }
     };
-    if db.rollback_evidence_archive_size(job_id).await?.is_some()
-        && let Some(evidence) = evidence
-    {
-        evidence.cleanup_after_commit().await;
+    if let Some(evidence) = evidence {
+        let archive_lookup = db.rollback_evidence_archive_size(job_id).await;
+        cleanup_evidence_after_archive_lookup(job_id, Some(evidence), archive_lookup).await;
     }
     Ok(notification_enabled)
 }
@@ -207,6 +206,26 @@ fn bounded_error(prefix: &str, error: &anyhow::Error) -> String {
         bounded.push_str("...");
     }
     bounded
+}
+
+async fn cleanup_evidence_after_archive_lookup(
+    job_id: &str,
+    evidence: Option<&RollbackEvidenceContext>,
+    archive_lookup: anyhow::Result<Option<u64>>,
+) {
+    match (evidence, archive_lookup) {
+        (Some(evidence), Ok(Some(_))) => evidence.cleanup_after_commit().await,
+        (Some(_), Ok(None)) => tracing::warn!(
+            job_id = %job_id,
+            "preserving rollback evidence because the committed archive is absent"
+        ),
+        (Some(_), Err(error)) => tracing::warn!(
+            job_id = %job_id,
+            error = %error,
+            "preserving rollback evidence after post-commit archive lookup failure"
+        ),
+        (None, _) => {}
+    }
 }
 
 #[cfg(test)]
@@ -405,6 +424,41 @@ mod tests {
         assert!(!evidence.job_spool_path().exists());
         assert!(!archive_path.exists());
 
+        let _ = tokio::fs::remove_dir_all(root).await;
+    }
+
+    #[tokio::test]
+    async fn postcommit_archive_lookup_error_preserves_spool_without_failing_cleanup() {
+        let root = std::env::temp_dir().join(format!(
+            "dockrev-evidence-lookup-error-{}",
+            ulid::Ulid::new()
+        ));
+        tokio::fs::create_dir_all(&root).await.expect("test root");
+        let evidence =
+            RollbackEvidenceContext::new("job-lookup-error", &root.join("dockrev.sqlite"))
+                .expect("evidence context");
+        tokio::fs::create_dir_all(evidence.job_spool_path())
+            .await
+            .expect("spool");
+        tokio::fs::write(
+            evidence.job_spool_path().join("container.log"),
+            b"recoverable candidate log",
+        )
+        .await
+        .expect("candidate log");
+        tokio::fs::write(evidence.archive_path(), b"recoverable archive")
+            .await
+            .expect("archive");
+
+        cleanup_evidence_after_archive_lookup(
+            "job-lookup-error",
+            Some(&evidence),
+            Err(anyhow::anyhow!("injected database lookup failure")),
+        )
+        .await;
+
+        assert!(evidence.job_spool_path().exists());
+        assert!(evidence.archive_path().exists());
         let _ = tokio::fs::remove_dir_all(root).await;
     }
 }

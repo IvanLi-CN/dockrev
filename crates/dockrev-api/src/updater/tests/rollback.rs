@@ -119,6 +119,7 @@ struct HealthRollbackRunner {
     step: Mutex<usize>,
     events: Mutex<Vec<&'static str>>,
     timed_out: bool,
+    fail_rollback_image_inspect: bool,
     expected_managed_override: Option<String>,
 }
 
@@ -285,7 +286,7 @@ impl CommandRunner for HealthRollbackRunner {
                 assert_eq!(spec.program, "docker-compose");
                 assert!(args_end_with(
                     &spec.args,
-                    &["up", "-d", "--pull", "never", "web"]
+                    &["up", "-d", "--pull", "never", "--no-deps", "web"]
                 ));
                 CommandOutput {
                     status: 0,
@@ -331,6 +332,10 @@ impl CommandRunner for HealthRollbackRunner {
                         .map(|s| s.to_string())
                         .collect::<Vec<_>>()
                 );
+                if self.fail_rollback_image_inspect {
+                    *step += 1;
+                    return Err(anyhow::anyhow!("injected post-healthcheck inspect failure"));
+                }
                 CommandOutput {
                     status: 0,
                     stdout: "sha256:old\n".to_string(),
@@ -378,6 +383,46 @@ impl CommandRunner for HealthRollbackRunner {
 }
 
 #[tokio::test]
+async fn healthcheck_failure_signal_survives_a_later_update_error() {
+    let stack = single_service_stack("ghcr.io/org/web:1.0", None);
+    let runner = HealthRollbackRunner {
+        fail_rollback_image_inspect: true,
+        ..Default::default()
+    };
+    let signal = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let result = run_update_job_with_gate_using_root_unlocked(
+        &runner,
+        "docker-compose",
+        None,
+        IdempotentRetryPolicy {
+            max_attempts: 1,
+            base_ms: 1,
+            max_ms: 2,
+        },
+        &stack,
+        &JobScope::Service,
+        Some("svc_1"),
+        "live",
+        None,
+        false,
+        "ui",
+        None,
+        None,
+        false,
+        &[],
+        None,
+        None,
+        None,
+        Some(signal.clone()),
+    )
+    .await;
+
+    assert!(result.is_err());
+    assert!(signal.load(std::sync::atomic::Ordering::Relaxed));
+    assert_eq!(*runner.events.lock().unwrap(), vec!["rollback"]);
+}
+
+#[tokio::test]
 async fn healthcheck_failure_rolls_back_with_attempted_and_final_digests() {
     let stack = single_service_stack("ghcr.io/org/web:1.0", None);
     let runner = HealthRollbackRunner {
@@ -387,6 +432,7 @@ async fn healthcheck_failure_rolls_back_with_attempted_and_final_digests() {
     let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<UpdateProgressEvent>();
     let root = std::env::temp_dir().join(format!("dockrev-health-evidence-{}", ulid::Ulid::new()));
     std::fs::create_dir_all(&root).unwrap();
+    let healthcheck_failure_signal = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
     let evidence = crate::rollback_evidence::RollbackEvidenceContext::new(
         "job-health-failure",
         &root.join("dockrev.sqlite"),
@@ -416,12 +462,13 @@ async fn healthcheck_failure_rolls_back_with_attempted_and_final_digests() {
         None,
         None,
         Some(evidence.clone()),
+        Some(healthcheck_failure_signal.clone()),
     )
     .await
     .unwrap();
 
     assert_eq!(outcome.status, "rolled_back");
-    assert!(outcome.healthcheck_failure_observed);
+    assert!(healthcheck_failure_signal.load(std::sync::atomic::Ordering::Relaxed));
     assert_eq!(
         outcome.summary_json["newDigests"]["svc_1"],
         json!("sha256:new")
@@ -621,7 +668,7 @@ impl CommandRunner for SyncTagRollbackRunner {
                 assert_eq!(spec.program, "docker-compose");
                 assert!(args_end_with(
                     &spec.args,
-                    &["up", "-d", "--pull", "never", "web"]
+                    &["up", "-d", "--pull", "never", "--no-deps", "web"]
                 ));
                 CommandOutput {
                     status: 0,

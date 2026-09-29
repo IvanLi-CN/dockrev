@@ -117,6 +117,56 @@ async fn claim_next_queued_job_filters_and_claims_in_fifo_order() {
 }
 
 #[tokio::test]
+async fn recovery_incomplete_metadata_never_replaces_a_committed_archive_summary() {
+    let db = Db::open(Path::new(":memory:")).await.unwrap();
+    db.insert_job(job(
+        "job-evidence-already-committed",
+        JobType::Update,
+        "running",
+        "2026-01-01T00:00:00Z",
+    ))
+    .await
+    .unwrap();
+    let committed_summary = serde_json::json!({
+        "rollbackEvidence": {"status": "available", "archiveSizeBytes": 7}
+    });
+    db.finish_job_with_archive(
+        "job-evidence-already-committed",
+        "rolled_back",
+        "2026-01-01T00:01:00Z",
+        &committed_summary,
+        Some(b"archive".to_vec()),
+    )
+    .await
+    .unwrap();
+
+    let updated = db
+        .mark_rollback_evidence_incomplete_if_archive_absent(
+            "job-evidence-already-committed",
+            &serde_json::json!({"status": "incomplete", "errors": ["recovery failed"]}),
+        )
+        .await
+        .unwrap();
+
+    assert!(!updated);
+    assert_eq!(
+        db.get_job("job-evidence-already-committed")
+            .await
+            .unwrap()
+            .unwrap()
+            .summary_json["rollbackEvidence"]["status"],
+        "available"
+    );
+    assert_eq!(
+        db.get_rollback_evidence_archive("job-evidence-already-committed")
+            .await
+            .unwrap()
+            .unwrap(),
+        b"archive"
+    );
+}
+
+#[tokio::test]
 async fn rollback_evidence_migration_and_recovery() {
     let root = std::env::temp_dir().join(format!("dockrev-job-evidence-{}", ulid::Ulid::new()));
     std::fs::create_dir_all(&root).unwrap();

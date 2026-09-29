@@ -70,6 +70,10 @@ version decisions remain in the `version` dispatch input and do not depend on
 PR labels. Do not report the source ruleset as migrated or remove its checks
 until the trusted target workflow is available on `main`.
 
+The completion check reports `not-applicable` for ordinary PRs with no
+`VERSION` change or release-identity trailers. `VERSION` changes without a
+valid release identity, and partial identity trailers, fail closed.
+
 After the identity PR merges, `Release` resolves the signed provenance from the
 merged commit and rechecks the direct immutable reservation. It builds one
 identity-bound bundle containing all architecture binaries, release archives,

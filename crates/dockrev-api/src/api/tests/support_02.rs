@@ -798,6 +798,7 @@ impl CommandRunner for HealthRollbackUpdateRunner {
                 "-d".to_string(),
                 "--pull".to_string(),
                 "never".to_string(),
+                "--no-deps".to_string(),
                 "web".to_string(),
             ]) =>
             {

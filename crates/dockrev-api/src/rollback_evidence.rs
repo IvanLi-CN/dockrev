@@ -18,11 +18,15 @@ use crate::{
 
 #[path = "rollback_evidence_log_status.rs"]
 mod log_status;
+#[path = "rollback_evidence_recovery.rs"]
+mod recovery;
+#[cfg(test)]
+pub(crate) use recovery::cleanup_orphaned_entry;
+pub(crate) use recovery::cleanup_orphaned_spools;
 
 const SPOOL_DIR_NAME: &str = "rollback-evidence-spool";
 const LOG_CAPTURE_TIMEOUT_SECONDS: u64 = 300;
 const CAPTURE_INTERRUPTED_REASON: &str = "logs capture interrupted before completion";
-static EVIDENCE_RECOVERY_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 
 #[cfg(test)]
 #[path = "rollback_evidence_test_support.rs"]
@@ -387,179 +391,12 @@ pub fn spool_root(db_path: &Path) -> PathBuf {
         .join(SPOOL_DIR_NAME)
 }
 
-pub async fn cleanup_orphaned_spools(db: &crate::db::Db, db_path: &Path) {
-    let root = spool_root(db_path);
-    let Ok(mut entries) = tokio::fs::read_dir(&root).await else {
-        return;
-    };
-    let _ = set_owner_only(&root);
-    while let Ok(Some(entry)) = entries.next_entry().await {
-        let path = entry.path();
-        let Ok(file_type) = entry.file_type().await else {
-            continue;
-        };
-        if file_type.is_file() {
-            let Some(name) = path.file_name().and_then(|name| name.to_str()) else {
-                continue;
-            };
-            let job_id = name
-                .strip_suffix(".tar.zst")
-                .or_else(|| name.strip_suffix(".tar.zst.part"));
-            if let Some(job_id) = job_id {
-                let lookup = db.get_job(job_id).await.map(|job| job.map(|_| ()));
-                cleanup_orphaned_entry(&path, false, lookup).await;
-            }
-            continue;
-        }
-        if !file_type.is_dir() {
-            continue;
-        }
-        let Some(job_id) = path.file_name().and_then(|name| name.to_str()) else {
-            continue;
-        };
-        let lookup = db.get_job(job_id).await.map(|job| job.map(|_| ()));
-        cleanup_orphaned_entry(&path, true, lookup).await;
-    }
-}
-
-async fn cleanup_orphaned_entry(
-    path: &Path,
-    is_directory: bool,
-    job_lookup: anyhow::Result<Option<()>>,
-) {
-    match job_lookup {
-        Ok(None) if is_directory => {
-            let _ = tokio::fs::remove_dir_all(path).await;
-            let _ = tokio::fs::remove_file(path.with_extension("tar.zst")).await;
-        }
-        Ok(None) => {
-            let _ = tokio::fs::remove_file(path).await;
-        }
-        Ok(Some(())) => {
-            if is_directory {
-                let _ = set_owner_only(path);
-            }
-        }
-        Err(error) => {
-            tracing::warn!(error = %error, "preserving rollback evidence after job lookup failure");
-            if is_directory {
-                let _ = set_owner_only(path);
-            }
-        }
-    }
-}
-
 pub async fn recover_orphaned_evidence(db: &crate::db::Db, db_path: &Path) {
-    Box::pin(recover_evidence(db, db_path, false)).await;
+    Box::pin(recovery::recover_evidence(db, db_path, false)).await;
 }
 
 pub async fn recover_startup_interrupted_evidence(db: &crate::db::Db, db_path: &Path) {
-    Box::pin(recover_evidence(db, db_path, true)).await;
-}
-
-async fn recover_evidence(db: &crate::db::Db, db_path: &Path, allow_interrupted_nonterminal: bool) {
-    let _guard = EVIDENCE_RECOVERY_LOCK.lock().await;
-    let root = spool_root(db_path);
-    let Ok(mut entries) = tokio::fs::read_dir(&root).await else {
-        return;
-    };
-    let _ = set_owner_only(&root);
-    while let Ok(Some(entry)) = entries.next_entry().await {
-        let spool = entry.path();
-        let Ok(file_type) = entry.file_type().await else {
-            continue;
-        };
-        if !file_type.is_dir() {
-            continue;
-        }
-        let Some(job_id) = spool.file_name().and_then(|name| name.to_str()) else {
-            continue;
-        };
-        let _ = set_owner_only(&spool);
-        let Some(job) = db.get_job(job_id).await.ok().flatten() else {
-            continue;
-        };
-        let terminal = matches!(
-            job.status.as_str(),
-            "success" | "failed" | "rolled_back" | "cancelled"
-        );
-        let manifest = spool.join("manifest.json");
-        let Ok(manifest_bytes) = tokio::fs::read(&manifest).await else {
-            continue;
-        };
-        let Ok(mut records) = serde_json::from_slice::<Vec<EvidenceMetadata>>(&manifest_bytes)
-        else {
-            continue;
-        };
-        let capture_interrupted = records.iter().any(|record| {
-            record
-                .capture_errors
-                .iter()
-                .any(|error| error == CAPTURE_INTERRUPTED_REASON)
-        });
-        if !(terminal || allow_interrupted_nonterminal && capture_interrupted) {
-            continue;
-        }
-        if Box::pin(recover_interrupted_capture(&spool, &mut records))
-            .await
-            .is_err()
-        {
-            continue;
-        }
-        match db.rollback_evidence_archive_size(job_id).await {
-            Ok(Some(_)) => {
-                let _ = tokio::fs::remove_dir_all(&spool).await;
-                let _ = tokio::fs::remove_file(spool.with_extension("tar.zst")).await;
-                let _ = tokio::fs::remove_file(spool.with_extension("tar.zst.part")).await;
-                continue;
-            }
-            Ok(None) => {}
-            Err(error) => {
-                tracing::warn!(
-                    job_id = %job_id,
-                    error = %error,
-                    "preserving rollback evidence after archive lookup failure"
-                );
-                continue;
-            }
-        }
-        let archive_path = spool.with_extension("tar.zst");
-        let part_path = spool.with_extension("tar.zst.part");
-        if archive_dir(&spool, &part_path, &archive_path)
-            .await
-            .is_err()
-        {
-            continue;
-        }
-        let Ok(archive_size_bytes) = tokio::fs::metadata(&archive_path)
-            .await
-            .map(|metadata| metadata.len())
-        else {
-            continue;
-        };
-        let summary = EvidenceSummary {
-            status: "available",
-            failed_candidates: records.len(),
-            archive_format: "tar",
-            compression: "zstd",
-            archive_size_bytes: Some(archive_size_bytes),
-            services: records,
-            errors: Vec::new(),
-        };
-        if db
-            .attach_rollback_evidence_archive_from_file(
-                job_id,
-                &archive_path,
-                &serde_json::to_value(&summary).unwrap_or_else(|_| serde_json::json!({})),
-            )
-            .await
-            .unwrap_or(false)
-        {
-            let _ = tokio::fs::remove_dir_all(&spool).await;
-            let _ = tokio::fs::remove_file(archive_path).await;
-            let _ = tokio::fs::remove_file(part_path).await;
-        }
-    }
+    Box::pin(recovery::recover_evidence(db, db_path, true)).await;
 }
 
 async fn recover_interrupted_capture(
@@ -1479,6 +1316,103 @@ mod tests {
 
         assert!(!evidence_root.join("deleted-job.tar.zst").exists());
         assert!(!evidence_root.join("deleted-job.tar.zst.part").exists());
+        let _ = tokio::fs::remove_dir_all(root).await;
+    }
+
+    #[tokio::test]
+    async fn recovery_archive_failure_records_incomplete_and_preserves_spool() {
+        let root = std::env::temp_dir().join(format!(
+            "dockrev-rollback-recovery-failure-{}",
+            ulid::Ulid::new()
+        ));
+        fs::create_dir_all(&root).expect("test root");
+        let db_path = root.join("dockrev.sqlite");
+        let db = crate::db::Db::open(&db_path).await.expect("db");
+        db.insert_job(
+            crate::api::types::JobRecord::new_running(
+                "job-recovery-failure".to_string(),
+                crate::api::types::JobType::Update,
+                crate::api::types::JobScope::Service,
+                None,
+                None,
+                "2026-08-28T00:00:00Z",
+            )
+            .to_db(),
+        )
+        .await
+        .expect("insert job");
+        db.finish_job(
+            "job-recovery-failure",
+            "failed",
+            "2026-08-28T00:01:00Z",
+            &serde_json::json!({"retained": "job summary"}),
+        )
+        .await
+        .expect("finish job");
+
+        let spool = spool_root(&db_path).join("job-recovery-failure");
+        let candidate = spool.join("service-a/candidate-a");
+        tokio::fs::create_dir_all(&candidate)
+            .await
+            .expect("candidate spool");
+        tokio::fs::write(
+            candidate.join("container.log"),
+            b"partial raw candidate logs",
+        )
+        .await
+        .expect("candidate log");
+        tokio::fs::write(candidate.join("state.json"), b"{}")
+            .await
+            .expect("candidate state");
+        tokio::fs::write(candidate.join("health.log"), b"[]")
+            .await
+            .expect("candidate health log");
+        write_manifest(
+            &spool,
+            &[EvidenceMetadata {
+                service_id: "service-a".to_string(),
+                candidate_id: "candidate-a".to_string(),
+                health_status: "unhealthy".to_string(),
+                logs_bytes: 26,
+                logs_truncated: true,
+                ..Default::default()
+            }],
+        )
+        .await
+        .expect("manifest");
+        let archive_path = spool.with_extension("tar.zst");
+        tokio::fs::create_dir_all(&archive_path)
+            .await
+            .expect("block archive destination");
+
+        recover_orphaned_evidence(&db, &db_path).await;
+
+        let job = db
+            .get_job("job-recovery-failure")
+            .await
+            .expect("load job")
+            .expect("job exists");
+        assert_eq!(job.status, "failed");
+        assert_eq!(job.summary_json["retained"], "job summary");
+        assert_eq!(job.summary_json["rollbackEvidence"]["status"], "incomplete");
+        assert_eq!(
+            job.summary_json["rollbackEvidence"]["services"][0]["logsTruncated"],
+            true
+        );
+        assert!(
+            !job.summary_json["rollbackEvidence"]["errors"][0]
+                .as_str()
+                .unwrap()
+                .is_empty()
+        );
+        assert_eq!(
+            tokio::fs::read(candidate.join("container.log"))
+                .await
+                .expect("preserved raw logs"),
+            b"partial raw candidate logs"
+        );
+        assert!(spool.exists());
+        assert!(archive_path.is_dir());
         let _ = tokio::fs::remove_dir_all(root).await;
     }
 }

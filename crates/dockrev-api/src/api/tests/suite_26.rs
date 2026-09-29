@@ -132,8 +132,14 @@ async fn rollback_evidence_api_download_preserves_raw_candidate_logs_end_to_end(
     )
     .expect("evidence spool");
     let evidence_spool_root = crate::rollback_evidence::spool_root(&state.config.db_path);
+    let mut random_state = 0x9e37_79b9_u32;
     let mut expected_logs = (0..(2 * 1024 * 1024 + 173))
-        .map(|index| (index % 251) as u8)
+        .map(|_| {
+            random_state ^= random_state << 13;
+            random_state ^= random_state >> 17;
+            random_state ^= random_state << 5;
+            random_state as u8
+        })
         .collect::<Vec<_>>();
     let private_marker = b"candidate-log-private-marker\n";
     expected_logs[..private_marker.len()].copy_from_slice(private_marker);
@@ -166,6 +172,7 @@ async fn rollback_evidence_api_download_preserves_raw_candidate_logs_end_to_end(
     assert_eq!(evidence_summary.status, "available");
     let archive_path = evidence.archive_path();
     let archive_bytes = tokio::fs::read(&archive_path).await.unwrap();
+    assert!(archive_bytes.len() > 64 * 1024);
     let summary = json!({"rollbackEvidence": evidence_summary});
     state
         .db

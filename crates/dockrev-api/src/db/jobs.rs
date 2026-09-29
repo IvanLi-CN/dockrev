@@ -1278,6 +1278,50 @@ WHERE id = ?1
         .context("get rollback evidence archive size")
     }
 
+    pub async fn mark_rollback_evidence_incomplete_if_archive_absent(
+        &self,
+        job_id: &str,
+        metadata: &serde_json::Value,
+    ) -> anyhow::Result<bool> {
+        let job_id = job_id.to_string();
+        let metadata = metadata.clone();
+        self.call(move |conn| {
+            let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
+            let Some((summary_raw, has_archive)) = tx
+                .query_row(
+                    "SELECT summary_json, rollback_evidence_tar_zstd IS NOT NULL FROM jobs WHERE id = ?1",
+                    params![&job_id],
+                    |row| Ok((row.get::<_, String>(0)?, row.get::<_, bool>(1)?)),
+                )
+                .optional()?
+            else {
+                tx.commit()?;
+                return Ok(false);
+            };
+            if has_archive {
+                tx.commit()?;
+                return Ok(false);
+            }
+            let mut summary: serde_json::Value =
+                serde_json::from_str(&summary_raw).unwrap_or_else(|_| serde_json::json!({}));
+            if !summary.is_object() {
+                summary = serde_json::json!({ "result": summary });
+            }
+            summary
+                .as_object_mut()
+                .expect("summary was normalized to an object")
+                .insert("rollbackEvidence".to_string(), metadata);
+            let changed = tx.execute(
+                "UPDATE jobs SET summary_json = ?2 WHERE id = ?1 AND rollback_evidence_tar_zstd IS NULL",
+                params![job_id, serde_json::to_string(&summary)?],
+            )?;
+            tx.commit()?;
+            Ok(changed > 0)
+        })
+        .await
+        .context("mark rollback evidence incomplete")
+    }
+
     pub async fn read_rollback_evidence_archive_chunk(
         &self,
         job_id: &str,

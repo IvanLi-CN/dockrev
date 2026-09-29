@@ -62,6 +62,7 @@ pub(crate) async fn run_update_job(
         let mut final_status = "success".to_string();
         let mut stack_summaries = Vec::new();
         let mut healthcheck_failure_observed = false;
+        let healthcheck_failure_signal = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
         let mut backups_to_cleanup: Vec<(String, u32)> = Vec::new();
         let mut pending_settlements = Vec::<(
             crate::db::ServiceAcceptedStateSettlement,
@@ -809,8 +810,11 @@ pub(crate) async fn run_update_job(
                     .then_some(&apply_gate as &dyn updater::UpdateApplyGate),
                 Some(&state.config.managed_override_dir),
                 evidence.clone(),
+                Some(healthcheck_failure_signal.clone()),
             )
             .await;
+            healthcheck_failure_observed |= healthcheck_failure_signal
+                .load(std::sync::atomic::Ordering::Relaxed);
             let lifecycle_success = update_outcome.as_ref().map(|outcome| outcome.status == "success").unwrap_or(false);
             state.lifecycle_observer.record_operation(
                 lifecycle_observation,
@@ -825,7 +829,6 @@ pub(crate) async fn run_update_job(
             let _ = progress_task.await;
             match update_outcome {
                 Ok(mut outcome) => {
-                    healthcheck_failure_observed |= outcome.healthcheck_failure_observed;
                     if outcome.status != "success"
                     {
                         let restored = if services_kept_stopped_for_apply.is_empty() {

@@ -795,7 +795,7 @@ impl CommandRunner for TargetTagPullRollbackRunner {
                 assert_eq!(spec.program, "docker-compose");
                 assert!(args_end_with(
                     &spec.args,
-                    &["up", "-d", "--pull", "never", "web"]
+                    &["up", "-d", "--pull", "never", "--no-deps", "web"]
                 ));
                 CommandOutput {
                     status: 0,

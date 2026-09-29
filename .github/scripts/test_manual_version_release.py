@@ -440,6 +440,7 @@ ordinary_completion = release_completion.validate_nonrelease_completion({
     "trailers": {},
 })
 assert ordinary_completion["release_enabled"] is False
+assert ordinary_completion["status"] == "not-applicable"
 expect_error(
     release_completion.validate_nonrelease_completion,
     {"repository": "IvanLi-CN/dockrev", "pull_request": 7, "head_sha": identity_sha,
