@@ -4,14 +4,17 @@
 from __future__ import annotations
 
 import base64
+import io
 import json
 import os
 import tempfile
 import urllib.parse
+import zipfile
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
 
+import check_release_artifact_digest
 import release_artifact_bundle
 import release_completion
 import release_failure_context
@@ -481,9 +484,11 @@ expect_error(
 recovery = release_recovery_artifact.select_reusable_artifact(
     [
         {"id": 100, "event": "push", "conclusion": "failure", "head_sha": "d" * 40,
-         "head_branch": "main", "updated_at": "2026-09-20T10:00:00Z"},
+         "head_branch": "main", "path": ".github/workflows/release.yml@main",
+         "updated_at": "2026-09-20T10:00:00Z"},
         {"id": 101, "event": "workflow_dispatch", "conclusion": "failure", "head_sha": "e" * 40,
-         "head_branch": "main", "updated_at": "2026-09-21T10:00:00Z"},
+         "head_branch": "main", "path": ".github/workflows/release.yml",
+         "updated_at": "2026-09-21T10:00:00Z"},
     ],
     [
         {"name": "release-intent-" + "d" * 40, "expired": False,
@@ -499,16 +504,278 @@ recovery = release_recovery_artifact.select_reusable_artifact(
 )
 assert recovery["artifact_run_id"] == "100"
 assert recovery["artifact_digest"] == "sha256:" + "f" * 64
-without_bundle = release_recovery_artifact.select_reusable_artifact(
-    [{"id": 102, "event": "push", "conclusion": "failure", "head_sha": "d" * 40,
-      "head_branch": "main", "updated_at": "2026-09-22T10:00:00Z"}],
-    [{"name": "release-intent-" + "d" * 40, "expired": False,
-      "workflow_run": {"id": 102}}],
+failure_context_payload = {
+    "repository": "IvanLi-CN/dockrev",
+    "merge_commit_sha": "d" * 40,
+    "run_attempt": 1,
+    "run_url": "https://github.com/IvanLi-CN/dockrev/actions/runs/102",
+    "artifact_digest": "f" * 64,
+}
+failure_context_archive = io.BytesIO()
+with zipfile.ZipFile(failure_context_archive, "w", zipfile.ZIP_DEFLATED) as archive:
+    archive.writestr("release-failure-context.json", json.dumps(failure_context_payload))
+assert release_recovery_artifact.failure_context_digest_from_zip(
+    failure_context_archive.getvalue(),
+    repository="IvanLi-CN/dockrev",
+    merge_sha="d" * 40,
+    run_id="102",
+    attempt=1,
+) == "sha256:" + "f" * 64
+failure_context_payload["artifact_digest"] = ""
+empty_digest_archive = io.BytesIO()
+with zipfile.ZipFile(empty_digest_archive, "w", zipfile.ZIP_DEFLATED) as archive:
+    archive.writestr("release-failure-context.json", json.dumps(failure_context_payload))
+assert release_recovery_artifact.failure_context_digest_from_zip(
+    empty_digest_archive.getvalue(),
+    repository="IvanLi-CN/dockrev",
+    merge_sha="d" * 40,
+    run_id="102",
+    attempt=1,
+) == ""
+
+recovery_merge_sha = "d" * 40
+recovery_context_artifact = {
+    "id": 902,
+    "name": "release-failure-context-102-1",
+    "expired": False,
+    "workflow_run": {"id": 102},
+}
+recovery_identity_artifact = {
+    "name": "release-intent-" + recovery_merge_sha,
+    "expired": False,
+    "workflow_run": {"id": 102},
+}
+recovery_run = {
+    "id": 102,
+    "path": ".github/workflows/release.yml@main",
+    "event": "push",
+    "conclusion": "failure",
+    "head_sha": recovery_merge_sha,
+    "head_branch": "main",
+    "run_attempt": 1,
+    "updated_at": "2026-09-22T10:00:00Z",
+}
+recovery_api_artifacts = {
+    recovery_identity_artifact["name"]: [recovery_identity_artifact],
+    recovery_context_artifact["name"]: [recovery_context_artifact],
+    "release-bundle-" + recovery_merge_sha: [],
+}
+
+def recovery_api(_api_root, _token, path):
+    if "/actions/artifacts?" in path:
+        name = urllib.parse.parse_qs(urllib.parse.urlsplit(path).query)["name"][0]
+        return {"artifacts": recovery_api_artifacts.get(name, [])}
+    if path.endswith("/actions/runs/102"):
+        return recovery_run
+    raise AssertionError(f"unexpected recovery API path: {path}")
+
+with patch.object(release_recovery_artifact, "api_json", side_effect=recovery_api), \
+     patch.object(release_recovery_artifact, "api_bytes", return_value=empty_digest_archive.getvalue()):
+    rebuild_from_pre_bundle_failure = release_recovery_artifact.resolve_recovery_artifact(
+        "https://api.github.test", "token", "IvanLi-CN/dockrev", recovery_merge_sha,
+    )
+assert rebuild_from_pre_bundle_failure["artifact_run_id"] == ""
+assert rebuild_from_pre_bundle_failure["artifact_digest"] == ""
+
+recovery_run["path"] = ".github/workflows/other.yml"
+with patch.object(release_recovery_artifact, "api_json", side_effect=recovery_api):
+    expect_error(
+        release_recovery_artifact.resolve_recovery_artifact,
+        "https://api.github.test", "token", "IvanLi-CN/dockrev", recovery_merge_sha,
+        error=release_recovery_artifact.RecoveryArtifactError,
+    )
+recovery_run["path"] = ".github/workflows/release.yml@main"
+
+recovery_context_artifact["name"] = "release-failure-context-103-1"
+with patch.object(release_recovery_artifact, "api_json", side_effect=recovery_api), \
+     patch.object(release_recovery_artifact, "api_bytes", return_value=empty_digest_archive.getvalue()):
+    expect_error(
+        release_recovery_artifact.resolve_recovery_artifact,
+        "https://api.github.test", "token", "IvanLi-CN/dockrev", recovery_merge_sha,
+        error=release_recovery_artifact.RecoveryArtifactError,
+    )
+recovery_context_artifact["name"] = "release-failure-context-102-1"
+
+recovery_api_artifacts[recovery_context_artifact["name"]][0]["workflow_run"]["id"] = 103
+with patch.object(release_recovery_artifact, "api_json", side_effect=recovery_api):
+    expect_error(
+        release_recovery_artifact.resolve_recovery_artifact,
+        "https://api.github.test", "token", "IvanLi-CN/dockrev", recovery_merge_sha,
+        error=release_recovery_artifact.RecoveryArtifactError,
+    )
+recovery_api_artifacts[recovery_context_artifact["name"]][0]["workflow_run"]["id"] = 102
+
+recovery_api_artifacts["release-bundle-" + recovery_merge_sha] = [{
+    "id": 501,
+    "name": "release-bundle-" + recovery_merge_sha,
+    "expired": False,
+    "digest": "sha256:" + "f" * 64,
+    "workflow_run": {"id": 102},
+}]
+with patch.object(release_recovery_artifact, "api_json", side_effect=recovery_api), \
+     patch.object(release_recovery_artifact, "api_bytes", return_value=failure_context_archive.getvalue()):
+    reused_bundle = release_recovery_artifact.resolve_recovery_artifact(
+        "https://api.github.test", "token", "IvanLi-CN/dockrev", recovery_merge_sha,
+    )
+assert reused_bundle["artifact_run_id"] == "102"
+assert reused_bundle["artifact_digest"] == "sha256:" + "f" * 64
+mismatched_context_payload = {**failure_context_payload, "artifact_digest": "e" * 64}
+mismatched_context_archive = io.BytesIO()
+with zipfile.ZipFile(mismatched_context_archive, "w", zipfile.ZIP_DEFLATED) as archive:
+    archive.writestr("release-failure-context.json", json.dumps(mismatched_context_payload))
+with patch.object(release_recovery_artifact, "api_json", side_effect=recovery_api), \
+     patch.object(release_recovery_artifact, "api_bytes", return_value=mismatched_context_archive.getvalue()):
+    expect_error(
+        release_recovery_artifact.resolve_recovery_artifact,
+        "https://api.github.test", "token", "IvanLi-CN/dockrev", recovery_merge_sha,
+        error=release_recovery_artifact.RecoveryArtifactError,
+    )
+recovery_api_artifacts["release-bundle-" + recovery_merge_sha] = []
+with patch.object(release_recovery_artifact, "api_json", side_effect=recovery_api), \
+     patch.object(release_recovery_artifact, "api_bytes", return_value=failure_context_archive.getvalue()):
+    expect_error(
+        release_recovery_artifact.resolve_recovery_artifact,
+        "https://api.github.test", "token", "IvanLi-CN/dockrev", recovery_merge_sha,
+        error=release_recovery_artifact.RecoveryArtifactError,
+    )
+expect_error(
+    release_recovery_artifact.failure_context_digest_from_zip,
+    failure_context_archive.getvalue(),
+    repository="IvanLi-CN/dockrev",
+    merge_sha="e" * 40,
+    run_id="102",
+    attempt=1,
+    error=release_recovery_artifact.RecoveryArtifactError,
+)
+expect_error(
+    release_recovery_artifact.failure_context_digest_from_zip,
+    failure_context_archive.getvalue(),
+    repository="IvanLi-CN/dockrev",
+    merge_sha="d" * 40,
+    run_id="102",
+    attempt=2,
+    error=release_recovery_artifact.RecoveryArtifactError,
+)
+expect_error(
+    release_recovery_artifact.failure_context_digest_from_zip,
+    failure_context_archive.getvalue(),
+    repository="OtherOwner/dockrev",
+    merge_sha="d" * 40,
+    run_id="102",
+    attempt=1,
+    error=release_recovery_artifact.RecoveryArtifactError,
+)
+expect_error(
+    release_recovery_artifact.failure_context_digest_from_zip,
+    b"not a zip archive",
+    repository="IvanLi-CN/dockrev",
+    merge_sha="d" * 40,
+    run_id="102",
+    attempt=1,
+    error=release_recovery_artifact.RecoveryArtifactError,
+)
+artifact_name = "release-bundle-" + "d" * 40
+artifact_metadata = {
+    "artifacts": [{
+        "name": artifact_name,
+        "expired": False,
+        "digest": "sha256:" + "f" * 64,
+    }],
+}
+assert check_release_artifact_digest.verify_artifact(
+    artifact_metadata,
+    artifact_name=artifact_name,
+    expected_digest="f" * 64,
+)["name"] == artifact_name
+assert check_release_artifact_digest.verify_artifact(
+    artifact_metadata,
+    artifact_name=artifact_name,
+    expected_digest="sha256:" + "f" * 64,
+)["name"] == artifact_name
+expect_error(
+    check_release_artifact_digest.verify_artifact,
+    artifact_metadata,
+    artifact_name=artifact_name,
+    expected_digest="e" * 64,
+    error=check_release_artifact_digest.ArtifactDigestError,
+)
+expect_error(
+    check_release_artifact_digest.verify_artifact,
+    {"artifacts": [{**artifact_metadata["artifacts"][0], "expired": True}]},
+    artifact_name=artifact_name,
+    expected_digest="f" * 64,
+    error=check_release_artifact_digest.ArtifactDigestError,
+)
+expect_error(
+    check_release_artifact_digest.verify_artifact,
+    {"artifacts": artifact_metadata["artifacts"] * 2},
+    artifact_name=artifact_name,
+    expected_digest="f" * 64,
+    error=check_release_artifact_digest.ArtifactDigestError,
+)
+expect_error(
+    check_release_artifact_digest.verify_artifact,
+    artifact_metadata,
+    artifact_name=artifact_name,
+    expected_digest="sha256:not-a-digest",
+    error=check_release_artifact_digest.ArtifactDigestError,
+)
+expect_error(
+    check_release_artifact_digest.verify_artifact,
+    {"artifacts": [{**artifact_metadata["artifacts"][0], "digest": "not-a-digest"}]},
+    artifact_name=artifact_name,
+    expected_digest="f" * 64,
+    error=check_release_artifact_digest.ArtifactDigestError,
+)
+expect_error(
+    check_release_artifact_digest.verify_artifact,
+    {"artifacts": [{"name": artifact_name, "expired": False}]},
+    artifact_name=artifact_name,
+    expected_digest="f" * 64,
+    error=check_release_artifact_digest.ArtifactDigestError,
+)
+without_bundle_runs = [{"id": 102, "event": "push", "conclusion": "failure", "head_sha": "d" * 40,
+                        "head_branch": "main", "path": ".github/workflows/release.yml",
+                        "run_attempt": 1, "updated_at": "2026-09-22T10:00:00Z"}]
+without_bundle_identities = [{"name": "release-intent-" + "d" * 40, "expired": False,
+                              "workflow_run": {"id": 102}}]
+rebuild_same_identity = release_recovery_artifact.select_reusable_artifact(
+    without_bundle_runs,
+    without_bundle_identities,
     [],
     "d" * 40,
+    failure_context_digests={"102": ""},
 )
-assert without_bundle["artifact_run_id"] == ""
-assert without_bundle["artifact_digest"] == ""
+assert rebuild_same_identity["artifact_run_id"] == ""
+assert rebuild_same_identity["artifact_digest"] == ""
+expect_error(
+    release_recovery_artifact.select_reusable_artifact,
+    without_bundle_runs,
+    without_bundle_identities,
+    [{"id": 502, "name": "release-bundle-" + "d" * 40, "expired": True,
+      "digest": "sha256:" + "f" * 64, "workflow_run": {"id": 102}}],
+    "d" * 40,
+    failure_context_digests={"102": ""},
+    error=release_recovery_artifact.RecoveryArtifactError,
+)
+expect_error(
+    release_recovery_artifact.select_reusable_artifact,
+    without_bundle_runs,
+    without_bundle_identities,
+    [],
+    "d" * 40,
+    failure_context_digests={"102": "sha256:" + "f" * 64},
+    error=release_recovery_artifact.RecoveryArtifactError,
+)
+expect_error(
+    release_recovery_artifact.select_reusable_artifact,
+    without_bundle_runs,
+    without_bundle_identities,
+    [],
+    "d" * 40,
+    failure_context_digests={},
+    error=release_recovery_artifact.RecoveryArtifactError,
+)
 
 with tempfile.TemporaryDirectory() as directory:
     root = Path(directory)
@@ -622,6 +889,26 @@ assert "version decision: beta" in summary
 assert "artifact digest: sha256:" + "f" * 64 in summary
 assert "workflow_dispatch merge_sha=" + "d" * 40 in summary
 
+raw_digest_context = release_failure_context.resolved_identity_failure_context(
+    valid_identity,
+    repository="IvanLi-CN/dockrev",
+    server="https://github.com",
+    run_id="9001",
+    attempt="2",
+    event="workflow_dispatch",
+    ref="refs/heads/main",
+    actor="maintainer",
+    artifact_digest="f" * 64,
+)
+with patch.dict(os.environ, {
+    "GITHUB_REPOSITORY": "IvanLi-CN/dockrev",
+    "GITHUB_SERVER_URL": "https://github.com",
+    "EXPECTED_RELEASE_RUN_ID": "9001",
+    "EXPECTED_RELEASE_ATTEMPT": "2",
+}):
+    raw_digest_summary = release_failure_context.notification_summary(raw_digest_context)
+assert "artifact digest: " + "f" * 64 in raw_digest_summary
+
 unavailable_context = release_failure_context.unavailable_identity_failure_context(
     repository="IvanLi-CN/dockrev",
     server="https://github.com",
@@ -641,5 +928,28 @@ with patch.dict(os.environ, {
 assert "identity could not be resolved" in unavailable_summary
 assert "merge sha: unavailable (identity not verified)" in unavailable_summary
 assert "workflow_dispatch merge_sha=" not in unavailable_summary
+
+same_sha_preflight_context = {
+    "merge_commit_sha": "d" * 40,
+    "run_url": "https://github.com/IvanLi-CN/dockrev/actions/runs/9003",
+    "recovery_instruction": release_policy.SAME_SHA_RECOVERY_PRECHECK_INSTRUCTION,
+    "identity_resolution_failed": True,
+    "identity_failure_kind": "same-sha-recovery-preflight",
+    "repository": "IvanLi-CN/dockrev",
+    "workflow": "Release",
+    "event": "workflow_dispatch",
+    "ref": "refs/heads/main",
+    "run_attempt": 1,
+    "actor": "maintainer",
+}
+with patch.dict(os.environ, {
+    "GITHUB_REPOSITORY": "IvanLi-CN/dockrev",
+    "GITHUB_SERVER_URL": "https://github.com",
+    "EXPECTED_RELEASE_RUN_ID": "9003",
+    "EXPECTED_RELEASE_ATTEMPT": "1",
+}):
+    preflight_summary = release_failure_context.notification_summary(same_sha_preflight_context)
+assert "failure kind: same-sha-recovery-preflight" in preflight_summary
+assert release_policy.SAME_SHA_RECOVERY_PRECHECK_INSTRUCTION in preflight_summary
 
 print("PASS: manual version release identity, reservation, artifact, and recovery contracts")

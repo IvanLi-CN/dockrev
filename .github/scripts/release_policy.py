@@ -18,6 +18,13 @@ VERSION_RE = re.compile(
     r"^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(?:-(alpha|beta|rc)\.(0|[1-9][0-9]*))?$"
 )
 SHA_RE = re.compile(r"^[0-9a-f]{40}$")
+UNRESOLVED_RECOVERY_INSTRUCTION = (
+    "verify the merged VERSION identity; retry Release with the same merge SHA only after identity is confirmed"
+)
+SAME_SHA_RECOVERY_PRECHECK_INSTRUCTION = (
+    "inspect the original Release failure context; restore its exact bundle and digest before retrying if a digest was recorded, "
+    "or retry the same merge SHA to rebuild only when no bundle digest was created; do not create a new version identity"
+)
 TRAILER_KEYS = {
     "Source-SHA",
     "Product-Version",
@@ -236,11 +243,15 @@ def validate_failure_context(
             validate_sha(merge_sha, "merge_commit_sha")
         elif payload.get("identity_failure_kind") != "resolver-error":
             raise PolicyError("unresolved identity failure must not omit its merge SHA")
-        if payload.get("identity_failure_kind") not in {"resolver-error", "no-identity"}:
+        failure_kind = payload.get("identity_failure_kind")
+        if failure_kind not in {"resolver-error", "no-identity", "same-sha-recovery-preflight"}:
             raise PolicyError("failure context identity failure kind is invalid")
-        if payload.get("recovery_instruction") != (
-            "verify the merged VERSION identity; retry Release with the same merge SHA only after identity is confirmed"
-        ):
+        expected_instruction = (
+            SAME_SHA_RECOVERY_PRECHECK_INSTRUCTION
+            if failure_kind == "same-sha-recovery-preflight"
+            else UNRESOLVED_RECOVERY_INSTRUCTION
+        )
+        if payload.get("recovery_instruction") != expected_instruction:
             raise PolicyError("unresolved identity recovery instruction is invalid")
         run_url = str(payload.get("run_url", ""))
         parsed = urllib.parse.urlparse(run_url)
@@ -265,7 +276,7 @@ def validate_failure_context(
     if not isinstance(payload["artifact_names"], list) or not payload["artifact_names"]:
         raise PolicyError("failure context artifact_names must be non-empty")
     artifact_digest = str(payload.get("artifact_digest", ""))
-    if artifact_digest and not re.fullmatch(r"sha256:[0-9a-f]{64}", artifact_digest):
+    if artifact_digest and not re.fullmatch(r"(?:sha256:)?[0-9a-f]{64}", artifact_digest):
         raise PolicyError("failure context artifact_digest is not a SHA-256 digest")
     identity = {
         "merge_commit_sha": payload["merge_commit_sha"],

@@ -8,6 +8,8 @@ import json
 import re
 from pathlib import Path
 
+import release_policy
+
 
 ROOT = Path(__file__).resolve().parents[2]
 
@@ -145,8 +147,17 @@ assert "release-preparation/v${VERSION}" in release
 assert "release-bundle-${{ needs.identity.outputs.merge_sha }}" in release
 assert "release-bundle-${{ env.MERGE_SHA }}" in release
 assert "ARTIFACT_DIGEST" in release and "artifact digest" in release.lower()
+assert "ref: ${{ github.sha }}" in release
+assert "check_release_artifact_digest.py" in release
+assert "jq --arg name" not in release
+publish = release.split("  publish:", 1)[1]
+assert "ref: ${{ github.sha }}" in publish
+assert "path: .workflow-src" in publish
 assert "release_artifact_bundle.py verify" in release
 assert "release_recovery_artifact.py" in release
+assert "same-sha-recovery-preflight" in release
+assert "restore its exact bundle and digest before retrying" in release
+assert release_policy.SAME_SHA_RECOVERY_PRECHECK_INSTRUCTION in release
 assert "artifact_run_id" in release and "run-id:" in release
 assert "actions/read" not in release
 assert "actions: read" in release
@@ -164,7 +175,13 @@ assert "release_tag" in bundle and "merge_commit_sha" in bundle
 recovery = read(".github/scripts/release_recovery_artifact.py")
 assert "release-intent-{merge_sha}" in recovery
 assert "release-bundle-{merge_sha}" in recovery
+assert "def is_release_workflow_path" in recovery
 assert '"artifact_digest": digest' in recovery
+assert "failure_context_digest_from_zip" in recovery
+assert "prior failure context proves a bundle was completed" in recovery
+assert "release-failure-context-{run_id}-{attempt}" in recovery
+assert "actions/artifacts/{artifact_id}/zip" in recovery
+assert "prior failure context belongs to a different workflow run" in recovery
 
 notification = json.loads(read(".github/release-failure-notification.json"))
 assert "Label Gate" not in notification["expected_success_workflows"]
