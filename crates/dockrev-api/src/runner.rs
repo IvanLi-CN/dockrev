@@ -672,43 +672,56 @@ mod tests {
 
     #[tokio::test]
     async fn raw_file_watchdog_terminates_background_process_group_members() {
-        let marker = std::env::temp_dir().join(format!(
-            "dockrev-raw-file-process-group-{}-{}.marker",
+        let test_dir = std::env::temp_dir().join(format!(
+            "dockrev-raw-file-process-group-{}-{}",
             std::process::id(),
             std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .unwrap()
                 .as_nanos()
         ));
-        let path = std::env::temp_dir().join(format!(
-            "dockrev-runner-raw-process-group-{}-{}.log",
-            std::process::id(),
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_nanos()
-        ));
+        std::fs::create_dir(&test_dir).expect("create process-group test directory");
+        let started = test_dir.join("started.marker");
+        let child_started = test_dir.join("child-started.marker");
+        let marker = test_dir.join("late.marker");
+        let path = test_dir.join("capture.log");
         let command = format!(
-            "printf partial; (sleep 0.2; touch {}) & wait",
-            marker.display()
+            "touch {}; (touch {}; sleep 3; touch {}) & wait",
+            shell_quote(&started.display().to_string()),
+            shell_quote(&child_started.display().to_string()),
+            shell_quote(&marker.display().to_string())
         );
-        let output = TokioCommandRunner
-            .run_raw_to_file(
-                CommandSpec {
-                    program: "sh".to_string(),
-                    args: vec!["-c".to_string(), command],
-                    env: Vec::new(),
-                },
-                Duration::from_millis(30),
-                &path,
-            )
+        let watchdog = tokio::spawn(async move {
+            TokioCommandRunner
+                .run_raw_to_file(
+                    CommandSpec {
+                        program: "sh".to_string(),
+                        args: vec!["-c".to_string(), command],
+                        env: Vec::new(),
+                    },
+                    Duration::from_secs(2),
+                    &path,
+                )
+                .await
+                .expect("watchdog expiry is reported as a partial result")
+        });
+
+        while !child_started.exists() && !watchdog.is_finished() {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+        assert!(
+            child_started.exists(),
+            "background process did not start before watchdog expiry"
+        );
+
+        let output = watchdog
             .await
-            .expect("watchdog expiry is reported as a partial result");
+            .expect("watchdog task should complete without panicking");
 
         assert!(output.timed_out);
-        tokio::time::sleep(Duration::from_millis(300)).await;
+        tokio::time::sleep(Duration::from_millis(1500)).await;
         assert!(!marker.exists(), "timed-out process group kept running");
-        tokio::fs::remove_file(path).await.expect("remove capture");
+        std::fs::remove_dir_all(test_dir).expect("remove process-group test directory");
     }
 
     #[tokio::test]
