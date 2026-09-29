@@ -29,10 +29,10 @@
 
 ## Empirical Acceptance
 
-- Scenario: 在隔离 Compose 服务上先观察配置标签 `latest` 的 D34，再从版本列表通过普通路径部署已观测 D37。对实现提交 `3e7ff16fa46b69fffa11a0b9ddd20684cf576d95` 的源码候选，让真实 cron 检查首次观察新的 D38 测试摘要，并由已启用的自动策略部署。
-- Result: `v2.71.34` 检查后，历史关联使 `v2.71.37` 走普通指定部署并成功；未观测的 `v2.71.38` 预检分类为强制。最终计划检查 `chk_01M3J3ZHN19VS50PWDWQ71Z37T` 记录配置标签 `latest` 对应的 `v2.71.38` 摘要 `sha256:686f4c86b3f4a5123fcc68ba257df6f4b7e283160064c8d79e6fe6825b5d0e3a`，自动策略任务 `job_01M3J3ZWMJW93CDM7K6KTBMV6D` 成功从 D37 推进到该摘要；运行镜像与本地 `latest` 摘要一致，Compose 文件 SHA-256 保持为 `9ffa0dbd18105e861ded817cf1ae7de3166da710c7607bbd626dcfae38a0d32f`。测试 Registry 为避免复用旧候选，以仅增加测试标签的镜像生成新摘要；自动策略拉取可选兼容标签 `2.71.38` 时 Registry 未提供该别名，产生非阻塞告警，目标摘要部署成功。
-- Evidence: 绑定最终候选 SHA 的 API 全量测试结果、检查/任务 JSON、镜像摘要、Compose SHA-256 及设置恢复结果保存在 `/srv/codex/agents/01a0d6f3-3124-7432-9daa-99fd4bfb3755/selected-version-fix-62bc150e-20260928/evidence-final`。
-- Test transport: 测试机隔离工作副本使用临时 CA 信任配置访问带 TLS 的本地 Registry；该构建参数和证书未改仓库源码或正式构建配置。
+- Scenario: 在隔离 Compose 服务上先以 `latest` 观察 D34，再观察 D37；版本预检将已观测 D37 分类为普通更新，将未观测 D38 分类为强制更新。普通指定版本任务完成后，将 Registry 的 `latest` 推进到 D38，并通过计划检查验证自动策略。
+- Result: D34、D37、D38 摘要分别为 `sha256:b0d712eccfb116298225e4d51c03aee625d16a00d1ab9c9868dcdcfecfc4d`、`sha256:81cfed97581757e1d0ac95be6fd7e81845a7015a9d761f9739ed29ea1beb482d`、`sha256:18b2682426c42796bc896707d0cb947a6dfee03733c7c799e3ba3bba28f5738e`。D37 普通指定更新任务 `job_01M3PSEVH2C05DWDWETWZ21NYF` 成功；计划检查 `chk_01M3PSNJX2YFTNT4F3P6H4Y41B` 观测 D38 后，自动策略任务 `job_01M3PSNREE8Z3KKV17W698RW0E` 从 D37 成功推进至 D38。运行镜像、本地 `latest` 和 D38 摘要一致；Compose 文件 SHA-256 在更新前后均为 `f81eaa19847b54e8d23f123cd65454eca29c10165ec3317c32d329aeabc0a73c`。自动策略和计划检查设置已恢复。
+- Evidence: 检查、预检、更新任务、最终服务状态、恢复后的策略设置和镜像/Compose 摘要保存在 `/srv/codex/agents/01a0d6f3-3124-7432-9daa-99fd4bfb3755/validation-08a2c8e7/evidence`。
+- Test transport: 测试 Registry 使用任务自有 TLS CA。为让隔离应用访问该 CA，验证构建临时启用了 Reqwest native-root feature；仓库依赖配置和正式运行时 TLS 配置未改变。自动策略拉取可选兼容标签 `2.71.38` 时 Registry 未提供该别名，产生非阻塞告警，D38 摘要部署成功。
 - Candidate binding: 最终候选 SHA、验收合同摘要、必需场景摘要和最终运行日志位置保存在当前交付流的 Candidate evidence card 中。
 
 ## Related Changes
