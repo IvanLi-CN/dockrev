@@ -4,7 +4,7 @@
 
 ## Lifecycle / Compatibility
 
-- The topic is active and has no implementation yet.
+- The topic is active and its implementation is tracked in [PR #422](https://github.com/IvanLi-CN/dockrev/pull/422).
 - Existing jobs have no evidence BLOB and remain readable. Evidence is optional for every job type and is created only for health-triggered update rollback handling.
 - Existing terminal-job retention remains the evidence retention policy.
 
@@ -13,6 +13,7 @@
 - The fixed 90-second health wait observed only the health status and destroyed candidate evidence during automatic rollback.
 - The durable contract replaces that observability gap with candidate-effective policy waiting, private per-job spool files, and one per-job `tar.zst` archive.
 - The archive layout preserves service boundaries while keeping the confirmed single BLOB storage boundary.
+- Recovery now removes local archive residue after the BLOB commits and bounds incomplete recovery metadata without changing the storage or authorization boundary.
 
 ## References
 

@@ -1320,6 +1320,70 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn startup_recovery_removes_archive_only_files_for_committed_jobs() {
+        let root = std::env::temp_dir().join(format!(
+            "dockrev-rollback-committed-archive-only-{}",
+            ulid::Ulid::new()
+        ));
+        fs::create_dir_all(&root).expect("test root");
+        let db_path = root.join("dockrev.sqlite");
+        let db = crate::db::Db::open(&db_path).await.expect("db");
+        db.insert_job(
+            crate::api::types::JobRecord::new_running(
+                "job-committed-archive-only".to_string(),
+                crate::api::types::JobType::Update,
+                crate::api::types::JobScope::Service,
+                None,
+                None,
+                "2026-08-28T00:00:00Z",
+            )
+            .to_db(),
+        )
+        .await
+        .expect("insert job");
+        let committed_archive = b"committed evidence archive";
+        db.finish_job_with_archive(
+            "job-committed-archive-only",
+            "rolled_back",
+            "2026-08-28T00:05:00Z",
+            &serde_json::json!({
+                "rollbackEvidence": {
+                    "status": "available",
+                    "archiveSizeBytes": committed_archive.len()
+                }
+            }),
+            Some(committed_archive.to_vec()),
+        )
+        .await
+        .expect("commit archive");
+        let evidence_root = spool_root(&db_path);
+        tokio::fs::create_dir_all(&evidence_root)
+            .await
+            .expect("evidence root");
+        let archive_path = evidence_root.join("job-committed-archive-only.tar.zst");
+        let part_path = evidence_root.join("job-committed-archive-only.tar.zst.part");
+        tokio::fs::write(&archive_path, b"duplicate local archive")
+            .await
+            .expect("local archive");
+        tokio::fs::write(&part_path, b"partial archive")
+            .await
+            .expect("partial archive");
+
+        recover_startup_interrupted_evidence(&db, &db_path).await;
+
+        assert!(!archive_path.exists());
+        assert!(!part_path.exists());
+        assert_eq!(
+            db.get_rollback_evidence_archive("job-committed-archive-only")
+                .await
+                .expect("load archive")
+                .expect("committed archive"),
+            committed_archive
+        );
+        let _ = tokio::fs::remove_dir_all(root).await;
+    }
+
+    #[tokio::test]
     async fn recovery_archive_failure_records_incomplete_and_preserves_spool() {
         let root = std::env::temp_dir().join(format!(
             "dockrev-rollback-recovery-failure-{}",
