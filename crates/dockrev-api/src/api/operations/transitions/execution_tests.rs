@@ -97,6 +97,35 @@ fn evidence_setup_failure_detects_later_healthcheck_failure_in_same_stack() {
     ));
 }
 
+#[test]
+fn archive_metadata_read_error_keeps_evidence_summary_bounded() {
+    let mut summary = crate::rollback_evidence::EvidenceSummary {
+        status: "available",
+        failed_candidates: 1,
+        archive_format: "tar",
+        compression: "zstd",
+        archive_size_bytes: Some(42),
+        services: Vec::new(),
+        errors: (0..16)
+            .map(|index| format!("capture error {index}"))
+            .collect(),
+    };
+
+    mark_archive_metadata_unavailable(&mut summary, "x".repeat(600));
+
+    assert_eq!(summary.status, "incomplete");
+    assert_eq!(summary.archive_size_bytes, None);
+    assert_eq!(summary.errors.len(), 16);
+    assert!(summary.errors[0].starts_with("archive read: "));
+    assert!(
+        summary
+            .errors
+            .iter()
+            .all(|error| error.chars().count() <= 512)
+    );
+    assert!(summary.errors.last().unwrap().contains("truncated"));
+}
+
 #[tokio::test]
 async fn evidence_archive_persistence_failure_still_finishes_job_without_deleting_evidence() {
     let root =

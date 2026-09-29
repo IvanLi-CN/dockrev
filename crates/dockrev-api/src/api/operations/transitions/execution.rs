@@ -14,6 +14,18 @@ pub(crate) type UpdateJobOutcome = (
     bool,
 );
 
+fn mark_archive_metadata_unavailable(
+    summary: &mut crate::rollback_evidence::EvidenceSummary,
+    error: impl std::fmt::Display,
+) {
+    summary.status = "incomplete";
+    summary.archive_size_bytes = None;
+    let mut errors = Vec::with_capacity(summary.errors.len() + 1);
+    errors.push(format!("archive read: {error}"));
+    errors.extend(std::mem::take(&mut summary.errors));
+    summary.errors = crate::rollback_evidence::bounded_summary_errors(errors, false);
+}
+
 pub(crate) fn extract_changed_service_ids(update: &serde_json::Value) -> Option<Vec<String>> {
     let ids = update
         .get("newDigests")
@@ -1333,11 +1345,7 @@ pub(crate) async fn run_update_job(
             match tokio::fs::metadata(evidence.archive_path()).await {
                 Ok(_) => archive_path = Some(evidence.archive_path()),
                 Err(error) => {
-                    evidence_summary.status = "incomplete";
-                    evidence_summary.archive_size_bytes = None;
-                    evidence_summary
-                        .errors
-                        .push(format!("archive read: {error}"));
+                    mark_archive_metadata_unavailable(&mut evidence_summary, error);
                 }
             }
         }

@@ -24,9 +24,9 @@
 
 ## Validation Evidence
 
-- Shared Linux `cargo test --workspace --locked`: 1,001 API tests passed, 1 ignored; 1 common test passed; 58 supervisor tests passed.
+- Shared Linux `cargo test --workspace --locked`: 1,002 API tests passed, 1 ignored; 1 common test passed; 58 supervisor tests passed.
 - Shared Linux `cargo clippy --workspace --all-targets --all-features -- -D warnings` and `cargo check --workspace --locked --all-targets --all-features` passed.
-- Review-repair focused tests passed: 28 rollback-evidence tests and one separate committed-BLOB attachment race test. These include normal/recovered/incomplete summary bounds, unchanged archive manifest/log contents, cleanup-error reporting, and preservation of an existing BLOB and summary. The final candidate's shared Linux workspace tests, Clippy, and all-target/all-feature check passed; current PR gates remain the final delivery gate.
+- Review-repair focused tests passed: 28 rollback-evidence tests, one separate committed-BLOB attachment race test, and the archive-metadata read-error summary-bound test. These include normal/recovered/incomplete summary bounds, unchanged archive manifest/log contents, cleanup-error reporting, and preservation of an existing BLOB and summary. The final candidate's shared Linux workspace tests, Clippy, and all-target/all-feature check passed; current PR gates remain the final delivery gate.
 - Existing frontend lint/build and Storybook build passed. The 419-story smoke mode and focused global interaction mode passed independently; the combined Storybook command timed out on late global menu/version-navigation assertions after the stories passed. This repair changes no UI files; current PR CI remains the final delivery gate.
 
 ## Remaining Gaps
