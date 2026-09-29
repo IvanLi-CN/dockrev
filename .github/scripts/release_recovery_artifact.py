@@ -204,8 +204,11 @@ def api_json(api_root: str, token: str, path: str) -> Any:
 class ArtifactRedirectHandler(urllib.request.HTTPRedirectHandler):
     def redirect_request(self, req, fp, code, msg, headers, newurl):
         redirected = super().redirect_request(req, fp, code, msg, headers, newurl)
-        if redirected and urllib.parse.urlparse(req.full_url).netloc != urllib.parse.urlparse(newurl).netloc:
-            redirected.remove_header("Authorization")
+        if redirected:
+            source = urllib.parse.urlsplit(req.full_url)
+            destination = urllib.parse.urlsplit(newurl)
+            if source.scheme != destination.scheme or source.netloc != destination.netloc:
+                redirected.remove_header("Authorization")
         return redirected
 
 

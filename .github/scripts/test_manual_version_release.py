@@ -9,6 +9,7 @@ import json
 import os
 import tempfile
 import urllib.parse
+import urllib.request
 import zipfile
 from pathlib import Path
 from types import SimpleNamespace
@@ -532,6 +533,27 @@ assert release_recovery_artifact.failure_context_digest_from_zip(
     run_id="102",
     attempt=1,
 ) == ""
+
+redirect_handler = release_recovery_artifact.ArtifactRedirectHandler()
+https_request = urllib.request.Request(
+    "https://api.github.test/repos/IvanLi-CN/dockrev/actions/artifacts/902/zip",
+    headers={"Authorization": "Bearer test-token"},
+)
+same_origin_redirect = redirect_handler.redirect_request(
+    https_request, None, 302, "Found", {},
+    "https://api.github.test/repos/IvanLi-CN/dockrev/artifact-redirect",
+)
+assert same_origin_redirect.get_header("Authorization") == "Bearer test-token"
+scheme_downgrade_redirect = redirect_handler.redirect_request(
+    https_request, None, 302, "Found", {},
+    "http://api.github.test/repos/IvanLi-CN/dockrev/artifact-redirect",
+)
+assert scheme_downgrade_redirect.get_header("Authorization") is None
+cross_host_redirect = redirect_handler.redirect_request(
+    https_request, None, 302, "Found", {},
+    "https://artifact-store.github.test/download/902",
+)
+assert cross_host_redirect.get_header("Authorization") is None
 
 recovery_merge_sha = "d" * 40
 recovery_context_artifact = {
