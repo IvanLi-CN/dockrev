@@ -371,11 +371,12 @@ impl CommandRunner for HealthRollbackRunner {
         output_path: &std::path::Path,
     ) -> anyhow::Result<crate::runner::RawFileCommandOutput> {
         let bytes = b"candidate logs before rollback";
-        tokio::fs::write(output_path, bytes).await?;
         if self.fail_log_write {
+            tokio::fs::write(output_path, b"candidate logs before").await?;
             self.events.lock().unwrap().push("logs-write-failed");
             return Err(anyhow::anyhow!("injected file write failure"));
         }
+        tokio::fs::write(output_path, bytes).await?;
         self.events.lock().unwrap().push("logs-captured");
         Ok(crate::runner::RawFileCommandOutput {
             status: if self.timed_out { -1 } else { 0 },
@@ -596,10 +597,7 @@ async fn log_file_write_failure_preserves_partial_evidence_and_rolls_back() {
             .iter()
             .any(|error| error.contains("injected file write failure"))
     );
-    assert_eq!(
-        metadata.logs_bytes,
-        b"candidate logs before rollback".len() as u64
-    );
+    assert_eq!(metadata.logs_bytes, b"candidate logs before".len() as u64);
     assert_eq!(
         tokio::fs::read(
             evidence
@@ -608,7 +606,7 @@ async fn log_file_write_failure_preserves_partial_evidence_and_rolls_back() {
         )
         .await
         .unwrap(),
-        b"candidate logs before rollback"
+        b"candidate logs before"
     );
     std::fs::remove_dir_all(root).unwrap();
 }
