@@ -52,17 +52,23 @@ target merge contract in `.github/quality-gates.json` requires
 `Review Policy Gate` and `Manual Version Release Completion`. During migration,
 the live ruleset may still expose exactly `Review Policy Gate`, `Label Gate`,
 and `Release completion`; the live checker recognizes only that exact source
-set and reports that cutover is pending. It rejects any other mismatch. The
-target completion workflow uses `pull_request_target` and checks out
-`github.workflow_sha`, keeping its validation code tied to the workflow source
-instead of executing PR-head code. GitHub places pull request workflows created
-with `GITHUB_TOKEN` in an approval-required state; a user with write access
-must approve those runs from the PR before the checks can complete
+set and reports that cutover is pending, not aligned. It rejects any other
+mismatch. It also reads `.github/workflows/release-completion-pr.yml` from
+`main` and verifies the `pull_request_target` trigger, the `github.workflow_sha`
+checkout, and the target check name before accepting the target ruleset. GitHub
+then requires that target check to succeed on each PR before merge. The target
+workflow keeps validation code tied to its trusted workflow source instead of
+executing PR-head code. GitHub places pull request workflows created with
+`GITHUB_TOKEN` in an approval-required state; a user with write access must
+approve those runs from the PR before the checks can complete
 ([GitHub Actions event behavior](https://docs.github.com/en/actions/reference/workflows-and-actions/events-that-trigger-workflows)).
-The current base workflow still requires the old labels, so the new target
-check cannot bootstrap itself from this PR. The live cutover remains blocked
-until a trusted pre-merge check path is available; the ruleset must not be
-weakened to make this candidate pass.
+The old required contexts come from the live ruleset and run the versions of
+their workflows on `main`; this candidate cannot replace those checks with
+workflow definitions available only on its own branch. A cutover therefore
+needs a trusted bootstrap path that preserves the review and CI gates. Release
+version decisions remain in the `version` dispatch input and do not depend on
+PR labels. Do not report the source ruleset as migrated or remove its checks
+until the trusted target workflow is available on `main`.
 
 After the identity PR merges, `Release` resolves the signed provenance from the
 merged commit and rechecks the direct immutable reservation. It builds one

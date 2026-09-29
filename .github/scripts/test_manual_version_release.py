@@ -271,6 +271,50 @@ with (
 reserved_during_race.assert_called_once()
 pull_during_race.assert_not_called()
 
+with (
+    patch.object(
+        release_preparation,
+        "api_request",
+        side_effect=[
+            {"object": {"sha": current_main_sha}},
+            {"object": {"sha": current_main_sha}},
+            {"object": {"sha": current_main_sha}},
+            {"object": {"sha": next_main_sha}},
+        ],
+    ),
+    patch.object(
+        release_preparation,
+        "version_at_ref",
+        side_effect=["0.81.0", "0.81.0", "0.81.0", "0.81.1"],
+    ),
+    patch.object(release_preparation, "open_release_preparation_pull_requests", return_value=[]),
+    patch.object(release_preparation, "branch_ref", return_value=release_identity_sha),
+    patch.object(
+        release_preparation,
+        "inspect_identity",
+        return_value={"identity_sha": release_identity_sha, "parent_sha": old_main_sha},
+    ),
+    patch.object(release_preparation, "reserve_version"),
+    patch.object(
+        release_preparation,
+        "find_or_create_pull_request",
+        return_value={"number": 42},
+    ),
+    patch.object(release_preparation, "close_stale_pull_request") as close_stale_pr,
+    patch.object(release_preparation, "create_identity_commit"),
+):
+    expect_error(
+        release_preparation.prepare,
+        prepare_args,
+        error=release_preparation.StaleBaselineError,
+    )
+close_stale_pr.assert_called_once_with(
+    prepare_args.api_root,
+    prepare_args.token,
+    prepare_args.repository,
+    {"number": 42},
+)
+
 identity_sha = "a" * 40
 foreign_sha = "b" * 40
 reserved_sha = identity_sha

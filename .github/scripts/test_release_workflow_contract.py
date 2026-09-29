@@ -65,6 +65,11 @@ assert quality["required_check_migration"]["source_required_checks"] == [
 ]
 assert quality["required_check_migration"]["target_required_checks"] == quality["required_checks"]
 assert "trusted target workflow is present on main" in quality["required_check_migration"]["cutover_condition"]
+assert "must succeed for each PR before merge" in quality["required_check_migration"]["cutover_condition"]
+target_workflow_contract = quality["required_check_migration"]["target_workflow"]
+assert target_workflow_contract["branch"] == "main"
+assert target_workflow_contract["path"] == ".github/workflows/release-completion-pr.yml"
+assert target_workflow_contract["check_context"] in quality["required_check_migration"]["target_required_checks"]
 assert "release_label_contract" not in quality
 quality_gate_checker_spec = importlib.util.spec_from_file_location(
     "check_live_quality_gates", ROOT / ".github/scripts/check-live-quality-gates.py"
@@ -81,6 +86,10 @@ assert quality_gate_checker.required_check_migration_state(
 assert quality_gate_checker.required_check_migration_state(
     quality, ["Review Policy Gate"]
 ) == "drift"
+target_workflow = read(".github/workflows/release-completion-pr.yml")
+assert quality_gate_checker.target_workflow_status(quality, target_workflow) == "trusted"
+assert quality_gate_checker.target_workflow_status(quality, None) == "missing"
+assert quality_gate_checker.target_workflow_status(quality, "pull_request:\n  branches: [main]") == "untrusted"
 workflow_paths = {
     "Review Policy": ".github/workflows/review-policy.yml",
     "Release completion": ".github/workflows/release-completion-pr.yml",

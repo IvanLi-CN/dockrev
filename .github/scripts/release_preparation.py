@@ -21,6 +21,10 @@ class PreparationError(RuntimeError):
     pass
 
 
+class StaleBaselineError(PreparationError):
+    pass
+
+
 def api_request(
     api_root: str, token: str, method: str, path: str,
     payload: dict[str, Any] | None = None,
@@ -183,7 +187,7 @@ def assert_baseline_current(
     latest_sha = main_sha(api_root, token, repository)
     latest_baseline = version_at_ref(api_root, token, repository, latest_sha)
     if latest_baseline != baseline:
-        raise PreparationError(
+        raise StaleBaselineError(
             f"main:VERSION changed during release preparation ({baseline} -> {latest_baseline}); retry from the new baseline"
         )
 
@@ -320,6 +324,20 @@ def find_or_create_pull_request(
     return pull
 
 
+def close_stale_pull_request(
+    api_root: str, token: str, repository: str, pull_request: dict[str, Any],
+) -> None:
+    number = pull_request.get("number")
+    if isinstance(number, bool) or not isinstance(number, int) or number < 1:
+        raise PreparationError("stale release identity PR has no valid pull request number")
+    owner, name = repository_parts(repository)
+    closed = api_request(
+        api_root, token, "PATCH", f"/repos/{owner}/{name}/pulls/{number}", {"state": "closed"}
+    )
+    if not isinstance(closed, dict) or closed.get("state") != "closed":
+        raise PreparationError(f"stale release identity PR #{number} could not be closed")
+
+
 def prepare(args: argparse.Namespace) -> dict[str, Any]:
     release_policy.load_policy()
     source_sha = main_sha(args.api_root, args.token, args.repository)
@@ -349,6 +367,14 @@ def prepare(args: argparse.Namespace) -> dict[str, Any]:
     pull = find_or_create_pull_request(
         args.api_root, args.token, args.repository, branch, decision["version"], identity_sha
     )
+    try:
+        assert_baseline_current(args.api_root, args.token, args.repository, baseline)
+    except StaleBaselineError as error:
+        try:
+            close_stale_pull_request(args.api_root, args.token, args.repository, pull)
+        except PreparationError as close_error:
+            raise PreparationError(f"{error}; stale identity PR cleanup failed: {close_error}") from error
+        raise
     return {
         "schema_version": 1,
         "baseline_sha": identity["parent_sha"],

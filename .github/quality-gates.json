@@ -22,7 +22,17 @@
   "required_check_migration": {
     "source_required_checks": ["Review Policy Gate", "Label Gate", "Release completion"],
     "target_required_checks": ["Review Policy Gate", "Manual Version Release Completion"],
-    "cutover_condition": "trusted target workflow is present on main and the target check has completed successfully"
+    "target_workflow": {
+      "branch": "main",
+      "path": ".github/workflows/release-completion-pr.yml",
+      "check_context": "Manual Version Release Completion",
+      "trusted_markers": [
+        "pull_request_target:",
+        "ref: ${{ github.workflow_sha }}",
+        "name: Manual Version Release Completion"
+      ]
+    },
+    "cutover_condition": "trusted target workflow is present on main; its required check must succeed for each PR before merge"
   },
   "informational_checks": [
     "Detect changes", "Lint & Checks", "Worktree bootstrap smoke", "Backend Tests",

@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import argparse
+import base64
 import json
 import os
 import sys
@@ -119,6 +120,39 @@ def fetch_branch_rules(api_root: str, owner: str, repo: str, branch: str) -> obj
         raise ValidationError(f"GitHub API request failed: {exc.reason}") from exc
 
 
+def fetch_branch_file(api_root: str, owner: str, repo: str, branch: str, path: str) -> str | None:
+    quoted_path = urllib.parse.quote(path, safe="/")
+    quoted_branch = urllib.parse.quote(branch, safe="")
+    url = api_root.rstrip("/") + f"/repos/{owner}/{repo}/contents/{quoted_path}?ref={quoted_branch}"
+    headers = {
+        "Accept": "application/vnd.github+json",
+        "User-Agent": "quality-gates-live-check/1.0",
+        "X-GitHub-Api-Version": API_VERSION,
+    }
+    token = os.environ.get("GITHUB_TOKEN") or os.environ.get("GH_TOKEN") or ""
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
+    request = urllib.request.Request(url, headers=headers)
+    try:
+        with urllib.request.urlopen(request, timeout=30) as response:
+            payload = json.load(response)
+    except urllib.error.HTTPError as exc:
+        detail = exc.read().decode("utf-8", errors="replace")
+        if exc.code == 404:
+            return None
+        raise ValidationError(f"GitHub API request failed ({exc.code}): {detail}") from exc
+    except urllib.error.URLError as exc:
+        raise ValidationError(f"GitHub API request failed: {exc.reason}") from exc
+
+    if not isinstance(payload, dict) or payload.get("encoding") != "base64":
+        raise ValidationError(f"{branch}:{path} is not a base64 GitHub contents response")
+    try:
+        content = "".join(str(payload["content"]).split())
+        return base64.b64decode(content, validate=True).decode("utf-8")
+    except (KeyError, ValueError, UnicodeDecodeError) as exc:
+        raise ValidationError(f"{branch}:{path} has invalid encoded content") from exc
+
+
 def extract_rules(payload: object) -> list[dict]:
     if isinstance(payload, dict) and isinstance(payload.get("data"), list):
         payload = payload["data"]
@@ -163,6 +197,19 @@ def required_check_migration_state(declaration: dict, live_required_checks: list
     if live_required_checks == sorted(source):
         return "source"
     return "drift"
+
+
+def target_workflow_status(declaration: dict, content: str | None) -> str:
+    migration = declaration.get("required_check_migration", {})
+    workflow = migration.get("target_workflow", {}) if isinstance(migration, dict) else {}
+    markers = workflow.get("trusted_markers", []) if isinstance(workflow, dict) else []
+    if content is None:
+        return "missing"
+    if not isinstance(markers, list) or not markers or not all(
+        isinstance(marker, str) and marker and marker in content for marker in markers
+    ):
+        return "untrusted"
+    return "trusted"
 
 
 def validate_rules(declaration: dict, rules: list[dict], branch: str) -> list[str]:
@@ -279,6 +326,7 @@ def main() -> int:
         errors: list[str] = []
         checked_rules: dict[str, list[str]] = {}
         migration_states: dict[str, str] = {}
+        migration_readiness: dict[str, dict[str, str | bool]] = {}
         for branch in branches:
             rules = extract_rules(fetch_branch_rules(args.api_root, owner, repo, branch))
             checked_rules[branch] = sorted({rule.get("type", "") for rule in rules})
@@ -286,9 +334,36 @@ def main() -> int:
             status_rules = [rule for rule in rules if rule.get("type") == "required_status_checks"]
             live_checks = normalize_status_contexts(status_rules)
             migration_states[branch] = required_check_migration_state(declaration, live_checks)
+            migration = declaration.get("required_check_migration", {})
+            target_workflow = migration.get("target_workflow", {})
+            if not isinstance(target_workflow, dict):
+                raise ValidationError("required_check_migration.target_workflow must be an object")
+            workflow_path = target_workflow.get("path")
+            workflow_branch = target_workflow.get("branch")
+            check_context = target_workflow.get("check_context")
+            if not all(isinstance(value, str) and value for value in (workflow_path, workflow_branch, check_context)):
+                raise ValidationError("target workflow branch, path, and check_context must be set")
+            workflow_content = fetch_branch_file(
+                args.api_root, owner, repo, workflow_branch, workflow_path
+            )
+            workflow_status = target_workflow_status(declaration, workflow_content)
+            target_checks = sorted(migration.get("target_required_checks", []))
+            check_declared = check_context in target_checks
+            if not check_declared:
+                errors.append(f"{branch}: target check context is missing from target_required_checks")
+            if migration_states[branch] == "target" and workflow_status != "trusted":
+                errors.append(
+                    f"{branch}: target required checks are active but trusted workflow is {workflow_status} on {workflow_branch}"
+                )
+            migration_readiness[branch] = {
+                "trusted_target_workflow_on_main": workflow_status == "trusted",
+                "target_check_required": migration_states[branch] == "target" and check_declared,
+                "cutover_ready": workflow_status == "trusted" and check_declared,
+            }
             if migration_states[branch] == "source":
                 print(
-                    f"[live-quality-gates] {branch}: legacy required checks are still active; "
+                    f"[live-quality-gates] {branch}: legacy required checks remain active; "
+                    f"trusted target workflow status on {workflow_branch} is {workflow_status}; "
                     "the Manual Version Release Completion cutover remains pending",
                     file=sys.stderr,
                 )
@@ -314,8 +389,10 @@ def main() -> int:
                 "branches": branches,
                 "checked_rules": checked_rules,
                 "required_check_migration": migration_states,
+                "required_check_migration_readiness": migration_readiness,
                 "notes": [
                     "Validated effective branch rules via GET /repos/{owner}/{repo}/rules/branches/{branch}.",
+                    "Validated the target workflow markers from its trusted branch; GitHub enforces its required check on each PR before merge.",
                     "Bypass actors are not exposed by that endpoint and must be verified during live ruleset configuration.",
                 ],
             },
