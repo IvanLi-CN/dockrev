@@ -48,16 +48,21 @@ Preparation freezes the current main commit, baseline, input, and target. It
 creates a signed, single-parent commit that changes only root `VERSION`, then
 reserves that target with `release-reservation/v<VERSION>`. The
 `release-preparation/v<VERSION>` branch is opened as a PR to `main`. The
-checked-in `.github/quality-gates.json` declares `Review Policy Gate` and
-`Manual Version Release Completion`; the active repository ruleset still
-requires the legacy `Label Gate` and `Release completion` contexts, so the
-required-check migration remains a separate bootstrap constraint. The
-completion workflow uses `pull_request_target` and checks out
+target merge contract in `.github/quality-gates.json` requires
+`Review Policy Gate` and `Manual Version Release Completion`. During migration,
+the live ruleset may still expose exactly `Review Policy Gate`, `Label Gate`,
+and `Release completion`; the live checker recognizes only that exact source
+set and reports that cutover is pending. It rejects any other mismatch. The
+target completion workflow uses `pull_request_target` and checks out
 `github.workflow_sha`, keeping its validation code tied to the workflow source
 instead of executing PR-head code. GitHub places pull request workflows created
 with `GITHUB_TOKEN` in an approval-required state; a user with write access
 must approve those runs from the PR before the checks can complete
 ([GitHub Actions event behavior](https://docs.github.com/en/actions/reference/workflows-and-actions/events-that-trigger-workflows)).
+The current base workflow still requires the old labels, so the new target
+check cannot bootstrap itself from this PR. The live cutover remains blocked
+until a trusted pre-merge check path is available; the ruleset must not be
+weakened to make this candidate pass.
 
 After the identity PR merges, `Release` resolves the signed provenance from the
 merged commit and rechecks the direct immutable reservation. It builds one

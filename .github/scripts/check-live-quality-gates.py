@@ -154,6 +154,17 @@ def normalize_status_contexts(rules: list[dict]) -> list[str]:
     return sorted(contexts)
 
 
+def required_check_migration_state(declaration: dict, live_required_checks: list[str]) -> str:
+    target = sorted(declaration.get("required_checks", []))
+    if live_required_checks == target:
+        return "target"
+    migration = declaration.get("required_check_migration", {})
+    source = migration.get("source_required_checks", []) if isinstance(migration, dict) else []
+    if live_required_checks == sorted(source):
+        return "source"
+    return "drift"
+
+
 def validate_rules(declaration: dict, rules: list[dict], branch: str) -> list[str]:
     errors: list[str] = []
     required_checks = declaration.get("required_checks", [])
@@ -241,7 +252,7 @@ def validate_rules(declaration: dict, rules: list[dict], branch: str) -> list[st
             errors.append(f"{branch}: review_policy.enforcement.check_name must be set for required-check mode")
 
     live_required_checks = normalize_status_contexts(grouped.get("required_status_checks", []))
-    if live_required_checks != required_checks:
+    if required_check_migration_state(declaration, live_required_checks) == "drift":
         missing = sorted(set(required_checks) - set(live_required_checks))
         unexpected = sorted(set(live_required_checks) - set(required_checks))
         details: list[str] = []
@@ -267,10 +278,20 @@ def main() -> int:
         owner, repo = split_repo(args.repo)
         errors: list[str] = []
         checked_rules: dict[str, list[str]] = {}
+        migration_states: dict[str, str] = {}
         for branch in branches:
             rules = extract_rules(fetch_branch_rules(args.api_root, owner, repo, branch))
             checked_rules[branch] = sorted({rule.get("type", "") for rule in rules})
             errors.extend(validate_rules(declaration, rules, branch))
+            status_rules = [rule for rule in rules if rule.get("type") == "required_status_checks"]
+            live_checks = normalize_status_contexts(status_rules)
+            migration_states[branch] = required_check_migration_state(declaration, live_checks)
+            if migration_states[branch] == "source":
+                print(
+                    f"[live-quality-gates] {branch}: legacy required checks are still active; "
+                    "the Manual Version Release Completion cutover remains pending",
+                    file=sys.stderr,
+                )
     except ValidationError as exc:
         print(f"[live-quality-gates] {exc}", file=sys.stderr)
         return 1
@@ -284,10 +305,15 @@ def main() -> int:
     print(
         json.dumps(
             {
-                "status": "ok",
+                "status": (
+                    "transition_in_progress"
+                    if "source" in migration_states.values()
+                    else "ok"
+                ),
                 "repo": args.repo,
                 "branches": branches,
                 "checked_rules": checked_rules,
+                "required_check_migration": migration_states,
                 "notes": [
                     "Validated effective branch rules via GET /repos/{owner}/{repo}/rules/branches/{branch}.",
                     "Bypass actors are not exposed by that endpoint and must be verified during live ruleset configuration.",

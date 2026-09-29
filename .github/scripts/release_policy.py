@@ -231,7 +231,11 @@ def validate_failure_context(
     expected_attempt: str | None = None,
 ) -> dict[str, Any]:
     if payload.get("identity_resolution_failed") is True:
-        validate_sha(str(payload.get("merge_commit_sha", "")), "merge_commit_sha")
+        merge_sha = str(payload.get("merge_commit_sha", ""))
+        if merge_sha:
+            validate_sha(merge_sha, "merge_commit_sha")
+        elif payload.get("identity_failure_kind") != "resolver-error":
+            raise PolicyError("unresolved identity failure must not omit its merge SHA")
         if payload.get("identity_failure_kind") not in {"resolver-error", "no-identity"}:
             raise PolicyError("failure context identity failure kind is invalid")
         if payload.get("recovery_instruction") != (

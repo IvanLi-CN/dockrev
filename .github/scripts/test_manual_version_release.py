@@ -58,6 +58,12 @@ for baseline, version_input, expected in (
     ("0.81.1-beta.2", "minor", "0.82.0"),
     ("0.81.1-beta.2", "patch", "0.81.2"),
     ("0.81.1-beta.2", "0.81.2", "0.81.2"),
+    ("0.81.1-alpha.2", "major", "1.0.0"),
+    ("0.81.1-alpha.2", "minor", "0.82.0"),
+    ("0.81.1-alpha.2", "patch", "0.81.2"),
+    ("0.81.1-rc.2", "major", "1.0.0"),
+    ("0.81.1-rc.2", "minor", "0.82.0"),
+    ("0.81.1-rc.2", "patch", "0.81.2"),
 ):
     assert release_policy.compute_target(baseline, version_input)["version"] == expected
 
@@ -174,7 +180,30 @@ reserve.assert_called_once_with(
 with patch.object(
     release_preparation,
     "open_release_preparation_pull_requests",
-    return_value=[{"base": {"ref": "main"}, "head": {"ref": "release-preparation/v0.82.0"}}],
+    return_value=[{
+        "base": {"ref": "main"},
+        "head": {
+            "ref": "release-preparation/v0.82.0",
+            "repo": {"full_name": "IvanLi-CN/dockrev"},
+        },
+    }],
+):
+    expect_error(
+        release_preparation.assert_no_competing_release_preparation,
+        "https://api.github.test", "token", "IvanLi-CN/dockrev", "release-preparation/v0.81.1",
+        error=release_preparation.PreparationError,
+    )
+
+with patch.object(
+    release_preparation,
+    "open_release_preparation_pull_requests",
+    return_value=[{
+        "base": {"ref": "main"},
+        "head": {
+            "ref": "release-preparation/v0.81.1",
+            "repo": {"full_name": "fork-owner/dockrev"},
+        },
+    }],
 ):
     expect_error(
         release_preparation.assert_no_competing_release_preparation,
@@ -212,6 +241,36 @@ with (
 reserve_after_baseline_move.assert_not_called()
 create_pull_after_baseline_move.assert_not_called()
 
+with (
+    patch.object(
+        release_preparation,
+        "api_request",
+        side_effect=[
+            {"object": {"sha": current_main_sha}},
+            {"object": {"sha": current_main_sha}},
+            {"object": {"sha": next_main_sha}},
+        ],
+    ),
+    patch.object(release_preparation, "version_at_ref", side_effect=["0.81.0", "0.81.0", "0.81.1"]),
+    patch.object(release_preparation, "open_release_preparation_pull_requests", return_value=[]),
+    patch.object(release_preparation, "branch_ref", return_value=release_identity_sha),
+    patch.object(
+        release_preparation,
+        "inspect_identity",
+        return_value={"identity_sha": release_identity_sha, "parent_sha": old_main_sha},
+    ),
+    patch.object(release_preparation, "reserve_version") as reserved_during_race,
+    patch.object(release_preparation, "find_or_create_pull_request") as pull_during_race,
+    patch.object(release_preparation, "create_identity_commit"),
+):
+    expect_error(
+        release_preparation.prepare,
+        prepare_args,
+        error=release_preparation.PreparationError,
+    )
+reserved_during_race.assert_called_once()
+pull_during_race.assert_not_called()
+
 identity_sha = "a" * 40
 foreign_sha = "b" * 40
 reserved_sha = identity_sha
@@ -243,6 +302,73 @@ valid_completion = {
     "reservation_sha": identity_sha,
 }
 assert release_completion.validate_completion(valid_completion) == valid_completion
+
+completion_source_sha = "c" * 40
+completion_head_sha = "a" * 40
+completion_pull = {
+    "state": "open",
+    "base": {"ref": "main", "repo": {"full_name": "IvanLi-CN/dockrev"}},
+    "head": {
+        "repo": {"full_name": "IvanLi-CN/dockrev"},
+        "ref": "release-preparation/v0.81.1",
+        "sha": completion_head_sha,
+    },
+}
+
+def completion_api(_api_root, _token, path):
+    if path.endswith("/pulls/42"):
+        return completion_pull
+    if path.endswith(f"/commits/{completion_head_sha}"):
+        return {
+            "commit": {
+                "verification": {"verified": True},
+                "message": identity_message,
+            },
+            "parents": [{"sha": completion_source_sha}],
+            "files": [{"filename": "VERSION"}],
+        }
+    if path.endswith("/pulls/42/files?per_page=100&page=1"):
+        return [{"filename": "VERSION"}]
+    if path.endswith(f"/contents/VERSION?ref={completion_source_sha}"):
+        return {"encoding": "base64", "content": "MC44MS4wCg=="}
+    if path.endswith(f"/contents/VERSION?ref={completion_head_sha}"):
+        return {"encoding": "base64", "content": "MC44MS4xCg=="}
+    if path.endswith("/contents/VERSION?ref=main"):
+        return {"encoding": "base64", "content": "MC44MS4wCg=="}
+    if path.endswith(f"/compare/{completion_source_sha}...main"):
+        return {"status": "ahead"}
+    if path.endswith("/git/ref/heads/release-reservation/v0.81.1"):
+        return {"object": {"sha": completion_head_sha}}
+    if path.endswith("/git/ref/heads/release-publication-lock/v0.81.1"):
+        return None
+    if path.endswith("/git/ref/tags/v0.81.1") or path.endswith("/git/ref/tags/0.81.1"):
+        return None
+    raise AssertionError(f"unexpected release completion API request: {path}")
+
+with patch.object(release_completion, "api_json", side_effect=completion_api):
+    loaded_completion = release_completion.load_github_completion(
+        "https://api.github.test", "token", "IvanLi-CN/dockrev", 42, completion_head_sha
+    )
+assert loaded_completion["version"] == "0.81.1"
+assert loaded_completion["reservation_sha"] == completion_head_sha
+
+with patch.object(
+    release_completion,
+    "api_json",
+    return_value={
+        **completion_pull,
+        "head": {
+            **completion_pull["head"],
+            "repo": {"full_name": "fork-owner/dockrev"},
+        },
+    },
+):
+    expect_error(
+        release_completion.load_github_completion,
+        "https://api.github.test", "token", "IvanLi-CN/dockrev", 42, completion_head_sha,
+        error=release_completion.CompletionError,
+    )
+
 ordinary_completion = release_completion.validate_nonrelease_completion({
     "repository": "IvanLi-CN/dockrev",
     "pull_request": 7,
@@ -436,5 +562,25 @@ with patch.dict(os.environ, {
 assert "version decision: beta" in summary
 assert "artifact digest: sha256:" + "f" * 64 in summary
 assert "workflow_dispatch merge_sha=" + "d" * 40 in summary
+
+unavailable_context = release_failure_context.unavailable_identity_failure_context(
+    repository="IvanLi-CN/dockrev",
+    server="https://github.com",
+    run_id="9002",
+    attempt="3",
+    event="push",
+    ref="main",
+    actor="github-actions[bot]",
+)
+with patch.dict(os.environ, {
+    "GITHUB_REPOSITORY": "IvanLi-CN/dockrev",
+    "GITHUB_SERVER_URL": "https://github.com",
+    "EXPECTED_RELEASE_RUN_ID": "9002",
+    "EXPECTED_RELEASE_ATTEMPT": "3",
+}):
+    unavailable_summary = release_failure_context.notification_summary(unavailable_context)
+assert "identity could not be resolved" in unavailable_summary
+assert "merge sha: unavailable (identity not verified)" in unavailable_summary
+assert "workflow_dispatch merge_sha=" not in unavailable_summary
 
 print("PASS: manual version release identity, reservation, artifact, and recovery contracts")

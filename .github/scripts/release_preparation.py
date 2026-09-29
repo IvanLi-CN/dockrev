@@ -136,7 +136,10 @@ def open_release_preparation_pull_requests(
                 raise PreparationError("GitHub returned an invalid pull request entry")
             head = pull.get("head") or {}
             if pull.get("base", {}).get("ref") == "main" and str(head.get("ref", "")).startswith(prefix):
-                matches.append(pull)
+                matches.append({
+                    **pull,
+                    "head_repository_full_name": str((head.get("repo") or {}).get("full_name", "")),
+                })
         if len(pulls) < 100:
             return matches
         page += 1
@@ -146,7 +149,23 @@ def assert_no_competing_release_preparation(
     api_root: str, token: str, repository: str, expected_branch: str,
 ) -> None:
     pulls = open_release_preparation_pull_requests(api_root, token, repository)
-    branches = [str((pull.get("head") or {}).get("ref", "")) for pull in pulls]
+    repository_key = repository.casefold()
+    owned = [
+        (str(pull.get("head_repository_full_name", "")),
+         str((pull.get("head") or {}).get("ref", "")))
+        for pull in pulls
+    ]
+    foreign = sorted(
+        f"{branch} ({head_repository or 'unknown repository'})"
+        for head_repository, branch in owned
+        if head_repository.casefold() != repository_key
+    )
+    if foreign:
+        raise PreparationError(
+            "a release identity PR uses a fork branch; resolve it before preparing a version: "
+            + ", ".join(foreign)
+        )
+    branches = [branch for _, branch in owned]
     expected_count = branches.count(expected_branch)
     if expected_count > 1:
         raise PreparationError("multiple open PRs exist for one release identity branch")
@@ -325,6 +344,8 @@ def prepare(args: argparse.Namespace) -> dict[str, Any]:
     assert_baseline_current(args.api_root, args.token, args.repository, baseline)
     assert_no_competing_release_preparation(args.api_root, args.token, args.repository, branch)
     reserve_version(args.api_root, args.token, args.repository, decision["version"], identity_sha)
+    assert_baseline_current(args.api_root, args.token, args.repository, baseline)
+    assert_no_competing_release_preparation(args.api_root, args.token, args.repository, branch)
     pull = find_or_create_pull_request(
         args.api_root, args.token, args.repository, branch, decision["version"], identity_sha
     )

@@ -12,6 +12,11 @@ from typing import Any
 import release_policy
 
 
+UNRESOLVED_RECOVERY = (
+    "verify the merged VERSION identity; retry Release with the same merge SHA only after identity is confirmed"
+)
+
+
 def expected_artifacts(version: str) -> list[str]:
     return [
         suffix
@@ -23,6 +28,25 @@ def expected_artifacts(version: str) -> list[str]:
         ]
         for suffix in (f"{base}.tar.gz", f"{base}.tar.gz.sha256")
     ]
+
+
+def unavailable_identity_failure_context(
+    *, repository: str, server: str, run_id: str, attempt: str, event: str,
+    ref: str, actor: str,
+) -> dict[str, Any]:
+    return {
+        "merge_commit_sha": "",
+        "run_url": f"{server}/{repository}/actions/runs/{run_id}",
+        "recovery_instruction": UNRESOLVED_RECOVERY,
+        "identity_resolution_failed": True,
+        "identity_failure_kind": "resolver-error",
+        "repository": repository,
+        "workflow": "Release",
+        "event": event,
+        "ref": ref,
+        "run_attempt": int(attempt),
+        "actor": actor,
+    }
 
 
 def resolved_identity_failure_context(
@@ -69,8 +93,10 @@ def notification_summary(payload: dict[str, Any]) -> str:
                 f"repository: {payload.get('repository', '')}",
                 f"workflow: {payload.get('workflow', 'Release')}",
                 f"event: {payload.get('event', '')}",
+                f"ref: {payload.get('ref', '')}",
                 f"attempt: {payload.get('run_attempt', '')}",
-                f"merge sha: {payload['merge_commit_sha']}",
+                f"actor: {payload.get('actor', '')}",
+                f"merge sha: {payload.get('merge_commit_sha') or 'unavailable (identity not verified)'}",
                 f"failure kind: {payload['identity_failure_kind']}",
                 f"run: {payload['run_url']}",
                 f"recovery: {payload['recovery_instruction']}",
@@ -103,6 +129,7 @@ def notification_summary(payload: dict[str, Any]) -> str:
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--input", type=Path)
+    parser.add_argument("--unresolved-run", action="store_true")
     parser.add_argument("--resolved-identity", type=Path)
     parser.add_argument("--repository")
     parser.add_argument("--server")
@@ -114,6 +141,30 @@ def main() -> int:
     parser.add_argument("--artifact-digest", default="")
     parser.add_argument("--output", type=Path)
     args = parser.parse_args()
+    if args.unresolved_run:
+        required = {
+            "repository": args.repository,
+            "server": args.server,
+            "run_id": args.run_id,
+            "attempt": args.attempt,
+            "event": args.event,
+            "ref": args.ref,
+            "actor": args.actor,
+        }
+        missing = [name for name, value in required.items() if value is None]
+        if missing:
+            parser.error(f"unresolved run context missing: {', '.join(missing)}")
+        payload = unavailable_identity_failure_context(
+            repository=args.repository,
+            server=args.server,
+            run_id=args.run_id,
+            attempt=args.attempt,
+            event=args.event,
+            ref=args.ref,
+            actor=args.actor,
+        )
+        print(notification_summary(payload))
+        return 0
     if args.resolved_identity:
         required = {
             "repository": args.repository,

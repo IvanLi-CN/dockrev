@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import importlib.util
 import json
 import re
 from pathlib import Path
@@ -59,7 +60,27 @@ for obsolete in (
 
 quality = json.loads(read(".github/quality-gates.json"))
 assert quality["required_checks"] == ["Review Policy Gate", "Manual Version Release Completion"]
+assert quality["required_check_migration"]["source_required_checks"] == [
+    "Review Policy Gate", "Label Gate", "Release completion"
+]
+assert quality["required_check_migration"]["target_required_checks"] == quality["required_checks"]
+assert "trusted target workflow is present on main" in quality["required_check_migration"]["cutover_condition"]
 assert "release_label_contract" not in quality
+quality_gate_checker_spec = importlib.util.spec_from_file_location(
+    "check_live_quality_gates", ROOT / ".github/scripts/check-live-quality-gates.py"
+)
+assert quality_gate_checker_spec and quality_gate_checker_spec.loader
+quality_gate_checker = importlib.util.module_from_spec(quality_gate_checker_spec)
+quality_gate_checker_spec.loader.exec_module(quality_gate_checker)
+assert quality_gate_checker.required_check_migration_state(
+    quality, ["Label Gate", "Release completion", "Review Policy Gate"]
+) == "source"
+assert quality_gate_checker.required_check_migration_state(
+    quality, ["Manual Version Release Completion", "Review Policy Gate"]
+) == "target"
+assert quality_gate_checker.required_check_migration_state(
+    quality, ["Review Policy Gate"]
+) == "drift"
 workflow_paths = {
     "Review Policy": ".github/workflows/review-policy.yml",
     "Release completion": ".github/workflows/release-completion-pr.yml",
