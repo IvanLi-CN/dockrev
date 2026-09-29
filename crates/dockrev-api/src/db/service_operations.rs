@@ -522,6 +522,29 @@ WHERE id = ?1
                             return Ok(ServiceOperationAcquireOutcome::StaleCurrentDigest);
                         }
                     }
+
+                    for target in &targets {
+                        let unblocked = tx
+                            .query_row(
+                                r#"
+SELECT CASE
+  WHEN update_guard_json IS NULL THEN 1
+  WHEN json_valid(update_guard_json) THEN
+    CASE WHEN json_type(update_guard_json, '$.blocked') = 'false' THEN 1 ELSE 0 END
+  ELSE 0
+END
+FROM services
+WHERE id = ?1
+"#,
+                                [&target.service_id],
+                                |row| row.get::<_, bool>(0),
+                            )
+                            .optional()?
+                            .unwrap_or(false);
+                        if !unblocked {
+                            return Ok(ServiceOperationAcquireOutcome::StaleCurrentDigest);
+                        }
+                    }
                 }
 
                 insert_job_tx(&tx, &job)?;
@@ -1246,6 +1269,80 @@ INSERT INTO services (
         ));
         assert!(
             db.get_job("job_stale_selected_version")
+                .await
+                .unwrap()
+                .is_none()
+        );
+    }
+
+    #[tokio::test]
+    async fn selected_version_enqueue_rejects_a_newly_blocked_update_guard() {
+        let db = Db::open(Path::new(":memory:")).await.unwrap();
+        let (stack_id, service_id) = seed_service(&db).await;
+        let baseline_digest =
+            "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+        let updated_service_id = service_id.clone();
+        db.call(move |conn| {
+            conn.execute(
+                "UPDATE services SET current_digest = ?1 WHERE id = ?2",
+                params![baseline_digest, updated_service_id],
+            )?;
+            Ok(())
+        })
+        .await
+        .unwrap();
+        let accepted_state_generation = db
+            .get_versioned_service_accepted_state(&service_id)
+            .await
+            .unwrap()
+            .unwrap()
+            .generation;
+        let blocked_service_id = service_id.clone();
+        db.call(move |conn| {
+            conn.execute(
+                "UPDATE services SET update_guard_json = ?1 WHERE id = ?2",
+                params![
+                    r#"{"blocked":true,"code":"maintenance","reason":"deployment paused"}"#,
+                    blocked_service_id
+                ],
+            )?;
+            Ok(())
+        })
+        .await
+        .unwrap();
+        let job = crate::api::types::JobRecord::new_running(
+            "job_blocked_selected_version".to_string(),
+            JobType::Update,
+            JobScope::Service,
+            Some(stack_id.clone()),
+            Some(service_id.clone()),
+            "2026-08-30T00:01:00Z",
+        );
+
+        let outcome = db
+            .insert_service_operation_job_if_unblocked_with_service_baseline(
+                job.to_db(),
+                vec![ServiceOperationTarget {
+                    service_id: service_id.clone(),
+                    stack_id,
+                }],
+                None,
+                SelectedServiceOperationBaseline {
+                    current_digest: baseline_digest,
+                    image_reference: "ghcr.io/acme/web:latest",
+                    configured_tag: "latest",
+                    accepted_state_generation,
+                },
+            )
+            .await
+            .unwrap();
+
+        assert!(matches!(
+            outcome,
+            ServiceOperationAcquireOutcome::StaleCurrentDigest
+        ));
+        assert!(
+            db.get_job("job_blocked_selected_version")
                 .await
                 .unwrap()
                 .is_none()

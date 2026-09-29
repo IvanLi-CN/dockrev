@@ -1,4 +1,5 @@
 import { imageRepoFromImageRef } from '../../../../imageRepo'
+import { compareStrictSemverTags } from '../../../../versionDisplay'
 import type { JobListItem } from '../../../../api'
 import type { MockRouteContext } from '../context'
 
@@ -9,7 +10,7 @@ function previewForRelease(found: NonNullable<ReturnType<MockRouteContext['findS
   const isObserved =
     found.svc.id === 'svc-prod-api' &&
     found.svc.image.tag === 'latest' &&
-    releaseTag === '5.2.3'
+    compareStrictSemverTags(releaseTag, '5.2.3') === 0
   return {
     releaseTag,
     classification: isObserved ? 'normal' : 'forced',

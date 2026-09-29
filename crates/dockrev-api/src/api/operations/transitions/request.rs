@@ -396,6 +396,7 @@ async fn enqueue_update_job_with_start_and_targets(
                 }
             }
         } else if let Some(expected_current_digest) = expected_current_digest {
+            let selected_version_update = expected_service_image_override.is_some();
             let outcome = if let Some((image_reference, configured_tag)) =
                 expected_service_image_override
             {
@@ -433,6 +434,14 @@ async fn enqueue_update_job_with_start_and_targets(
                 crate::db::ServiceOperationAcquireOutcome::Acquired(_) => None,
                 crate::db::ServiceOperationAcquireOutcome::Conflict(job) => Some(*job),
                 crate::db::ServiceOperationAcquireOutcome::StaleCurrentDigest => {
+                    if selected_version_update {
+                        return Err(ApiError::conflict(
+                            "selected version preview is stale; preview the release again",
+                        )
+                        .with_details(json!({
+                            "reason": "selected_version_preview_stale"
+                        })));
+                    }
                     return Err(ApiError::conflict(
                         "service candidate changed while enqueueing auto policy update",
                     )

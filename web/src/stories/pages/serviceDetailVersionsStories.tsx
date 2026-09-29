@@ -415,7 +415,11 @@ function selectedVersionSubmissionStory(input: {
         "svc-prod-api": {
           authMode: "anonymous",
           repo: { fullName: "acme/api", htmlUrl: "https://github.com/acme/api" },
-          items: versionReleaseNotes,
+          items: forced
+            ? versionReleaseNotes
+            : versionReleaseNotes.map((release) => release.tagName === "5.2.3"
+              ? { ...release, tagName: "v5.2.3" }
+              : release),
         },
       },
     },
@@ -475,7 +479,7 @@ function selectedVersionSubmissionStory(input: {
 }
 
 export const VersionsSectionNormalUpdateSubmission = selectedVersionSubmissionStory({
-  releaseTag: "5.2.3",
+  releaseTag: "v5.2.3",
   classification: "normal",
   targetDigest: dockrevDigest("0", "23"),
 });

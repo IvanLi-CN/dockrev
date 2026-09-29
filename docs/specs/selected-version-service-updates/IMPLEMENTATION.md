@@ -24,7 +24,7 @@
 - Automatic-policy recheck tests: 11 passed; digest-bound settlement regression test: 1 passed; cancelled auto-policy service-lease release and startup recovery tests: 2 passed.
   - In `web/`: `bun run test`（249 passed、778 expectations）、`bun run lint`（0 errors；3 existing hook warnings）、`bun run build:demo:pages`
   - TypeScript build, selected-version Spec contract check, and visual-evidence document check passed; the related legacy service-detail Spec retains its historical format and does not pass the current canonical-format checker.
-  - In `web/`: `node ./scripts/storybook-build.mjs` and `DOCKREV_TEST_STORYBOOK_INTERACTIVE_ONLY=1 node ./scripts/test-storybook.mjs`
+  - In `web/`: `node ./scripts/storybook-build.mjs` and `DOCKREV_TEST_STORYBOOK_SMOKE_ONLY=1 bun run test-storybook` (421 stories passed, including both selected-version submission flows).
 - Rollout facts: 新安装和升级数据库均从空的历史归属表开始，只积累今后成功检查产生的观察。
 
 ## Empirical Acceptance
