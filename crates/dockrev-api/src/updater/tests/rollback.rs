@@ -421,6 +421,7 @@ async fn healthcheck_failure_rolls_back_with_attempted_and_final_digests() {
     .unwrap();
 
     assert_eq!(outcome.status, "rolled_back");
+    assert!(outcome.healthcheck_failure_observed);
     assert_eq!(
         outcome.summary_json["newDigests"]["svc_1"],
         json!("sha256:new")

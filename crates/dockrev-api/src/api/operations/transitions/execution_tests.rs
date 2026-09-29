@@ -71,6 +71,32 @@ fn evidence_setup_failure_checks_healthchecks_across_all_stack_summaries() {
     assert_eq!(summary["rollbackEvidence"]["status"], "incomplete");
 }
 
+#[test]
+fn evidence_setup_failure_detects_later_healthcheck_failure_in_same_stack() {
+    let summaries = vec![serde_json::json!({
+        "update": {"failureStep":"pull_target_tag"}
+    })];
+
+    assert!(!transition_requires_evidence_failure_metadata(
+        TransitionJobKind::Update,
+        "apply",
+        &summaries,
+        false,
+    ));
+    assert!(transition_requires_evidence_failure_metadata(
+        TransitionJobKind::Update,
+        "apply",
+        &summaries,
+        true,
+    ));
+    assert!(!transition_requires_evidence_failure_metadata(
+        TransitionJobKind::Update,
+        "dry-run",
+        &summaries,
+        true,
+    ));
+}
+
 #[tokio::test]
 async fn evidence_archive_persistence_failure_still_finishes_job_without_deleting_evidence() {
     let root =

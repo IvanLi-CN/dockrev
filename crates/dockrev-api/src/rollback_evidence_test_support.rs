@@ -1,5 +1,6 @@
 use super::*;
-use crate::runner::{CommandOutput, CommandSpec, RawCommandOutput};
+use crate::runner::{CommandOutput, CommandSpec, RawCommandOutput, RawFileCommandOutput};
+use std::sync::atomic::{AtomicUsize, Ordering};
 use tokio::io::AsyncWriteExt;
 
 #[tokio::test]
@@ -167,6 +168,84 @@ async fn nonzero_log_exit_keeps_partial_file_and_records_incomplete_status() {
         .await
         .expect("partial log should be retained"),
         b"partial raw output before nonzero exit\xff"
+    );
+
+    let _ = tokio::fs::remove_dir_all(root).await;
+}
+
+struct ManifestCheckpointFailureRunner {
+    raw_command_calls: AtomicUsize,
+}
+
+#[async_trait::async_trait]
+impl CommandRunner for ManifestCheckpointFailureRunner {
+    async fn run(&self, _spec: CommandSpec, _timeout: Duration) -> anyhow::Result<CommandOutput> {
+        self.raw_command_calls.fetch_add(1, Ordering::SeqCst);
+        Ok(CommandOutput {
+            status: 0,
+            stdout: String::new(),
+            stderr: String::new(),
+        })
+    }
+
+    async fn run_raw(
+        &self,
+        _spec: CommandSpec,
+        _timeout: Duration,
+    ) -> anyhow::Result<RawCommandOutput> {
+        self.raw_command_calls.fetch_add(1, Ordering::SeqCst);
+        Ok(RawCommandOutput {
+            status: 0,
+            stdout: br#"{"Status":"running","Health":{"Log":[]}}"#.to_vec(),
+            stderr: Vec::new(),
+        })
+    }
+}
+
+#[tokio::test]
+async fn manifest_checkpoint_failure_skips_raw_candidate_log_command() {
+    let root = std::env::temp_dir().join(format!(
+        "dockrev-rollback-checkpoint-failure-{}",
+        ulid::Ulid::new()
+    ));
+    fs::create_dir_all(&root).expect("test root");
+    let context = RollbackEvidenceContext::new("job-checkpoint", &root.join("dockrev.sqlite"))
+        .expect("spool");
+    tokio::fs::create_dir_all(context.job_spool_path())
+        .await
+        .expect("job spool");
+    tokio::fs::create_dir(context.job_spool_path().join("manifest.json"))
+        .await
+        .expect("block manifest rename");
+    let runner = ManifestCheckpointFailureRunner {
+        raw_command_calls: AtomicUsize::new(0),
+    };
+
+    let metadata = context
+        .capture_failure(
+            &runner,
+            &DockerRunnerConfig::default(),
+            "service-a",
+            "candidate-a",
+            "unhealthy",
+            None,
+            None,
+        )
+        .await;
+
+    assert!(metadata.logs_truncated);
+    assert!(
+        metadata
+            .capture_errors
+            .iter()
+            .any(|error| error.starts_with("manifest checkpoint:"))
+    );
+    assert_eq!(runner.raw_command_calls.load(Ordering::SeqCst), 0);
+    assert!(
+        !context
+            .job_spool_path()
+            .join("service-a/candidate-a/container.log.part")
+            .exists()
     );
 
     let _ = tokio::fs::remove_dir_all(root).await;

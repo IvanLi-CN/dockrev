@@ -113,7 +113,7 @@ async fn service_backup_records_report_stack_wide_retention_metadata() {
 }
 
 #[tokio::test]
-async fn rollback_evidence_api_download_requires_user_and_keeps_archive_out_of_job_json() {
+async fn rollback_evidence_api_download_preserves_raw_candidate_logs_end_to_end() {
     let state = test_state_with_authz(":memory:", Some("alice"), None, false).await;
     let job_id = ids::new_job_id();
     let job = crate::api::types::JobRecord::new_running(
@@ -126,24 +126,47 @@ async fn rollback_evidence_api_download_requires_user_and_keeps_archive_out_of_j
     )
     .to_db();
     state.db.insert_job(job).await.unwrap();
-    let archive_bytes = (0..(2 * 1024 * 1024 + 173))
+    let evidence = crate::rollback_evidence::RollbackEvidenceContext::new(
+        job_id.clone(),
+        &state.config.db_path,
+    )
+    .expect("evidence spool");
+    let evidence_spool_root = crate::rollback_evidence::spool_root(&state.config.db_path);
+    let mut expected_logs = (0..(2 * 1024 * 1024 + 173))
         .map(|index| (index % 251) as u8)
         .collect::<Vec<_>>();
-    let archive_path = std::env::temp_dir().join(format!(
-        "dockrev-api-rollback-evidence-{}.tar.zst",
-        ulid::Ulid::new()
-    ));
-    tokio::fs::write(&archive_path, &archive_bytes).await.unwrap();
-    let summary = json!({
-        "rollbackEvidence": {
-            "status": "available",
-            "archiveFormat": "tar",
-            "compression": "zstd",
-            "failedCandidates": 1,
-            "archiveSizeBytes": archive_bytes.len(),
-            "services": [{"serviceId": "service-a", "logsTruncated": false}]
-        }
-    });
+    let private_marker = b"candidate-log-private-marker\n";
+    expected_logs[..private_marker.len()].copy_from_slice(private_marker);
+    let capture = evidence
+        .capture_failure(
+            &CandidateLogEvidenceRunner {
+                log_bytes: expected_logs.clone(),
+            },
+            &crate::docker_runner::DockerRunnerConfig::default(),
+            "service-a",
+            "candidate-a",
+            "unhealthy",
+            None,
+            None,
+        )
+        .await;
+    assert_eq!(capture.logs_bytes, expected_logs.len() as u64);
+    assert!(!capture.logs_truncated);
+    assert_eq!(
+        tokio::fs::read(
+            evidence
+                .job_spool_path()
+                .join("service-a/candidate-a/container.log")
+        )
+        .await
+        .unwrap(),
+        expected_logs
+    );
+    let evidence_summary = evidence.finalize().await;
+    assert_eq!(evidence_summary.status, "available");
+    let archive_path = evidence.archive_path();
+    let archive_bytes = tokio::fs::read(&archive_path).await.unwrap();
+    let summary = json!({"rollbackEvidence": evidence_summary});
     state
         .db
         .finish_job_with_archive_file_and_settlement_and_notification(
@@ -157,6 +180,9 @@ async fn rollback_evidence_api_download_requires_user_and_keeps_archive_out_of_j
         )
         .await
         .unwrap();
+    evidence.cleanup_after_commit().await;
+    assert!(!evidence.job_spool_path().exists());
+    assert!(!archive_path.exists());
 
     let app = api::router(state);
     let unauthorized = app
@@ -197,6 +223,19 @@ async fn rollback_evidence_api_download_requires_user_and_keeps_archive_out_of_j
     );
     let bytes = response.into_body().collect().await.unwrap().to_bytes();
     assert_eq!(bytes.as_ref(), archive_bytes);
+    assert!(!bytes.is_empty());
+    let downloaded_archive = std::env::temp_dir().join(format!(
+        "dockrev-api-downloaded-evidence-{}.tar.zst",
+        ulid::Ulid::new()
+    ));
+    tokio::fs::write(&downloaded_archive, &bytes).await.unwrap();
+    assert_eq!(
+        extract_rollback_evidence_member(
+            &downloaded_archive,
+            "./service-a/candidate-a/container.log"
+        ),
+        expected_logs
+    );
 
     let detail = app
         .clone()
@@ -215,6 +254,68 @@ async fn rollback_evidence_api_download_requires_user_and_keeps_archive_out_of_j
         detail_json["job"]["summary"]["rollbackEvidence"]["services"][0]["logsTruncated"],
         false
     );
-    assert!(!detail_json.to_string().contains("28b52ffd"));
-    tokio::fs::remove_file(archive_path).await.unwrap();
+    assert!(!detail_json
+        .to_string()
+        .contains("candidate-log-private-marker"));
+    tokio::fs::remove_file(downloaded_archive).await.unwrap();
+    let _ = tokio::fs::remove_dir(evidence_spool_root).await;
+}
+
+struct CandidateLogEvidenceRunner {
+    log_bytes: Vec<u8>,
+}
+
+#[async_trait::async_trait]
+impl CommandRunner for CandidateLogEvidenceRunner {
+    async fn run(
+        &self,
+        spec: CommandSpec,
+        timeout: Duration,
+    ) -> anyhow::Result<crate::runner::CommandOutput> {
+        let output = self.run_raw(spec, timeout).await?;
+        Ok(crate::runner::CommandOutput {
+            status: output.status,
+            stdout: String::from_utf8_lossy(&output.stdout).into_owned(),
+            stderr: String::from_utf8_lossy(&output.stderr).into_owned(),
+        })
+    }
+
+    async fn run_raw(
+        &self,
+        spec: CommandSpec,
+        _timeout: Duration,
+    ) -> anyhow::Result<crate::runner::RawCommandOutput> {
+        let stdout = if spec.args.iter().any(|arg| arg.contains("logs --timestamps")) {
+            self.log_bytes.clone()
+        } else {
+            br#"{"Status":"exited","Error":"","ExitCode":1,"RestartCount":0,"Health":{"Log":[]}}"#.to_vec()
+        };
+        Ok(crate::runner::RawCommandOutput {
+            status: 0,
+            stdout,
+            stderr: Vec::new(),
+        })
+    }
+}
+
+fn extract_rollback_evidence_member(archive: &std::path::Path, member: &str) -> Vec<u8> {
+    let tar_path = archive.with_extension("tar");
+    let decompressed = std::process::Command::new("zstd")
+        .arg("-d")
+        .arg("-f")
+        .arg(archive)
+        .arg("-o")
+        .arg(&tar_path)
+        .output()
+        .expect("zstd should read downloaded evidence archive");
+    assert!(decompressed.status.success());
+    let extracted = std::process::Command::new("tar")
+        .args(["-xOf"])
+        .arg(&tar_path)
+        .arg(member)
+        .output()
+        .expect("tar should read downloaded evidence archive");
+    assert!(extracted.status.success());
+    let _ = std::fs::remove_file(tar_path);
+    extracted.stdout
 }

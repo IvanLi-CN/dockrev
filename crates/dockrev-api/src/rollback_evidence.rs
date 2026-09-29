@@ -13,8 +13,11 @@ use serde_json::Value;
 use crate::{
     backup_helper,
     docker_runner::{self, DockerRunnerConfig},
-    runner::{CommandRunner, RawFileCommandOutput},
+    runner::CommandRunner,
 };
+
+#[path = "rollback_evidence_log_status.rs"]
+mod log_status;
 
 const SPOOL_DIR_NAME: &str = "rollback-evidence-spool";
 const LOG_CAPTURE_TIMEOUT_SECONDS: u64 = 300;
@@ -135,17 +138,24 @@ impl RollbackEvidenceContext {
             write_capture(&service_dir, &state_json, &health_log).await
         }
         .await;
-        if let Err(error) = setup_result {
+        let setup_failed = if let Err(error) = setup_result {
             metadata
                 .capture_errors
                 .push(format!("spool setup: {error}"));
-        }
+            true
+        } else {
+            false
+        };
         self.upsert_metadata(service_id, candidate_id, metadata.clone());
         if let Err(error) = self.persist_manifest().await {
             metadata
                 .capture_errors
                 .push(format!("manifest checkpoint: {error}"));
             self.upsert_metadata(service_id, candidate_id, metadata.clone());
+            return metadata;
+        }
+        if setup_failed {
+            return metadata;
         }
 
         let state_future = runner.run_raw(
@@ -201,7 +211,7 @@ impl RollbackEvidenceContext {
         let logs_complete = match logs_result {
             Ok(output) => {
                 metadata.logs_bytes = output.bytes_written;
-                record_log_command_result(&mut metadata, &output)
+                log_status::record_log_command_result(&mut metadata, &output)
             }
             Err(error) => {
                 metadata
@@ -709,31 +719,6 @@ async fn files_equal(left: &Path, right: &Path) -> anyhow::Result<bool> {
             return Ok(true);
         }
     }
-}
-
-fn record_log_command_result(
-    metadata: &mut EvidenceMetadata,
-    output: &RawFileCommandOutput,
-) -> bool {
-    if output.timed_out {
-        metadata.capture_errors.push(format!(
-            "logs command timed out after {LOG_CAPTURE_TIMEOUT_SECONDS} seconds"
-        ));
-        return false;
-    }
-    if output.status != 0 {
-        metadata
-            .capture_errors
-            .push(format!("logs command exited with {}", output.status));
-        return false;
-    }
-    if !output.eof_reached {
-        metadata
-            .capture_errors
-            .push("logs command did not reach EOF".to_string());
-        return false;
-    }
-    true
 }
 
 async fn write_capture(dir: &Path, state: &Value, health_log: &Value) -> anyhow::Result<()> {

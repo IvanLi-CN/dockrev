@@ -11,6 +11,7 @@ pub(crate) type UpdateJobOutcome = (
     UpdateBackupsToCleanup,
     JobProgress,
     Vec<crate::db::ServiceAcceptedStateSettlement>,
+    bool,
 );
 
 pub(crate) fn extract_changed_service_ids(update: &serde_json::Value) -> Option<Vec<String>> {
@@ -19,84 +20,6 @@ pub(crate) fn extract_changed_service_ids(update: &serde_json::Value) -> Option<
         .and_then(|v| v.as_object())
         .map(|m| m.keys().cloned().collect::<Vec<_>>())?;
     if ids.is_empty() { None } else { Some(ids) }
-}
-
-pub(crate) fn extract_stack_transition_summary(
-    stack: &serde_json::Value,
-    kind: TransitionJobKind,
-) -> Option<&serde_json::Value> {
-    stack.get(kind.summary_key())
-}
-
-pub(crate) fn transition_failure_step(
-    kind: TransitionJobKind,
-    stack_summaries: &[serde_json::Value],
-) -> Option<&str> {
-    stack_summaries.iter().find_map(|stack| {
-        extract_stack_transition_summary(stack, kind)
-            .and_then(|summary| summary.get("failureStep"))
-            .and_then(|value| value.as_str())
-    })
-}
-
-pub(crate) fn transition_terminal_message(
-    kind: TransitionJobKind,
-    final_status: &str,
-    stack_summaries: &[serde_json::Value],
-) -> String {
-    match kind {
-        TransitionJobKind::Update => {
-            if final_status == "success" {
-                return "update finished".to_string();
-            }
-            if final_status == "cancelled" {
-                return "update cancelled".to_string();
-            }
-            if final_status == "rolled_back" {
-                return match transition_failure_step(kind, stack_summaries) {
-                    Some("healthcheck") => {
-                        "update rolled back after healthcheck failure".to_string()
-                    }
-                    Some("pull_target_tag") => {
-                        "update rolled back after target tag pull failure".to_string()
-                    }
-                    Some("sync_configured_tag") => {
-                        "update rolled back after compose tag sync failure".to_string()
-                    }
-                    _ => "update rolled back".to_string(),
-                };
-            }
-            "update finished with failures".to_string()
-        }
-        TransitionJobKind::Rollback => {
-            if final_status == "rolled_back" {
-                return "rollback finished".to_string();
-            }
-            match transition_failure_step(kind, stack_summaries) {
-                Some("healthcheck") => "rollback failed after healthcheck failure".to_string(),
-                Some("pull_target_tag") => {
-                    "rollback failed after target tag pull failure".to_string()
-                }
-                Some("sync_configured_tag") => {
-                    "rollback failed after compose tag sync failure".to_string()
-                }
-                _ => "rollback failed".to_string(),
-            }
-        }
-    }
-}
-
-pub(crate) fn normalize_transition_outcome_status(
-    kind: TransitionJobKind,
-    outcome_status: &str,
-) -> String {
-    match kind {
-        TransitionJobKind::Update => outcome_status.to_string(),
-        TransitionJobKind::Rollback => match outcome_status {
-            "success" => "rolled_back".to_string(),
-            _ => "failed".to_string(),
-        },
-    }
 }
 
 pub(crate) async fn run_update_job(
@@ -138,6 +61,7 @@ pub(crate) async fn run_update_job(
 
         let mut final_status = "success".to_string();
         let mut stack_summaries = Vec::new();
+        let mut healthcheck_failure_observed = false;
         let mut backups_to_cleanup: Vec<(String, u32)> = Vec::new();
         let mut pending_settlements = Vec::<(
             crate::db::ServiceAcceptedStateSettlement,
@@ -901,6 +825,7 @@ pub(crate) async fn run_update_job(
             let _ = progress_task.await;
             match update_outcome {
                 Ok(mut outcome) => {
+                    healthcheck_failure_observed |= outcome.healthcheck_failure_observed;
                     if outcome.status != "success"
                     {
                         let restored = if services_kept_stopped_for_apply.is_empty() {
@@ -1194,6 +1119,7 @@ pub(crate) async fn run_update_job(
                 .into_iter()
                 .map(|(settlement, _, _, _)| settlement)
                 .collect(),
+            healthcheck_failure_observed,
         ))
     }
     .await;
@@ -1205,8 +1131,16 @@ pub(crate) async fn run_update_job(
         mut final_summary,
         finished_at,
         settlements,
+        healthcheck_failure_observed,
     ) = match outcome {
-        Ok((final_status, stack_summaries, backups_to_cleanup, progress, settlements)) => {
+        Ok((
+            final_status,
+            stack_summaries,
+            backups_to_cleanup,
+            progress,
+            settlements,
+            healthcheck_failure_observed,
+        )) => {
             let progress_json = serde_json::to_value(&progress)?;
             let final_summary = json!({
                 "mode": job_kind.summary_mode(&req.mode),
@@ -1222,6 +1156,7 @@ pub(crate) async fn run_update_job(
                 final_summary,
                 finished_at,
                 settlements,
+                healthcheck_failure_observed,
             )
         }
         Err(err) => {
@@ -1274,6 +1209,7 @@ pub(crate) async fn run_update_job(
                 final_summary,
                 finished_at,
                 Vec::new(),
+                false,
             )
         }
     };
@@ -1415,9 +1351,12 @@ pub(crate) async fn run_update_job(
         crate::rollback_evidence_finalize::record_spool_setup_failure(
             &mut final_summary,
             evidence_setup_error.as_deref(),
-            job_kind == TransitionJobKind::Update
-                && req.mode.as_str() == "apply"
-                && transition_has_failure_step(job_kind, &stack_summaries, "healthcheck"),
+            transition_requires_evidence_failure_metadata(
+                job_kind,
+                req.mode.as_str(),
+                &stack_summaries,
+                healthcheck_failure_observed,
+            ),
         );
         None
     };

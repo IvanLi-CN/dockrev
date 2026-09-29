@@ -55,6 +55,7 @@ pub trait UpdateApplyGate: Send + Sync {
 pub struct UpdateOutcome {
     pub status: String,
     pub summary_json: serde_json::Value,
+    pub healthcheck_failure_observed: bool,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -361,6 +362,7 @@ pub(crate) async fn run_update_job_with_gate_using_root_unlocked(
         return Ok(UpdateOutcome {
             status: "success".to_string(),
             summary_json: serde_json::Value::Object(summary),
+            healthcheck_failure_observed: false,
         });
     }
 
@@ -378,6 +380,7 @@ pub(crate) async fn run_update_job_with_gate_using_root_unlocked(
                 rollback_trigger: None,
                 skipped_version_anomaly: &skipped_version_anomaly,
             })),
+            healthcheck_failure_observed: false,
         });
     }
 
@@ -511,6 +514,7 @@ pub(crate) async fn run_update_job_with_gate_using_root_unlocked(
                 rollback_trigger: None,
                 skipped_version_anomaly: &skipped_version_anomaly,
             })),
+            healthcheck_failure_observed: false,
         });
     }
 
@@ -654,6 +658,7 @@ pub(crate) async fn run_update_job_with_gate_using_root_unlocked(
 
     let mut rollback_trigger: Option<&str> = None;
     let mut rolled_back_any = false;
+    let mut healthcheck_failure_observed = false;
 
     for (svc, service_index, old_image_id, sync_local_tag) in prepared_services {
         let target = explicit_targets_by_service.get(svc.id.as_str());
@@ -741,6 +746,7 @@ pub(crate) async fn run_update_job_with_gate_using_root_unlocked(
             )
             .await?;
             if !health_result.healthy {
+                healthcheck_failure_observed = true;
                 rollback_failure_step = Some("healthcheck");
                 if let Some(evidence) = evidence.as_ref() {
                     let _ = evidence
@@ -803,6 +809,7 @@ pub(crate) async fn run_update_job_with_gate_using_root_unlocked(
                                 Some("healthcheck"),
                                 &skipped_version_anomaly,
                             ),
+                            healthcheck_failure_observed,
                         });
                     }
                 }
@@ -890,6 +897,7 @@ pub(crate) async fn run_update_job_with_gate_using_root_unlocked(
                                 Some("pull_target_tag"),
                                 &skipped_version_anomaly,
                             ),
+                            healthcheck_failure_observed,
                         });
                     }
                 }
@@ -974,6 +982,7 @@ pub(crate) async fn run_update_job_with_gate_using_root_unlocked(
                                 Some("sync_configured_tag"),
                                 &skipped_version_anomaly,
                             ),
+                            healthcheck_failure_observed,
                         });
                     }
                 }
@@ -1137,6 +1146,7 @@ pub(crate) async fn run_update_job_with_gate_using_root_unlocked(
             rollback_trigger,
             skipped_version_anomaly: &skipped_version_anomaly,
         })),
+        healthcheck_failure_observed,
     })
 }
 
