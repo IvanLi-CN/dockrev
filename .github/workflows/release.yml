@@ -46,10 +46,15 @@ jobs:
       version: ${{ steps.resolve.outputs.version }}
       release_tag: ${{ steps.resolve.outputs.release_tag }}
       channel: ${{ steps.resolve.outputs.channel }}
-      type: ${{ steps.resolve.outputs.type }}
+      baseline_version: ${{ steps.resolve.outputs.baseline_version }}
+      version_input: ${{ steps.resolve.outputs.version_input }}
+      identity_sha: ${{ steps.resolve.outputs.identity_sha }}
       prerelease: ${{ steps.resolve.outputs.prerelease }}
       identity_json: ${{ steps.resolve.outputs.identity_json }}
       identity_failure_kind: ${{ steps.resolve.outputs.identity_failure_kind }}
+      artifact_run_id: ${{ steps.resolve.outputs.artifact_run_id }}
+      artifact_id: ${{ steps.resolve.outputs.artifact_id }}
+      artifact_digest: ${{ steps.resolve.outputs.artifact_digest }}
     steps:
       - name: Checkout merged main commit
         uses: actions/checkout@v4
@@ -87,8 +92,10 @@ jobs:
           git fetch --no-tags origin main
           git merge-base --is-ancestor "${MERGE_SHA}" origin/main
           if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
-            prior_failure="$(gh api --paginate --slurp "repos/${GITHUB_REPOSITORY}/actions/workflows/release.yml/runs?head_sha=${MERGE_SHA}&per_page=100" | python3 -c 'import json,sys; pages=json.load(sys.stdin); print(any(run.get("event") == "push" and run.get("conclusion") == "failure" for page in pages for run in page.get("workflow_runs", [])))')"
-            [[ "${prior_failure}" == "True" ]] || { echo "same-SHA recovery requires a prior failed automatic Release run" >&2; exit 2; }
+            python3 .workflow-src/.github/scripts/release_recovery_artifact.py \
+              --repository "${GITHUB_REPOSITORY}" \
+              --merge-sha "${MERGE_SHA}" \
+              --token "${GITHUB_TOKEN}" > recovery-artifact.json
           fi
           set +e
           python3 .workflow-src/.github/scripts/release_identity.py \
@@ -100,20 +107,7 @@ jobs:
           status=$?
           set -e
           if [[ "${status}" -ne 0 ]]; then
-            if [[ "${status}" -eq 3 ]]; then
-              python3 - <<'PY' >> "$GITHUB_OUTPUT"
-          import json
-          from pathlib import Path
-          payload = json.loads(Path("release-intent.json").read_text(encoding="utf-8"))
-          if payload.get("reason") != "no-release-identity":
-              raise SystemExit("missing no-identity release intent")
-          print(f"type={payload.get('type', '')}")
-          print(f"channel={payload.get('channel', '')}")
-          PY
-              echo "identity_failure_kind=no-identity" >> "$GITHUB_OUTPUT"
-            else
-              echo "identity_failure_kind=resolver-error" >> "$GITHUB_OUTPUT"
-            fi
+            echo "identity_failure_kind=resolver-error" >> "$GITHUB_OUTPUT"
             exit "${status}"
           fi
           python3 - <<'PY' >> "$GITHUB_OUTPUT"
@@ -127,14 +121,22 @@ jobs:
           print(f"version={payload.get('version', '')}")
           print(f"release_tag={payload.get('release_tag', '')}")
           print(f"channel={payload.get('channel', '')}")
-          print(f"type={payload.get('type', '')}")
-          print(f"prerelease={'true' if payload.get('channel') in {'beta', 'rc', 'dev'} else 'false'}")
+          print(f"baseline_version={payload.get('baseline_version', '')}")
+          print(f"version_input={payload.get('version_input', '')}")
+          print(f"identity_sha={payload.get('identity_sha', '')}")
+          print(f"prerelease={'true' if payload.get('channel') in {'alpha', 'beta', 'rc'} else 'false'}")
+          recovery_path = Path("recovery-artifact.json")
+          recovery = json.loads(recovery_path.read_text()) if recovery_path.exists() else {}
+          print(f"artifact_run_id={recovery.get('artifact_run_id', '')}")
+          print(f"artifact_id={recovery.get('artifact_id', '')}")
+          print(f"artifact_digest={recovery.get('artifact_digest', '')}")
           print("identity_json<<EOF")
           print(json.dumps(payload, sort_keys=True))
           print("EOF")
           PY
           if [[ "${{ github.event_name }}" == "workflow_dispatch" ]] && [[ "$(jq -r '.release_enabled' release-intent.json)" != "true" ]]; then
-            echo "workflow_dispatch requires an existing release-enabled immutable identity" >&2
+            echo "identity_failure_kind=no-identity" >> "$GITHUB_OUTPUT"
+            echo "workflow_dispatch requires an existing immutable VERSION identity" >&2
             exit 2
           fi
 
@@ -143,70 +145,20 @@ jobs:
         env:
           MERGE_SHA: ${{ inputs.merge_sha || github.sha }}
           FAILURE_KIND: ${{ steps.resolve.outputs.identity_failure_kind || 'resolver-error' }}
-          INTENT_TYPE: ${{ steps.resolve.outputs.type || '' }}
-          INTENT_CHANNEL: ${{ steps.resolve.outputs.channel || '' }}
         run: |
           set -euo pipefail
-          if ! [[ "${MERGE_SHA}" =~ ^[0-9a-f]{40}$ ]]; then MERGE_SHA="${GITHUB_SHA}"; fi
-          VERSION="$(tr -d '[:space:]' < VERSION 2>/dev/null || true)"
-          [[ "${VERSION}" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-((beta|rc|dev)\.[0-9]+))?$ ]] || {
-            echo "Release failure context cannot be created without a valid VERSION" >&2
-            exit 1
-          }
-          export VERSION
           python3 - <<'PY'
           import json
           import os
           import re
-          version = os.environ["VERSION"]
           merge_sha = os.environ["MERGE_SHA"]
-          expected = [
-              suffix
-              for base in [
-                  f"{binary}_{version}_linux_{arch}_{libc}"
-                  for arch in ("amd64", "arm64")
-                  for libc in ("gnu", "musl")
-                  for binary in ("dockrev", "dockrev-supervisor")
-              ]
-              for suffix in (f"{base}.tar.gz", f"{base}.tar.gz.sha256")
-          ]
-          no_identity = os.environ["FAILURE_KIND"] == "no-identity"
-          release_type = os.environ.get("INTENT_TYPE", "")
-          channel = os.environ.get("INTENT_CHANNEL", "")
-          resolver_error = os.environ["FAILURE_KIND"] == "resolver-error"
-          if resolver_error and not release_type and not channel:
-              release_type = "unknown"
-              channel = "unknown"
-          if resolver_error:
-              if release_type != "unknown" or channel != "unknown":
-                  raise SystemExit("Resolver-error context must use unknown intent")
-          elif release_type not in {"major", "minor", "patch"} or channel not in {"stable", "beta", "rc", "dev"}:
-              raise SystemExit("Release failure context requires a verified release intent")
-          if not resolver_error:
-              channel_pattern = {
-              "stable": r"^[0-9]+\.[0-9]+\.[0-9]+$",
-              "beta": r"^[0-9]+\.[0-9]+\.[0-9]+-beta\.[0-9]+$",
-              "rc": r"^[0-9]+\.[0-9]+\.[0-9]+-rc\.[0-9]+$",
-              "dev": r"^[0-9]+\.[0-9]+\.[0-9]+-dev\.[0-9]+$",
-              }[channel]
-              if not re.fullmatch(channel_pattern, version):
-                  raise SystemExit("Release failure context VERSION is incompatible with the verified channel; refusing to fabricate identity")
+          if not re.fullmatch(r"[0-9a-f]{40}", merge_sha):
+              merge_sha = os.environ["GITHUB_SHA"]
           payload = {
-              "pull_request": 0,
-              "source_sha": merge_sha,
               "merge_commit_sha": merge_sha,
-              "type": release_type,
-              "channel": channel,
-              "version": version,
-              "tag": f"v{version}",
-              "artifact_names": expected,
               "run_url": f"{os.environ['GITHUB_SERVER_URL']}/{os.environ['GITHUB_REPOSITORY']}/actions/runs/{os.environ['GITHUB_RUN_ID']}",
-              "recovery_instruction": (
-                  f"create VERSION-only release PR Covered-Product-Merge-SHA={merge_sha}"
-                  if no_identity else
-                  "resolver-error: retry Release workflow after verifying merged identity"
-              ),
-              "identity_resolution_failed": no_identity,
+              "recovery_instruction": "verify the merged VERSION identity; retry Release with the same merge SHA only after identity is confirmed",
+              "identity_resolution_failed": True,
               "identity_failure_kind": os.environ["FAILURE_KIND"],
               "repository": os.environ["GITHUB_REPOSITORY"],
               "workflow": "Release",
@@ -284,6 +236,7 @@ jobs:
             --event "${GITHUB_EVENT_NAME}" \
             --ref "${GITHUB_REF}" \
             --actor "${GITHUB_ACTOR}" \
+            --artifact-digest "${{ steps.resolve.outputs.artifact_digest || '' }}" \
             --output identity-failure-context.json
 
       - name: Ensure resolved identity failure context
@@ -298,6 +251,7 @@ jobs:
           GITHUB_EVENT_NAME: ${{ github.event_name }}
           GITHUB_REF: ${{ github.ref }}
           GITHUB_ACTOR: ${{ github.actor }}
+          ARTIFACT_DIGEST: ${{ steps.resolve.outputs.artifact_digest || '' }}
         run: |
           set -euo pipefail
           if [[ ! -f identity-failure-context.json ]]; then
@@ -310,6 +264,7 @@ jobs:
               --event "${GITHUB_EVENT_NAME}" \
               --ref "${GITHUB_REF}" \
               --actor "${GITHUB_ACTOR}" \
+              --artifact-digest "${ARTIFACT_DIGEST}" \
               --output identity-failure-context.json
           fi
 
@@ -355,7 +310,7 @@ jobs:
   build-binaries:
     name: Build ${{ matrix.arch }} release assets
     needs: [identity]
-    if: needs.identity.outputs.release_enabled == 'true'
+    if: needs.identity.outputs.release_enabled == 'true' && needs.identity.outputs.artifact_run_id == ''
     strategy:
       fail-fast: false
       matrix:
@@ -427,11 +382,18 @@ jobs:
   package-assets:
     name: Package and verify release assets
     needs: [identity, build-binaries]
-    if: needs.identity.outputs.release_enabled == 'true'
+    if: needs.identity.outputs.release_enabled == 'true' && needs.identity.outputs.artifact_run_id == ''
     runs-on: ubuntu-latest
     outputs:
       artifact_names: ${{ steps.package.outputs.artifact_names }}
+      artifact_digest: ${{ steps.upload_bundle.outputs.artifact-digest }}
     steps:
+      - name: Checkout bundle verifier
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.identity.outputs.merge_sha }}
+          fetch-depth: 1
+
       - name: Download architecture assets
         uses: actions/download-artifact@v4
         with:
@@ -465,18 +427,33 @@ jobs:
           print(f"artifact_names={json.dumps(sorted(path.name for path in Path('dist/release').iterdir() if path.is_file()))}")
           PY
 
+      - name: Create identity-bound release bundle
+        env:
+          IDENTITY_JSON: ${{ needs.identity.outputs.identity_json }}
+        run: |
+          set -euo pipefail
+          printf '%s' "${IDENTITY_JSON}" > release-intent.json
+          python3 .github/scripts/release_artifact_bundle.py create \
+            --release-assets release-assets \
+            --release-files dist/release \
+            --output release-bundle \
+            --identity release-intent.json > release-bundle-result.json
+
       - name: Upload release assets
+        id: upload_bundle
         uses: actions/upload-artifact@v4
         with:
-          name: release-assets-${{ needs.identity.outputs.merge_sha }}
-          path: dist/release
+          name: release-bundle-${{ needs.identity.outputs.merge_sha }}
+          path: release-bundle
           if-no-files-found: error
           retention-days: 90
 
   publish:
     name: Publish GHCR and GitHub Release
     needs: [identity, package-assets]
-    if: needs.identity.outputs.release_enabled == 'true'
+    if: >-
+      always() && needs.identity.outputs.release_enabled == 'true' &&
+      (needs.package-assets.result == 'success' || needs.identity.outputs.artifact_run_id != '')
     runs-on: ubuntu-latest
     timeout-minutes: 45
     permissions:
@@ -491,6 +468,8 @@ jobs:
       RELEASE_TAG: ${{ needs.identity.outputs.release_tag }}
       CHANNEL: ${{ needs.identity.outputs.channel }}
       MERGE_SHA: ${{ needs.identity.outputs.merge_sha }}
+      ARTIFACT_RUN_ID: ${{ needs.identity.outputs.artifact_run_id || github.run_id }}
+      ARTIFACT_DIGEST: ${{ needs.identity.outputs.artifact_digest || needs.package-assets.outputs.artifact_digest }}
     steps:
       - name: Checkout merge identity
         uses: actions/checkout@v4
@@ -498,29 +477,41 @@ jobs:
           ref: ${{ env.MERGE_SHA }}
           fetch-depth: 0
 
-      - name: Download release assets
-        uses: actions/download-artifact@v4
-        with:
-          name: release-assets-${{ env.MERGE_SHA }}
-          path: dist/release
+      - name: Verify immutable release artifact digest
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          EXPECTED_DIGEST: ${{ env.ARTIFACT_DIGEST }}
+        run: |
+          set -euo pipefail
+          test -n "${EXPECTED_DIGEST}"
+          artifact_name="release-bundle-${MERGE_SHA}"
+          metadata="$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${ARTIFACT_RUN_ID}/artifacts?per_page=100")"
+          matches="$(jq --arg name "${artifact_name}" --arg digest "${EXPECTED_DIGEST}" '[.artifacts[] | select(.name == $name and .expired == false and .digest == $digest)] | length' <<<"${metadata}")"
+          test "${matches}" = "1" || { echo "release artifact digest no longer matches the immutable identity bundle" >&2; exit 1; }
 
-      - name: Download amd64 architecture assets
+      - name: Download identity-bound release bundle
         uses: actions/download-artifact@v4
         with:
-          name: release-assets-amd64-${{ env.MERGE_SHA }}
-          path: release-assets
+          name: release-bundle-${{ env.MERGE_SHA }}
+          run-id: ${{ needs.identity.outputs.artifact_run_id || github.run_id }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          path: release-bundle
 
-      - name: Download arm64 architecture assets
-        uses: actions/download-artifact@v4
-        with:
-          name: release-assets-arm64-${{ env.MERGE_SHA }}
-          path: release-assets
+      - name: Verify release bundle identity and file digests
+        env:
+          IDENTITY_JSON: ${{ needs.identity.outputs.identity_json }}
+        run: |
+          set -euo pipefail
+          printf '%s' "${IDENTITY_JSON}" > expected-release-identity.json
+          python3 .github/scripts/release_artifact_bundle.py verify \
+            --root release-bundle \
+            --identity expected-release-identity.json
 
       - name: Stage prebuilt Docker binaries
         run: |
           set -euo pipefail
           for arch in amd64 arm64; do
-            source="release-assets/${arch}/musl"
+            source="release-bundle/release-assets/${arch}/musl"
             destination="dist/ci/docker/${arch}"
             mkdir -p "${destination}"
             for binary in dockrev dockrev-supervisor; do
@@ -536,19 +527,9 @@ jobs:
           EXPECTED_IDENTITY_JSON: ${{ needs.identity.outputs.identity_json }}
         run: |
           set -euo pipefail
-          identity_mode="$(jq -r '.release_mode' <<<"${EXPECTED_IDENTITY_JSON}")"
-          identity_pr="$(jq -r '.pull_request' <<<"${EXPECTED_IDENTITY_JSON}")"
-          identity_source="$(jq -r '.source_sha' <<<"${EXPECTED_IDENTITY_JSON}")"
-          expected_identity_sha="$(jq -r '.identity_ref_sha // empty' <<<"${EXPECTED_IDENTITY_JSON}")"
-          [[ "${expected_identity_sha}" =~ ^[0-9a-f]{40}$ ]] || { echo "resolved identity is missing identity_ref_sha" >&2; exit 2; }
-          if [[ "${identity_mode}" == "version-only-release-pr" ]]; then
-            identity_ref_name="release-recovery/${identity_source}"
-          elif [[ "${identity_mode}" == "normal-preparation" ]]; then
-            identity_ref_name="release-preparation/${identity_pr}/${identity_source}"
-          else
-            echo "unsupported release mode for publication lock: ${identity_mode}" >&2
-            exit 2
-          fi
+          expected_identity_sha="$(jq -r '.identity_sha // empty' <<<"${EXPECTED_IDENTITY_JSON}")"
+          [[ "${expected_identity_sha}" =~ ^[0-9a-f]{40}$ ]] || { echo "resolved identity is missing identity_sha" >&2; exit 2; }
+          identity_ref_name="release-preparation/v${VERSION}"
           live_identity_sha="$(gh api "repos/${GITHUB_REPOSITORY}/git/ref/heads/${identity_ref_name}" --jq '.object.sha')"
           test "${live_identity_sha}" = "${expected_identity_sha}"
 
@@ -690,7 +671,7 @@ jobs:
           prerelease: ${{ env.CHANNEL != 'stable' }}
           allowUpdates: true
           replacesArtifacts: true
-          artifacts: dist/release/*.tar.gz,dist/release/*.sha256
+          artifacts: release-bundle/dist/release/*.tar.gz,release-bundle/dist/release/*.sha256
           artifactErrorsFailBuild: true
           generateReleaseNotes: true
 
@@ -742,11 +723,13 @@ jobs:
           MERGE_SHA: ${{ inputs.merge_sha || github.sha }}
           FAILURE_KIND: ${{ needs.identity.outputs.identity_failure_kind || 'resolver-error' }}
           RESOLVED_IDENTITY_AVAILABLE: ${{ needs.identity.outputs.release_enabled == 'true' }}
-          RESOLVED_PR: ${{ needs.identity.outputs.pull_request }}
           RESOLVED_SOURCE: ${{ needs.identity.outputs.source_sha }}
           RESOLVED_MERGE: ${{ needs.identity.outputs.merge_sha }}
-          RESOLVED_TYPE: ${{ needs.identity.outputs.type }}
           RESOLVED_CHANNEL: ${{ needs.identity.outputs.channel }}
+          RESOLVED_VERSION_INPUT: ${{ needs.identity.outputs.version_input }}
+          RESOLVED_BASELINE_VERSION: ${{ needs.identity.outputs.baseline_version }}
+          RESOLVED_IDENTITY_SHA: ${{ needs.identity.outputs.identity_sha }}
+          RESOLVED_ARTIFACT_DIGEST: ${{ needs.identity.outputs.artifact_digest || needs.package-assets.outputs.artifact_digest }}
           RESOLVED_VERSION: ${{ needs.identity.outputs.version }}
           RESOLVED_TAG: ${{ needs.identity.outputs.release_tag }}
         run: |
@@ -756,7 +739,7 @@ jobs:
             exit 0
           fi
           if [[ "${RESOLVED_IDENTITY_AVAILABLE}" == "true" ]]; then
-            export RESOLVED_PR RESOLVED_SOURCE RESOLVED_MERGE RESOLVED_TYPE RESOLVED_CHANNEL RESOLVED_VERSION RESOLVED_TAG
+            export RESOLVED_SOURCE RESOLVED_MERGE RESOLVED_CHANNEL RESOLVED_VERSION_INPUT RESOLVED_BASELINE_VERSION RESOLVED_IDENTITY_SHA RESOLVED_ARTIFACT_DIGEST RESOLVED_VERSION RESOLVED_TAG
           python3 - <<'PY'
           import json
           import os
@@ -773,11 +756,13 @@ jobs:
               for suffix in (f"{base}.tar.gz", f"{base}.tar.gz.sha256")
           ]
           payload = {
-              "pull_request": int(os.environ["RESOLVED_PR"] or "0"),
               "source_sha": os.environ["RESOLVED_SOURCE"],
               "merge_commit_sha": merge_sha,
-              "type": os.environ["RESOLVED_TYPE"],
               "channel": os.environ["RESOLVED_CHANNEL"],
+              "version_input": os.environ["RESOLVED_VERSION_INPUT"],
+              "baseline_version": os.environ["RESOLVED_BASELINE_VERSION"],
+              "identity_sha": os.environ["RESOLVED_IDENTITY_SHA"],
+              "artifact_digest": os.environ.get("RESOLVED_ARTIFACT_DIGEST", ""),
               "version": version,
               "tag": os.environ["RESOLVED_TAG"],
               "artifact_names": expected,
@@ -804,13 +789,15 @@ jobs:
       - name: Write structured failure context
         if: needs.identity.result != 'failure'
         env:
-          RELEASE_TYPE: ${{ needs.identity.outputs.type }}
           RELEASE_CHANNEL: ${{ needs.identity.outputs.channel }}
+          RELEASE_VERSION_INPUT: ${{ needs.identity.outputs.version_input }}
+          RELEASE_BASELINE_VERSION: ${{ needs.identity.outputs.baseline_version }}
+          RELEASE_IDENTITY_SHA: ${{ needs.identity.outputs.identity_sha }}
+          RELEASE_ARTIFACT_DIGEST: ${{ needs.identity.outputs.artifact_digest || needs.package-assets.outputs.artifact_digest }}
           RELEASE_VERSION: ${{ needs.identity.outputs.version }}
           RELEASE_TAG: ${{ needs.identity.outputs.release_tag }}
           RELEASE_MERGE_SHA: ${{ needs.identity.outputs.merge_sha }}
           RELEASE_SOURCE_SHA: ${{ needs.identity.outputs.source_sha }}
-          RELEASE_PR_NUMBER: ${{ needs.identity.outputs.pull_request }}
           RELEASE_ARTIFACT_NAMES: ${{ needs.package-assets.outputs.artifact_names }}
           RELEASE_RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: |
@@ -831,11 +818,13 @@ jobs:
           ]
           artifacts = json.loads(os.environ["RELEASE_ARTIFACT_NAMES"] or "null") or expected
           payload = {
-              "pull_request": int(os.environ["RELEASE_PR_NUMBER"] or "0"),
               "source_sha": os.environ["RELEASE_SOURCE_SHA"],
               "merge_commit_sha": os.environ["RELEASE_MERGE_SHA"],
-              "type": os.environ["RELEASE_TYPE"],
               "channel": os.environ["RELEASE_CHANNEL"],
+              "version_input": os.environ["RELEASE_VERSION_INPUT"],
+              "baseline_version": os.environ["RELEASE_BASELINE_VERSION"],
+              "identity_sha": os.environ["RELEASE_IDENTITY_SHA"],
+              "artifact_digest": os.environ.get("RELEASE_ARTIFACT_DIGEST", ""),
               "version": version,
               "tag": os.environ["RELEASE_TAG"],
               "artifact_names": artifacts,

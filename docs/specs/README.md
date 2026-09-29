@@ -9,8 +9,8 @@
 | Topic | Lifecycle | Implementation | Spec | Successor |
 | --- | --- | --- | --- | --- |
 | Auto-update candidate settlement | 已完成 | candidate lifecycle, policy re-evaluation, conservative migration and compatibility projections complete | `auto-update-candidate-settlement/SPEC.md` | - |
-| PR label release identity | active | workflow/scripts/docs complete | `docs/adr/0008-pr-label-release-identity.md` | - |
-| Release channel promotion | active | beta/RC/stable identity contract | `release-channel-promotion/SPEC.md` | - |
+| PR label release identity | superseded | historical label-driven workflow retained for context | `docs/adr/0008-pr-label-release-identity.md` | `docs/adr/0015-manual-version-release-delivery.md` |
+| Manual Version Release Delivery | active | single version input; main VERSION allocation, immutable identity, stable/prerelease publication and recovery | `release-channel-promotion/SPEC.md` | - |
 | Workflow failure notification | 已完成 | expected-success workflow failure sidecar and Release-specific routing complete | `workflow-failure-notification/SPEC.md` | - |
 | Update rollback diagnostics | active | not started | `update-rollback-diagnostics/SPEC.md` | - |
 | Service accepted state consistency | active | not started | `service-accepted-state-consistency/SPEC.md` | - |
@@ -43,7 +43,7 @@
 | auto-update-candidate-settlement | Dockrev：自动更新候选收敛与发布边界 | 已完成 | `auto-update-candidate-settlement/SPEC.md` | 2026-09-16 | 候选 settlement、策略重评估、保守迁移和兼容投影已实现；关联 ADR 0011 |
 | async-data-continuity | Dockrev：异步数据连续性与加载反馈 | active | `async-data-continuity/SPEC.md` | 2026-08-19 | fast-track（统一骨架、延迟遮罩、错误重试与 fresh snapshot v2 合同） |
 | ci-duration-optimization | Dockrev：CI 时长优化与事件驱动发布就绪 | superseded | `ci-duration-optimization/SPEC.md` | 2026-09-03 | successor: ADR 0008; candidate/readiness/FIFO contract is historical |
-| release-channel-promotion | Dockrev：Beta、RC 与 Stable 发布身份晋升 | active | `release-channel-promotion/SPEC.md` | 2026-09-11 | beta/RC/stable exact promotion and same-SHA identity contract |
+| release-channel-promotion | Dockrev：Manual Version Release Delivery | active | `release-channel-promotion/SPEC.md` | 2026-09-29 | one `version` decision; main VERSION baseline; alpha/beta/RC progression; immutable artifact recovery |
 | theme-preference-controls | Dockrev：三态主题偏好与响应式入口 | active | `theme-preference-controls/SPEC.md` | 2026-08-14 | fast-track（system/light/dark、AppShell 桌面侧栏、移动 Settings、Storybook 与 ui_demo 证据） |
 | unified-page-context-navigation | Dockrev：统一页面内导航 | active | `unified-page-context-navigation/SPEC.md` | 2026-09-04 | fast-track（单一 AppShell 侧栏、页面内上下文导航、移动抽屉与服务树） |
 | 5dnjc | Dockrev：任务日志实时输出与事件可见性 | active | `5dnjc-job-live-output-event-visibility/SPEC.md` | 2026-08-03 | fast-track（无持久化 job_live_log SSE、命令摘要去重、EVEN 默认隐藏与浏览器偏好） |

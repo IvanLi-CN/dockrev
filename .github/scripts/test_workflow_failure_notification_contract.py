@@ -54,6 +54,16 @@ assert '      - "Release"' not in generic
 
 release_notify = RELEASE_WORKFLOW.read_text(encoding="utf-8")
 assert "workflows: [Release]" in release_notify
+assert "continue-on-error: true" in release_notify
+assert "--unresolved-run" in release_notify
+assert 'name: release-failure-context-${{ github.event.workflow_run.id }}-${{ github.event.workflow_run.run_attempt }}' in release_notify
+
+release_workflow = (ROOT / ".github/workflows/release.yml").read_text(encoding="utf-8")
+failure_context_job = release_workflow.split("  failure-context:\n", 1)[1]
+assert "pattern: release-identity-failure-context-${{ github.run_id }}-${{ github.run_attempt }}" in failure_context_job
+assert "path: identity-failure-context" in failure_context_job
+assert "cp identity-failure-context/identity-failure-context.json release-failure-context.json" in failure_context_job
+assert 'name: release-failure-context-${{ github.run_id }}-${{ github.run_attempt }}' in failure_context_job
 assert 'name: release-failure-context-${{ github.event.workflow_run.id }}-${{ github.event.workflow_run.run_attempt }}' in release_notify
 
 

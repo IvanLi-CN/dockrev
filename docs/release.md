@@ -1,181 +1,112 @@
-# Dockrev Release Contract
+# Dockrev Version Release
 
-Dockrev releases are identity-bound to one merged product PR. The checked-in
-contracts are `.github/pr-label-release.json`, `.github/release-failure-notification.json`,
-and `.github/quality-gates.json`; the offline validation entrypoint is
-`.github/scripts/release-channel-contract-check.sh`.
+Dockrev uses one manual version decision and immutable release identities. The
+checked-in policy is `.github/manual-version-release.json`; failure routing and
+required PR checks are declared in `.github/release-failure-notification.json`
+and `.github/quality-gates.json`.
 
-## Release identity
+## Version Decision
 
-The highest qualified final `X.Y.Z` release is the numeric version baseline;
-when no final release qualifies, the baseline is `0.0.0`. Both historical
-`X.Y.Z` tags and canonical `vX.Y.Z` tags are recognized for baseline lookup;
-future publication always uses `vX.Y.Z`. A qualified final release is
-non-draft and non-prerelease, is created by the release automation
-(`github-actions[bot]`), and has a tag that resolves to a commit reachable from
-`main`. Annotated tags may be nested by at most five tag-object hops; a sixth
-hop fails closed. If qualified tags for one version resolve to different
-commits, the baseline resolver fails closed. The root `VERSION` file is the
-merged release identity and provenance, not a counter. Cargo manifest
-versions, environment variables, and commit order do not allocate a release
-version.
+Run `Release Preparation` from `main`. Its only required input is the string
+`version`, which accepts `major`, `minor`, `patch`, `alpha`, `beta`, `rc`, or an
+exact canonical SemVer value:
 
-Every product PR targeting `main` must carry exactly one `type:*` label and one
-`channel:*` label. The supported values are:
+- Stable: `X.Y.Z`.
+- Prerelease: `X.Y.Z-alpha.N`, `X.Y.Z-beta.N`, or `X.Y.Z-rc.N`.
 
-- `type:patch`, `type:minor`, `type:major`, or `type:none`;
-- `channel:stable`, `channel:beta`, `channel:rc`, or `channel:dev`.
+Values have no `v` prefix or build metadata. Leading zeroes are rejected.
+The `dev` channel is unsupported.
 
-Stable versions are `X.Y.Z`; beta, RC, and dev versions are respectively
-`X.Y.Z-beta.N`, `X.Y.Z-rc.N`, and `X.Y.Z-dev.N`. All non-stable channels create
-GitHub prereleases and versioned GHCR images, never `latest`. `type:none` is valid policy input but does not
-create a release identity and cannot change an existing `VERSION`. The one
-bootstrap exception is the initial non-product PR that adds a non-empty root
-`VERSION` when the base branch has no `VERSION` yet; `Release completion` verifies
-that absence before accepting it.
+The allocator reads the current root `VERSION` from `main` for every dispatch.
+It fails closed if that file is missing, empty, or invalid. Bootstrap the
+repository through a protected change that adds a valid root `VERSION` before
+using Release Preparation. The repository currently records `0.81.0`.
 
-## Normal product PR
+For a baseline `X.Y.Z`, the numeric decisions calculate:
 
-1. The source head must pass the complete `CI (PR)` workflow and `Label Gate`.
-2. `Release Preparation` reads the source `VERSION` only to verify the source
-   identity and promotion lineage. Version allocation uses the highest
-   qualified final release across historical `X.Y.Z` and canonical
-   `vX.Y.Z` tags as its numeric baseline (or `0.0.0` when
-   none qualifies); it never increments the source `VERSION`. A stable patch
-   release uses the next patch after that final baseline. Major and minor use
-   the next final major or minor base. Beta, RC, dev, and prerelease-to-stable
-   promotion require an exact version input; the exact value is verified against
-   the source `VERSION`, frozen labels, signed trailers, branch head, and tag
-   reservation before it can become identity.
-   For `type:patch`, the only prerelease promotion sequence is
-   `X.Y.Z-beta.N -> X.Y.Z-rc.N -> X.Y.Z`; each step keeps `X.Y.Z` unchanged.
-   Beta cannot promote directly to stable, dev does not promote into the
-   beta/RC/stable sequence, and RC cannot return to beta or dev. Before
-   writing, it atomically creates the shared
-   `release-reservation/vVERSION` ref, pointing directly to the verified signed
-   identity commit whose trailers bind the PR and source SHA. Historical
-   owner-stamped reservation commits remain readable only for compatibility;
-   completion validates the immutable ref target and identity ownership before
-   accepting the identity.
-3. Preparation uses GitHub's `createCommitOnBranch(expectedHeadOid)` to add one
-   signed, single-parent commit that changes only `VERSION`. Its trailers bind
-   the source SHA, product version, qualified final baseline
-   (`Release-Baseline-Version`), label intent, and
-   `Release-Mode: normal-preparation`.
-4. The trusted `Release completion` workflow, checked out from `main`, emits
-   the single required check. It revalidates the source checks, PR base, labels,
-   trailers, signature, branch head, tag reservation, and frozen baseline. The
-   preparation commit changes only `VERSION`; if the PR workflow observes that
-   commit, `Release Preparation` recognizes its signed trailers and skips a
-   second preparation, so the source identity cannot recurse.
-5. After merge, `Release` resolves the merged SHA to exactly one merged PR and
-   consumes only its immutable identity. The architecture jobs build
-   `dockrev` and `dockrev-supervisor` for amd64/arm64 and gnu/musl, and the
-   publish job assembles both GHCR images from those exact-SHA musl binaries
-   through the Dockerfile's artifact-first targets. It then publishes the
-   GitHub Release and versioned GHCR images.
+| Input | Target |
+| --- | --- |
+| `major` | `(X+1).0.0` |
+| `minor` | `X.(Y+1).0` |
+| `patch` | `X.Y.(Z+1)` |
 
-## Remediation boundaries
+Numeric decisions always calculate from the numeric core of the latest main
+`VERSION`, including when that baseline is a prerelease. An exact stable input
+must match one of those calculated targets or promote the current RC on its
+same core. The alpha/beta/RC progression applies to prerelease channel inputs.
 
-`workflow_dispatch` on `Release` requires an existing release-enabled immutable merged identity,
-the same merge SHA, a non-empty recovery reason, and a prior failed automatic
-`Release` run for that SHA. It retries publication only; it cannot write
-`VERSION`, create a new PR, select a successor version, rewrite a tag, or
-publish another PR.
+From a stable baseline, `alpha` and `beta` start at the next patch core with
+sequence `.1`. Alpha can increment or advance to beta. Beta can increment or
+advance to RC. RC can increment or promote to stable on the same core. A stable
+baseline may start beta directly; RC cannot start directly from stable. Exact
+prerelease inputs must match the next valid target, and an exact stable input
+must match a calculated numeric target or the same-core RC promotion.
 
-If a historical product merge has no identity, create exactly one non-empty
-`VERSION`-only PR with `Release-Mode: version-only-release-pr`, a
-`Covered-Product-Merge-SHA` trailer, the product version, qualified final
-baseline, and frozen label intent. The recovery PR must first pass its own CI
-and Label Gate. Its
-`release-reservation/vVERSION` points directly to that signed identity
-commit, whose reservation trailers bind the intent, mode, and covered merge;
-legacy reservation commits remain read-only compatibility evidence. After
-merge, `Release` reads that reservation rather than the PR's current
-head. The covered merge's immutable `VERSION` must have neither a reservation
-nor a tag, and validates the explicit recovery version by the same promotion
-policy. `Release completion` validates that boundary and the normal merged
-identity path handles publication. This PR is not a same-SHA recovery.
+## Identity and Publication
 
-The release channel and qualified final baseline are frozen in the preparation
-or version-only provenance. `Release Preparation` on an existing identity,
-`Release completion`, and merged-identity resolution all revalidate the same
-qualified baseline before accepting the version/channel pair. Tag ownership,
-failure context, notifier transport, and same-SHA recovery preserve that pair.
-A recovery never recomputes an RC or converts it into a stable version. RC is
-always a prerelease and never advances the stable `latest` surface.
+Preparation freezes the current main commit, baseline, input, and target. It
+creates a signed, single-parent commit that changes only root `VERSION`, then
+reserves that target with `release-reservation/v<VERSION>`. The
+`release-preparation/v<VERSION>` branch is opened as a PR to `main`. The
+target merge contract in `.github/quality-gates.json` requires
+`Review Policy Gate` and `Manual Version Release Completion`. During migration,
+the live ruleset may still expose exactly `Review Policy Gate`, `Label Gate`,
+and `Release completion`; the live checker recognizes only that exact source
+set and reports that cutover is pending, not aligned. It rejects any other
+mismatch. It also reads `.github/workflows/release-completion-pr.yml` from
+`main` and verifies the `pull_request_target` trigger, the `github.workflow_sha`
+checkout, and the target check name before accepting the target ruleset. GitHub
+then requires that target check to succeed on each PR before merge. The target
+workflow keeps validation code tied to its trusted workflow source instead of
+executing PR-head code. GitHub places pull request workflows created with
+`GITHUB_TOKEN` in an approval-required state; a user with write access must
+approve those runs from the PR before the checks can complete
+([GitHub Actions event behavior](https://docs.github.com/en/actions/reference/workflows-and-actions/events-that-trigger-workflows)).
+The old required contexts come from the live ruleset and run the versions of
+their workflows on `main`; this candidate cannot replace those checks with
+workflow definitions available only on its own branch. A cutover therefore
+needs a trusted bootstrap path that preserves the review and CI gates. Release
+version decisions remain in the `version` dispatch input and do not depend on
+PR labels. Do not report the source ruleset as migrated or remove its checks
+until the trusted target workflow is available on `main`.
 
-Automatic `Release Preparation` runs triggered by `CI (PR)` or `Label Gate`
-skip PRs whose head branch starts with `recovery/`. A maintainer must use the
-manual `version-only-release-pr` mode for such a PR; the preparation helper
-rejects that mode on any other branch prefix. This prevents a recovery PR from
-being mutated by normal preparation before its explicit covered merge and
-frozen baseline are verified. An interrupted version-only preparation can be
-retried in the same explicit mode: the helper reuses the signed identity's
-single source-parent commit and its bound source CI/Label Gate evidence. Label
-Gate evidence is accepted only from the trusted `pull_request_target` run;
-skipped or ordinary `pull_request` runs do not satisfy the release contract.
+After the identity PR merges, `Release` resolves the signed provenance from the
+merged commit and rechecks the direct immutable reservation. It builds one
+identity-bound bundle containing all architecture binaries, release archives,
+checksums, and a content manifest. The GitHub artifact SHA-256 and the bundle's
+file hashes are checked before publication.
 
-For the current historical publication gaps, the approved backfill identities
-are:
+- Stable versions publish a GitHub Release, versioned GHCR images, and the
+  `latest` image tags.
+- Alpha, beta, and RC versions publish GitHub prereleases and versioned GHCR
+  images. They never advance `latest`.
 
-- covered merge `978207fe9d140d81e2d4a2a7bd24fb253a04ebff` (PR #391), product
-  version `0.80.2`, frozen baseline `0.80.1`, and intent
-  `type:patch channel:stable`; PR #390 is part of that product boundary and
-  does not receive a separate identity;
-- covered merge `ff1b57b6835616cd3b7a95a479c0106426eb5d40` (PR #395), product
-  version `0.80.3`, frozen baseline `0.80.2`, and intent
-  `type:patch channel:stable`.
+The root `VERSION` advances when the identity PR merges, so the next decision
+uses the new main baseline. Missing or invalid `VERSION` is not replaced by a
+release tag or package manifest.
 
-A maintainer prepares an approved identity by dispatching `Release Preparation`
-with `release_mode=version-only-release-pr`, the covered merge SHA, exact
-version, and baseline. The workflow requires an unchanged, empty version-only
-PR before it writes the signed `VERSION`-only commit with
-`createCommitOnBranch`. The version reservation ref, recovery-ref, and
-publication-lock ownership must all bind the same identity SHA. Preparation
-only makes the PR merge-ready; it does not create the tag, GitHub Release,
-GHCR images, or recovery dispatch.
+## Recovery and Failure
 
-FIFO queues, release trains, snapshot backfills, mutable label reconstruction,
-and historical tag repair are deliberately unsupported. A stale reservation
-ref fails closed and requires maintainer cleanup after confirming that no
-identity uses its version.
+`Release` manual dispatch accepts only an existing merged `merge_sha` and a
+required `recovery_reason`. It verifies that the same identity previously
+failed. When that run produced the complete release bundle, recovery reuses
+that bundle and verifies the same artifact digest before publishing; it never
+recalculates the version or rebuilds a completed bundle. If the failure
+happened before a complete bundle existed, the workflow can rebuild for that
+same immutable identity.
 
-## Failure notification
+Release failures upload structured context with the verified identity and the
+artifact digest when one exists. The selected Oidrune/OIDC notification route
+includes the recovery instruction. Other expected-success workflow failures
+use the generic notification route and do not claim a release identity.
 
-The `Release` workflow uploads `release-failure-context.json` with the release
-intent, source and merge SHAs, version, tag, asset names, run URL, and exact
-same-SHA recovery instruction. Identity resolution failures emit a marked
-`unknown/unknown` fallback context from the checked-out `VERSION` so they are not silent; if no
-valid immutable version is available, the context job fails closed instead of
-inventing a sentinel version. A resolver result that explicitly proves a historical product merge has no
-identity must be repaired by creating the single `VERSION`-only release PR for
-`Covered-Product-Merge-SHA`; it must not use the same-SHA recovery dispatch. A
-resolver error, such as a transient API or checkout failure, is classified
-separately and tells the maintainer to retry `Release` after verifying the
-merged identity; it must not create a new release identity from an unresolved
-error.
-`Notify failed release` validates every field before invoking the selected OIDC/Oidrune reusable notifier. The repo-local
-transport gate declares `required_secrets: []`; OIDC allowlists and ruleset
-alignment remain owner actions outside this repository change.
+There is no label-based release decision, historical identity backfill, release
+queue, or release train.
 
-All other workflows expected to succeed are covered by `Notify failed
-workflow`. Its allowlist is checked in at
-`.github/release-failure-notification.json`; a failed `CI (PR)`, `Docs Pages`,
-`Label Gate`, `Release Preparation`, `Release completion`, or `Review Policy`
-run produces a generic notification with the workflow name, event, ref, head
-SHA, run ID, run attempt, run URL, and a rerun/recovery reminder. The notifier
-checks out only the repository default branch, never the failed workflow's
-caller code. Notification workflows are excluded from the allowlist to avoid
-recursive alerts. `Release` remains on the dedicated notifier because its
-payload requires verified release identity and same-SHA recovery context.
+## Local Contract Check
 
-## Owner actions
+Run the deterministic release contract from the repository root:
 
-Maintainers must align the `main` ruleset with `Review Policy Gate`, `Label
-Gate`, and `Release completion`, require PR-only signed commits, and allow
-job-scoped `contents: write` only where the workflows declare it. The direct
-reservation ref uses that existing job-scoped contents permission and does not
-require any additional CI permission. They must
-also confirm the OIDC subject/audience allowlist for Oidrune. No workflow in
-this change performs those external configuration writes.
+```sh
+bash .github/scripts/release-channel-contract-check.sh
+```

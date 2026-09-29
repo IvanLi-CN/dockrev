@@ -27,6 +27,7 @@ jobs:
 
       - name: Download structured release failure context
         uses: actions/download-artifact@v4
+        continue-on-error: true
         with:
           github-token: ${{ github.token }}
           run-id: ${{ github.event.workflow_run.id }}
@@ -38,10 +39,24 @@ jobs:
         env:
           EXPECTED_RELEASE_RUN_ID: ${{ github.event.workflow_run.id }}
           EXPECTED_RELEASE_ATTEMPT: ${{ github.event.workflow_run.run_attempt }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          GITHUB_SERVER_URL: ${{ github.server_url }}
         run: |
           set -euo pipefail
-          python3 .github/scripts/release_failure_context.py \
-            --input release-failure-context/release-failure-context.json
+          if [[ -f release-failure-context/release-failure-context.json ]]; then
+            python3 .github/scripts/release_failure_context.py \
+              --input release-failure-context/release-failure-context.json
+          else
+            python3 .github/scripts/release_failure_context.py \
+              --unresolved-run \
+              --repository "${{ github.repository }}" \
+              --server "${{ github.server_url }}" \
+              --run-id "${{ github.event.workflow_run.id }}" \
+              --attempt "${{ github.event.workflow_run.run_attempt }}" \
+              --event "${{ github.event.workflow_run.event }}" \
+              --ref "${{ github.event.workflow_run.head_branch }}" \
+              --actor "${{ github.event.workflow_run.actor.login }}"
+          fi
 
   notify_failure:
     if: github.event_name == 'workflow_run' && github.event.workflow_run.conclusion == 'failure'

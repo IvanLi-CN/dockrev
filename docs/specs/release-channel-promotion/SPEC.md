@@ -1,156 +1,142 @@
-# Dockrev Release Channel Promotion
+# Dockrev Manual Version Release Delivery
 
 ## Context and Scope
 
-- Context: the PR label release contract needs a distinct RC channel and a
-  bounded prerelease-to-stable promotion path while retaining immutable release
-  identity.
-- In scope: label parsing, `VERSION` channel validation, preparation,
-  completion, merged identity, publication, failure context, recovery, and
-  current maintainer documentation.
-- Out of scope: GitHub label creation, ruleset/OIDC changes, publication,
-  dispatching recovery, tag mutation, release queues, and release trains.
+Dockrev release decisions are made through one manual version input, then
+carried by an immutable signed identity through main protection, publication,
+failure notification, and same-identity recovery. The only allocation baseline
+is the current root `VERSION` on `main`.
+
+In scope: version input and SemVer calculation, prerelease sequencing,
+`VERSION` bootstrap and validation, identity preparation and reservation,
+completion checks, publication surfaces, artifact integrity, failure context,
+recovery, and maintainer documentation.
+
+Out of scope: release queues or trains, historical release identity backfill,
+changes to generic Manual Version Release Delivery guidance, and release
+publishing as part of preparation.
 
 ## Terms and Interfaces
 
-- `beta`: `X.Y.Z-beta.N` prerelease channel.
-- `rc`: `X.Y.Z-rc.N` prerelease channel; it is not an alias for beta.
-- `stable`: final `X.Y.Z` channel and the only channel eligible to advance
-  `latest`.
-- `dev`: `X.Y.Z-dev.N` prerelease channel outside the beta-to-RC-to-stable
-  promotion sequence.
-- Interface: `.github/pr-label-release.json`, trusted release workflows, root
-  `VERSION`, and release provenance trailers.
+- `version`: the only required `Release Preparation` dispatch input. It is a
+  release intent or one exact supported SemVer value.
+- Stable: `X.Y.Z`; prerelease: `X.Y.Z-alpha.N`, `X.Y.Z-beta.N`, or
+  `X.Y.Z-rc.N`.
+- Main baseline: the valid contents of root `VERSION` at the latest `main`
+  commit observed by preparation.
+- Release identity: a signed, single-parent commit with only root `VERSION`
+  changed and provenance for the source SHA, baseline, input, and target.
+- Policy file: `.github/manual-version-release.json`.
 
 ## Requirements
 
-### REQ-RELEASE-CHANNEL-001
+### REQ-MVRD-001: Single version decision
 
-- The system MUST require exactly one recognized `channel:*` label and accept
-  `stable`, `beta`, `rc`, and `dev` as distinct values.
-- Inputs: product PR labels and root `VERSION`.
-- Outputs: a fail-closed parsed release intent with a channel-compatible
-  version.
-- covers: `G1`
+`Release Preparation` MUST expose exactly one required string input named
+`version`. It MUST accept only `major`, `minor`, `patch`, `alpha`, `beta`,
+`rc`, or strict exact SemVer in the supported stable and prerelease forms.
+Exact input MUST have no `v` prefix, leading zeroes, build metadata, or
+unsupported prerelease channel. Other values MUST fail closed.
 
-### REQ-RELEASE-CHANNEL-002
+### REQ-MVRD-002: Main VERSION allocation
 
-- The system MUST permit only patch-level `beta -> rc -> stable` promotion at
-  one unchanged `X.Y.Z` base, and every beta, RC, dev, or
-  prerelease-to-stable preparation MUST use an exact version input.
-- Inputs: a qualified final-release baseline, source `VERSION`, frozen
-  type/channel labels, and exact version input where required. A qualified
-  baseline is non-draft, non-prerelease, created by release automation, and
-  tagged at a `main`-reachable commit. Historical `X.Y.Z` tags and canonical
-  `vX.Y.Z` tags qualify for lookup; future publication uses canonical tags, and
-  conflicting qualified tags for one version MUST fail closed. Annotated tags
-  MUST resolve to a commit within five tag-object hops; deeper nesting MUST
-  fail closed.
-- Outputs: a signed `VERSION`-only identity carrying
-  `Release-Baseline-Version`, or a fail-closed validation error.
-- covers: `G1`, `G2`
+Every new preparation MUST read the latest `main:VERSION` and use it as the
+only baseline. For baseline `X.Y.Z`, `major` MUST calculate `(X+1).0.0`,
+`minor` MUST calculate `X.(Y+1).0`, and `patch` MUST calculate `X.Y.(Z+1)`.
+These numeric calculations MUST use the baseline's numeric core whether the
+baseline is stable or prerelease; prerelease channel progression applies to
+prerelease inputs.
+Missing, empty, or invalid `VERSION` MUST fail closed. A valid root `VERSION`
+MUST be added through the protected mainline path before release preparation
+can run when the file does not exist.
 
-### REQ-RELEASE-CHANNEL-003
+An exact stable value MUST equal one of the calculated numeric targets or a
+same-core RC-to-stable promotion. An exact prerelease value MUST equal the
+next valid channel target from the main baseline.
 
-- The system MUST preserve the frozen RC identity through completion, merged
-  identity resolution, tag ownership, failure context/transport, and same-SHA
-  recovery. RC MUST remain a prerelease and MUST NOT advance stable `latest`.
-- A `VERSION`-only historical identity recovery MUST preserve its signed
-  release intent in an immutable reservation identity record. The canonical
-  `release-reservation/v<VERSION>` ref MUST point directly to that verified
-  signed identity SHA; legacy reservation commits remain read-only compatibility
-  evidence. The record MUST validate its explicit version against the covered
-  merge `VERSION`, and reject covered versions with an existing reservation or
-  tag. A separate immutable index
-  keyed by the covered merge MUST bind exactly one recovery identity, so
-  distinct successor versions cannot recover the same product merge; it MUST
-  NOT choose an arbitrary successor. The index MUST be allocated before the
-  target-version reservation, and an orphaned index MUST fail closed.
-- Normal and `VERSION`-only provenance MUST freeze a qualified final baseline
-  in `Release-Baseline-Version`; existing preparation, completion, and merged
-  identity resolution MUST revalidate that exact baseline instead of using the
-  source or covered `VERSION` as a fallback allocator.
-- Inputs: immutable merged provenance and its version/channel pair.
-- Outputs: channel-consistent publication or recovery behavior.
+### REQ-MVRD-003: Prerelease sequence
 
-### REQ-RELEASE-CHANNEL-004
+From a stable baseline, `alpha` and `beta` MUST start on the next patch core at
+sequence `.1`; a stable baseline MAY start beta directly and MUST NOT start RC
+directly. Within one core, alpha MAY increment or advance to beta, beta MAY
+increment or advance to RC, and RC MAY increment or promote to stable. RC
+promotion MUST retain the same core. Reverse transitions and skipped
+transitions MUST fail. Prereleases MUST never advance stable `latest`.
 
-- A historical identity repair MUST use one explicit
-  `version-only-release-pr` preparation mode. It MUST bind an exact covered
-  product merge SHA, exact product version, frozen baseline, and label intent
-  to a signed, single-parent, `VERSION`-only commit created with
-  `createCommitOnBranch(expectedHeadOid)`. Reservation, recovery-ref, and
-  publication-lock ownership MUST bind that same identity SHA, and the
-  canonical version reservation ref MUST point directly to the identity commit.
-  A publication lock for the new product version MUST resolve to that exact
-  identity SHA. A lock for the covered product's older version MUST be
-  resolved against its own owning merge SHA and MUST NOT be treated as the
-  owner of the new version or block an unrelated historical boundary.
-  For a normal-preparation identity, its owning association MUST be exactly
-  one merged PR into `main` whose head SHA equals the signed release identity
-  SHA and whose base repository equals the target repository. Any other
-  association MUST fail closed.
-  Before `Release completion` accepts a release PR, the publication lock for
-  the target product version MUST be absent or resolve to the current release
-  identity. A valid lock owned by another identity MUST make the completion
-  check fail; a malformed lock MUST fail closed rather than be treated as
-  available.
-  Malformed, ambiguous, duplicate, or unverified lock ownership evidence MUST
-  fail closed.
-  The current
-  approved repair boundaries are explicitly enumerated. They include PR #391
-  merge `978207fe9d140d81e2d4a2a7bd24fb253a04ebff` -> `0.80.2` with baseline
-  `0.80.1` and intent `type:patch channel:stable`, with no separate PR #390
-  identity, and PR #395 merge
-  `ff1b57b6835616cd3b7a95a479c0106426eb5d40` -> `0.80.3` with baseline
-  `0.80.2` and the same intent. No tuple outside this allowlist is valid.
-  Recovery PRs MUST use a `recovery/` head branch;
-  automatic `workflow_run` preparation skips that prefix, and only the
-  explicit manual version-only dispatch may prepare the identity. Retries MUST
-  reuse a signed single-parent identity and its source-parent CI evidence.
-  Label Gate evidence MUST come from `pull_request_target`; skipped or ordinary
-  `pull_request` runs MUST NOT satisfy the contract.
-- covers: `G2`, `G3`
+### REQ-MVRD-004: Immutable identity and mainline delivery
+
+Preparation MUST freeze the observed main SHA, baseline, input, and target. It
+MUST create a signed, single-parent identity commit changing only root
+`VERSION`, and reserve the target version with one immutable ref directly to
+that commit. Before reserving, preparation MUST confirm that `main:VERSION`
+still matches the frozen baseline and that no different release identity PR is
+open. A repeated dispatch for the same target and unchanged baseline MUST
+reuse that identity; a reservation owned by another SHA MUST fail closed.
+The identity MUST pass the existing main branch protection and `Release
+completion` gate. `Release` MUST publish only after that identity reaches
+`main`, and the next allocation MUST read the resulting main `VERSION`.
+An ordinary PR with no release provenance and no `VERSION` change MUST pass
+the completion check without enabling publication. Any `VERSION` change
+without complete signed release provenance MUST fail closed.
+
+### REQ-MVRD-005: Publication, integrity, and recovery
+
+Stable identity MUST publish a GitHub Release and versioned GHCR images, then
+advance stable `latest` only when that version is still the newest stable
+release. Alpha, beta, and RC identity MUST publish a GitHub prerelease and
+versioned GHCR images without advancing `latest`.
+
+The release workflow MUST build one identity-bound bundle containing all
+binary and packaged assets. It MUST verify bundle identity, file hashes, and
+the GitHub artifact SHA-256 before publication. Failure context MUST include
+the verified identity, failure run, recovery instruction, and artifact digest
+when available. Same-identity recovery MUST reuse an existing completed bundle
+and its digest; recovery before a complete bundle exists MAY rebuild assets
+for the same immutable identity. Recovery MUST NOT recalculate or change the
+version.
 
 ## Verification
 
-### VER-RELEASE-CHANNEL-001
+### VER-MVRD-001: Version decision and baseline
 
-- Method: focused policy fixtures and trusted workflow contract checks.
-- covers: `REQ-RELEASE-CHANNEL-001`, `REQ-RELEASE-CHANNEL-002`
-- Pass condition: beta, RC, stable, and dev labels/version forms are accepted
-  only in their allowed combinations; unknown, duplicate, missing, incompatible,
-  reverse, and shortcut transitions fail. A stale source is accepted only when
-  its signed version is the successor of the qualified final baseline; manual,
-  draft, prerelease, and off-main release candidates do not qualify.
+- Method: `bash .github/scripts/release-channel-contract-check.sh` and direct
+  policy fixtures.
+- Covers: `REQ-MVRD-001`, `REQ-MVRD-002`.
+- Pass condition: only the `version` dispatch input exists; baseline `0.81.0`
+  computes major `1.0.0`, minor `0.82.0`, patch `0.81.1`, alpha
+  `0.81.1-alpha.1`, and beta `0.81.1-beta.1`; missing or invalid main
+  `VERSION` fails closed.
 
-### VER-RELEASE-CHANNEL-002
+### VER-MVRD-002: Channel sequencing and publication
 
-- Method: release identity and failure-context fixtures plus static checks of
-  `release.yml`.
-- covers: `REQ-RELEASE-CHANNEL-003`
-- Pass condition: an RC identity keeps `-rc.N`, is marked prerelease, omits
-  latest, and its recovery/failure context retains the same identity.
+- Method: policy fixtures and static release workflow contract.
+- Covers: `REQ-MVRD-003`, `REQ-MVRD-005`.
+- Pass condition: alpha, beta, and RC starts, increments, and allowed
+  promotions pass; invalid, skipped, reverse, and unsupported transitions
+  fail; prereleases never update `latest`.
 
-### VER-RELEASE-CHANNEL-003
+### VER-MVRD-003: Identity and recovery
 
-- Method: baseline, identity-ownership, version-only preparation, and trusted
-  workflow contract fixtures.
-- covers: `REQ-RELEASE-CHANNEL-004`
-- Pass condition: legacy and canonical baseline tags are accepted, conflicting
-  qualified targets fail closed, unrelated tag ownership does not block a
-  covered merge, and the sole version-only identity binds the covered merge,
-  exact version, baseline, intent, reservation, and recovery ref.
+- Method: identity, reservation, bundle, digest, and failure-context fixtures.
+- Covers: `REQ-MVRD-004`, `REQ-MVRD-005`.
+- Pass condition: repeated same-target preparation reuses the signed identity
+  while its baseline remains current; a foreign reservation fails; identity
+  and artifact digest stay unchanged during recovery.
+
+### VER-MVRD-004: Project snapshot
+
+- Method: Style Playbook catalog sync, topic rebuild, candidate discovery, and
+  audit.
+- Covers: the checked-in Dockrev project snapshot for this topic.
+- Pass condition: the snapshot describes the checked-in manual release policy
+  and all catalog checks pass.
 
 ## Related ADRs
 
-- [0008-pr-label-release-identity](../../adr/0008-pr-label-release-identity.md)
-- [0009-release-channel-promotion-identity](../../adr/0009-release-channel-promotion-identity.md)
-- [0010-release-version-baseline](../../adr/0010-release-version-baseline.md)
-- [0011-legacy-release-tag-baseline](../../adr/0011-legacy-release-tag-baseline.md)
-- [0012-auto-update-release-identity-backfill](../../adr/0012-auto-update-release-identity-backfill.md)
+- [0015-manual-version-release-delivery](../../adr/0015-manual-version-release-delivery.md)
 
 ## References
 
-- `./IMPLEMENTATION.md`
-- `./HISTORY.md`
+- [IMPLEMENTATION.md](./IMPLEMENTATION.md)
+- [HISTORY.md](./HISTORY.md)
+- [Maintainer release guide](../../release.md)

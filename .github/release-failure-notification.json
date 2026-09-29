@@ -9,7 +9,6 @@
   "expected_success_workflows": [
     "CI (PR)",
     "Docs Pages",
-    "Label Gate",
     "Release completion",
     "Release Preparation",
     "Release",

@@ -11,6 +11,7 @@
 - The previous implicit rule “only Release failures are notified” is replaced by an explicit expected-success workflow allowlist.
 - Ordinary workflow failures are no longer treated as release failures. They use run metadata and a rerun/recovery reminder, while Release continues to use identity-aware context.
 - Notification workflows are explicitly excluded so a notifier failure does not recursively produce another notification.
+- Release label-gate removal updates the expected-success workflow set; manual version preparation and Release completion remain covered.
 
 ## References
 

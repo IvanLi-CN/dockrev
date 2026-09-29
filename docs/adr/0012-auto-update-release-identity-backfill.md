@@ -2,7 +2,8 @@
 
 ## Status
 
-Accepted for implementation.
+Superseded by [ADR 0015](0015-manual-version-release-delivery.md). The
+historical backfill boundary is retired and is not part of current policy.
 
 ## Context
 

@@ -1,109 +1,66 @@
 name: Release Preparation
 
 on:
-  workflow_run:
-    workflows: ["CI (PR)", "Label Gate"]
-    types: [completed]
   workflow_dispatch:
     inputs:
-      pr_number:
-        description: Open product PR number to prepare
+      version:
+        description: Version intent or exact SemVer release target
         required: true
-        type: string
-      exact_version:
-        description: Exact version for major/minor, beta, rc, dev, and RC-to-stable promotion; stable patch releases use the next qualified final-release patch
-        required: false
-        default: ""
-        type: string
-      release_mode:
-        description: Preparation mode; version-only-release-pr is reserved for one historical product merge
-        required: false
-        default: "normal-preparation"
-        type: choice
-        options:
-          - normal-preparation
-          - version-only-release-pr
-      covered_merge_sha:
-        description: Exact merged product SHA for version-only-release-pr
-        required: false
-        default: ""
-        type: string
-      baseline_version:
-        description: Frozen qualified final baseline for version-only-release-pr
-        required: false
-        default: ""
         type: string
 
 permissions:
   contents: write
-  pull-requests: read
-  actions: read
-  checks: read
+  pull-requests: write
 
 concurrency:
-  group: release-preparation-${{ inputs.pr_number || github.event.workflow_run.pull_requests[0].number || github.run_id }}
+  group: release-preparation-main
   cancel-in-progress: false
 
 jobs:
   prepare:
-    name: Prepare PR VERSION identity
+    name: Prepare VERSION identity
     runs-on: ubuntu-latest
     timeout-minutes: 15
-    if: >-
-      (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main') ||
-      (github.event.workflow_run.conclusion == 'success' &&
-      !startsWith(github.event.workflow_run.pull_requests[0].head.ref, 'recovery/') &&
-      contains(fromJSON('["pull_request", "pull_request_target"]'), github.event.workflow_run.event))
+    if: github.ref == 'refs/heads/main'
     steps:
-      - name: Checkout trusted release helpers
+      - name: Checkout main release policy
         uses: actions/checkout@v4
         with:
-          ref: ${{ github.event.workflow_run.pull_requests[0].base.sha || github.sha }}
+          ref: main
           fetch-depth: 1
 
-      - name: Resolve PR number
-        id: pr
-        env:
-          INPUT_PR: ${{ inputs.pr_number || '' }}
-          RUN_PR: ${{ github.event.workflow_run.pull_requests[0].number || '' }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          pr_number="${INPUT_PR:-${RUN_PR}}"
-          [[ "${pr_number}" =~ ^[1-9][0-9]*$ ]] || { echo "A valid PR number is required" >&2; exit 2; }
-          echo "pr_number=${pr_number}" >> "$GITHUB_OUTPUT"
-
-      - name: Create and verify VERSION-only preparation
+      - name: Allocate and open the immutable version identity PR
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          PR_NUMBER: ${{ steps.pr.outputs.pr_number }}
-          EXACT_VERSION: ${{ inputs.exact_version || '' }}
-          RELEASE_MODE: ${{ inputs.release_mode || 'normal-preparation' }}
-          COVERED_MERGE_SHA: ${{ inputs.covered_merge_sha || '' }}
-          BASELINE_VERSION: ${{ inputs.baseline_version || '' }}
+          VERSION_INPUT: ${{ inputs.version }}
         run: |
           set -euo pipefail
-          args=(create --repository "${GITHUB_REPOSITORY}" --pr-number "${PR_NUMBER}")
-          if [[ -n "${EXACT_VERSION}" ]]; then
-            args+=(--exact-version "${EXACT_VERSION}")
-          fi
-          if [[ -n "${RELEASE_MODE}" ]]; then
-            args+=(--release-mode "${RELEASE_MODE}")
-          fi
-          if [[ -n "${COVERED_MERGE_SHA}" ]]; then
-            args+=(--covered-merge-sha "${COVERED_MERGE_SHA}")
-          fi
-          if [[ -n "${BASELINE_VERSION}" ]]; then
-            args+=(--baseline-version "${BASELINE_VERSION}")
-          fi
-          args+=(--output release-intent.json)
-          python3 .github/scripts/release_preparation.py create \
-            "${args[@]:1}"
+          python3 .github/scripts/release_preparation.py \
+            --repository "${GITHUB_REPOSITORY}" \
+            --token "${GITHUB_TOKEN}" \
+            --version "${VERSION_INPUT}" \
+            --output release-identity.json
 
-      - name: Publish preparation provenance
+      - name: Summarize release identity
+        run: |
+          set -euo pipefail
+          python3 - <<'PY' >> "$GITHUB_STEP_SUMMARY"
+          import json
+          from pathlib import Path
+          data = json.loads(Path("release-identity.json").read_text(encoding="utf-8"))
+          print("## Release identity")
+          print()
+          print(f"- Decision: `{data['version_input']}`")
+          print(f"- Baseline: `{data['baseline_version']}` at `{data['baseline_sha']}`")
+          print(f"- Target: `{data['version']}` ({data['channel']})")
+          print(f"- Identity: `{data['identity_sha']}`")
+          print(f"- PR: #{data['pull_request']} {data['pull_request_url']}")
+          PY
+
+      - name: Upload immutable identity evidence
         uses: actions/upload-artifact@v4
         with:
-          name: release-intent-pr-${{ steps.pr.outputs.pr_number }}-${{ github.run_id }}
-          path: release-intent.json
+          name: release-identity-${{ github.run_id }}
+          path: release-identity.json
           if-no-files-found: error
-          retention-days: 14
+          retention-days: 90
