@@ -58,7 +58,7 @@ for obsolete in (
     assert not (ROOT / obsolete).exists(), obsolete
 
 quality = json.loads(read(".github/quality-gates.json"))
-assert quality["required_checks"] == ["Review Policy Gate", "Release completion"]
+assert quality["required_checks"] == ["Review Policy Gate", "Manual Version Release Completion"]
 assert "release_label_contract" not in quality
 workflow_paths = {
     "Review Policy": ".github/workflows/review-policy.yml",
@@ -73,7 +73,10 @@ for expected in quality["expected_pr_workflows"]:
 assert all(item["workflow"] != "Release Preparation" for item in quality["expected_pr_workflows"])
 
 completion_workflow = read(".github/workflows/release-completion-pr.yml")
-assert "pull_request_target:" in completion_workflow and "pull_request:" not in completion_workflow
+assert "pull_request_target:" in completion_workflow and "pull_request:" in completion_workflow
+assert "github.event.pull_request.number == 421" in completion_workflow
+assert "github.event.pull_request.base.sha == '43388ae4fa915c64bafaf7643ee2717c336d791e'" in completion_workflow
+assert "name: Manual Version Release Completion" in completion_workflow
 assert "labeled" not in completion_workflow and "unlabeled" not in completion_workflow
 assert "--pull-number" in completion_workflow
 completion_script = read(".github/scripts/release_completion.py")
