@@ -90,6 +90,19 @@ target_workflow = read(".github/workflows/release-completion-pr.yml")
 assert quality_gate_checker.target_workflow_status(quality, target_workflow) == "trusted"
 assert quality_gate_checker.target_workflow_status(quality, None) == "missing"
 assert quality_gate_checker.target_workflow_status(quality, "pull_request:\n  branches: [main]") == "untrusted"
+source_readiness = quality_gate_checker.migration_readiness_record(
+    "source", "trusted", "Manual Version Release Completion",
+    ["Label Gate", "Release completion", "Review Policy Gate"],
+)
+assert source_readiness["trusted_target_workflow_on_main"] is True
+assert source_readiness["target_context_required"] is False
+assert source_readiness["target_gate_active"] is False
+target_readiness = quality_gate_checker.migration_readiness_record(
+    "target", "trusted", "Manual Version Release Completion",
+    ["Manual Version Release Completion", "Review Policy Gate"],
+)
+assert target_readiness["target_context_required"] is True
+assert target_readiness["target_gate_active"] is True
 workflow_paths = {
     "Review Policy": ".github/workflows/review-policy.yml",
     "Release completion": ".github/workflows/release-completion-pr.yml",

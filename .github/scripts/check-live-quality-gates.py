@@ -212,6 +212,18 @@ def target_workflow_status(declaration: dict, content: str | None) -> str:
     return "trusted"
 
 
+def migration_readiness_record(
+    state: str, workflow_status: str, check_context: str, live_checks: list[str],
+) -> dict[str, str | bool]:
+    context_required = check_context in live_checks
+    return {
+        "state": state,
+        "trusted_target_workflow_on_main": workflow_status == "trusted",
+        "target_context_required": context_required,
+        "target_gate_active": state == "target" and context_required,
+    }
+
+
 def validate_rules(declaration: dict, rules: list[dict], branch: str) -> list[str]:
     errors: list[str] = []
     required_checks = declaration.get("required_checks", [])
@@ -355,11 +367,9 @@ def main() -> int:
                 errors.append(
                     f"{branch}: target required checks are active but trusted workflow is {workflow_status} on {workflow_branch}"
                 )
-            migration_readiness[branch] = {
-                "trusted_target_workflow_on_main": workflow_status == "trusted",
-                "target_check_required": migration_states[branch] == "target" and check_declared,
-                "cutover_ready": workflow_status == "trusted" and check_declared,
-            }
+            migration_readiness[branch] = migration_readiness_record(
+                migration_states[branch], workflow_status, check_context, live_checks
+            )
             if migration_states[branch] == "source":
                 print(
                     f"[live-quality-gates] {branch}: legacy required checks remain active; "
@@ -377,6 +387,16 @@ def main() -> int:
             print(f"- {item}", file=sys.stderr)
         return 1
 
+    notes = [
+        "Validated effective branch rules via GET /repos/{owner}/{repo}/rules/branches/{branch}.",
+        "Validated the target workflow markers from its trusted branch.",
+        "Bypass actors are not exposed by that endpoint and must be verified during live ruleset configuration.",
+    ]
+    if "source" in migration_states.values():
+        notes.append("The source state is pending; the target check is not required by the live ruleset yet.")
+    if "target" in migration_states.values():
+        notes.append("The active target context must succeed on each PR before GitHub permits merge.")
+
     print(
         json.dumps(
             {
@@ -390,11 +410,7 @@ def main() -> int:
                 "checked_rules": checked_rules,
                 "required_check_migration": migration_states,
                 "required_check_migration_readiness": migration_readiness,
-                "notes": [
-                    "Validated effective branch rules via GET /repos/{owner}/{repo}/rules/branches/{branch}.",
-                    "Validated the target workflow markers from its trusted branch; GitHub enforces its required check on each PR before merge.",
-                    "Bypass actors are not exposed by that endpoint and must be verified during live ruleset configuration.",
-                ],
+                "notes": notes,
             },
             indent=2,
             sort_keys=True,
