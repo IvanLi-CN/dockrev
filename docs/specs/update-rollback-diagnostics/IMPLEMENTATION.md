@@ -36,7 +36,7 @@
 
 ## Related Changes
 
-- Runtime: `crates/dockrev-api/src/rollback_evidence.rs`, updater, DB, API, and Job Detail integration.
+- Runtime: `crates/dockrev-api/src/rollback_evidence.rs`, `crates/dockrev-api/src/rollback_evidence_archive.rs`, updater, DB, API, and Job Detail integration.
 - Data/API contracts: `./contracts/db.md`, `./contracts/http-api.md`.
 
 ## References
