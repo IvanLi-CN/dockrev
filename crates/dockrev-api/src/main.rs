@@ -291,6 +291,11 @@ async fn main() -> anyhow::Result<()> {
     // Recover orphaned/incomplete jobs created by a previous process instance.
     // This covers cases where the container was killed or the process panicked mid-job.
     let now = now_rfc3339()?;
+    // A prior process can exit after claiming a backup snapshot but before restoring services.
+    state
+        .db
+        .reset_update_stop_recovery_claims_for_startup(&now)
+        .await?;
     let recovered = state
         .db
         .recover_incomplete_jobs(&now, "server_restart")

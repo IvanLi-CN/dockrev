@@ -985,7 +985,6 @@ WHERE finished_at IS NULL
     FROM update_job_stop_controls controls
     WHERE controls.job_id = jobs.id
       AND controls.recovery_snapshot_json IS NOT NULL
-      AND controls.recovery_attempted_at IS NULL
   )
   AND (
     jobs.reason = 'selected-version'

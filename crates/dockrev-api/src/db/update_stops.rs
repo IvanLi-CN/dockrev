@@ -158,6 +158,21 @@ impl Db {
         .await
     }
 
+    pub async fn reset_update_stop_recovery_claims_for_startup(
+        &self,
+        now: &str,
+    ) -> anyhow::Result<()> {
+        let now = now.to_string();
+        self.call(move |conn| {
+            conn.execute(
+                "UPDATE update_job_stop_controls SET recovery_attempted_at = NULL, updated_at = ?1 WHERE recovery_snapshot_json IS NOT NULL AND recovery_attempted_at IS NOT NULL",
+                params![now],
+            )?;
+            Ok(())
+        })
+        .await
+    }
+
     pub async fn claim_pending_update_stop_recoveries(
         &self,
         now: &str,
@@ -357,6 +372,64 @@ mod tests {
 
         assert_eq!(pending.len(), 1);
         assert_eq!(pending[0].job_id, "job-terminal-pending-recovery");
+    }
+
+    #[tokio::test]
+    async fn startup_reclaims_recovery_snapshot_after_crash_between_claim_and_restore() {
+        let root = std::env::temp_dir().join(format!(
+            "dockrev-update-stop-restart-recovery-{}",
+            ulid::Ulid::new()
+        ));
+        std::fs::create_dir_all(&root).unwrap();
+        let db_path = root.join("dockrev.sqlite");
+        let db = Db::open(&db_path).await.unwrap();
+        let job_id = "job-recovery-crash-window";
+        db.insert_job(update_job(job_id)).await.unwrap();
+        db.create_update_stop_control(job_id, "2026-08-16T00:00:00Z")
+            .await
+            .unwrap();
+        db.save_update_stop_recovery_snapshot(
+            job_id,
+            &crate::backup::BackupRecoverySnapshot {
+                stack_id: "stack-1".to_string(),
+                services: vec!["web".to_string()],
+            },
+            "2026-08-16T00:01:00Z",
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(
+            db.claim_pending_update_stop_recoveries("2026-08-16T00:02:00Z")
+                .await
+                .unwrap()
+                .len(),
+            1
+        );
+        drop(db);
+
+        let db = Db::open(&db_path).await.unwrap();
+        db.reset_update_stop_recovery_claims_for_startup("2026-08-16T00:03:00Z")
+            .await
+            .unwrap();
+        let recovered = db
+            .recover_incomplete_jobs("2026-08-16T00:03:00Z", "server_restart")
+            .await
+            .unwrap();
+        assert!(!recovered.iter().any(|recovered_id| recovered_id == job_id));
+        let job = db.get_job(job_id).await.unwrap().unwrap();
+        assert_eq!(job.status, "running");
+        assert!(job.finished_at.is_none());
+
+        let retry = db
+            .claim_pending_update_stop_recoveries("2026-08-16T00:04:00Z")
+            .await
+            .unwrap();
+        assert_eq!(retry.len(), 1);
+        assert_eq!(retry[0].job_id, job_id);
+
+        drop(db);
+        let _ = tokio::fs::remove_dir_all(root).await;
     }
 
     #[tokio::test]
