@@ -8,7 +8,112 @@ use serde_json::Value;
 
 use crate::backup_helper;
 
-use super::{CAPTURE_INTERRUPTED_REASON, EvidenceMetadata};
+use super::{
+    CAPTURE_INTERRUPTED_REASON, EvidenceMetadata, EvidenceSummary, RollbackEvidenceContext,
+    bounded_summary_errors, bounded_summary_services,
+};
+
+pub(super) async fn finalize(context: &RollbackEvidenceContext) -> EvidenceSummary {
+    let mut records = context.metadata();
+    if records.is_empty() {
+        return EvidenceSummary {
+            status: "absent",
+            failed_candidates: 0,
+            archive_format: "tar",
+            compression: "zstd",
+            archive_size_bytes: None,
+            services: Vec::new(),
+            errors: Vec::new(),
+        };
+    }
+    let spool = context.job_spool_path();
+    if let Err(error) = Box::pin(prepare_capture_archive(&spool, &mut records)).await {
+        for record in &mut records {
+            if record
+                .capture_errors
+                .iter()
+                .any(|item| item == CAPTURE_INTERRUPTED_REASON)
+            {
+                record
+                    .capture_errors
+                    .push(format!("logs file promotion: {error}"));
+            }
+        }
+        let _ = write_manifest(&spool, &records).await;
+        let _ = tokio::fs::remove_file(spool.with_extension("tar.zst")).await;
+        let _ = tokio::fs::remove_file(spool.with_extension("tar.zst.part")).await;
+        let failed_candidates = records.len();
+        let (services, services_truncated) = bounded_summary_services(&records);
+        return EvidenceSummary {
+            status: "incomplete",
+            failed_candidates,
+            archive_format: "tar",
+            compression: "zstd",
+            archive_size_bytes: None,
+            services,
+            errors: bounded_summary_errors(
+                vec![format!("logs file promotion: {error}")],
+                services_truncated,
+            ),
+        };
+    }
+    let mut errors = records
+        .iter()
+        .flat_map(|record| record.capture_errors.iter().cloned())
+        .collect::<Vec<_>>();
+    let archive_path = spool.with_extension("tar.zst");
+    let archive_part = spool.with_extension("tar.zst.part");
+    if let Err(error) = write_manifest(&spool, &records).await {
+        errors.insert(0, format!("manifest: {error}"));
+        for (label, path) in [
+            ("archive", &archive_path),
+            ("partial archive", &archive_part),
+        ] {
+            if let Err(error) = tokio::fs::remove_file(path).await
+                && error.kind() != std::io::ErrorKind::NotFound
+            {
+                errors.push(format!("remove {label}: {error}"));
+            }
+        }
+        let failed_candidates = records.len();
+        let (services, services_truncated) = bounded_summary_services(&records);
+        return EvidenceSummary {
+            status: "incomplete",
+            failed_candidates,
+            archive_format: "tar",
+            compression: "zstd",
+            archive_size_bytes: None,
+            services,
+            errors: bounded_summary_errors(errors, services_truncated),
+        };
+    }
+    let archive_size_bytes = match Box::pin(archive_dir(&spool, &archive_part, &archive_path)).await
+    {
+        Ok(()) => tokio::fs::metadata(&archive_path)
+            .await
+            .ok()
+            .map(|m| m.len()),
+        Err(error) => {
+            errors.push(format!("archive: {error}"));
+            None
+        }
+    };
+    let failed_candidates = records.len();
+    let (services, services_truncated) = bounded_summary_services(&records);
+    EvidenceSummary {
+        status: if archive_size_bytes.is_some() {
+            "available"
+        } else {
+            "incomplete"
+        },
+        failed_candidates,
+        archive_format: "tar",
+        compression: "zstd",
+        archive_size_bytes,
+        services,
+        errors: bounded_summary_errors(errors, services_truncated),
+    }
+}
 
 pub(super) async fn recover_interrupted_capture(
     spool: &Path,

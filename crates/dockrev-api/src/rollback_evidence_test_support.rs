@@ -381,6 +381,23 @@ async fn final_manifest_write_failure_does_not_attach_an_archive_with_stale_meta
     );
     assert!(!evidence.archive_path().exists());
 
+    tokio::fs::remove_dir(evidence.job_spool_path().join("manifest.tmp"))
+        .await
+        .expect("remove manifest failure trigger before simulated restart");
+    crate::rollback_evidence::recover_orphaned_evidence(&db, &db_path).await;
+
+    let recovered_job = db.get_job(job_id).await.expect("reload job").expect("job");
+    assert_eq!(
+        recovered_job.summary_json["rollbackEvidence"]["status"],
+        "incomplete"
+    );
+    assert!(
+        db.get_rollback_evidence_archive(job_id)
+            .await
+            .expect("load recovered archive")
+            .is_none()
+    );
+
     let _ = tokio::fs::remove_dir_all(root).await;
 }
 

@@ -108,6 +108,9 @@ pub(super) async fn recover_evidence(
                 }
             }
         }
+        if terminal && has_final_manifest_write_failure(&job.summary_json) {
+            continue;
+        }
         let manifest = spool.join("manifest.json");
         let manifest_bytes = match tokio::fs::read(&manifest).await {
             Ok(bytes) => bytes,
@@ -189,6 +192,19 @@ pub(super) async fn recover_evidence(
             }
         }
     }
+}
+
+fn has_final_manifest_write_failure(summary: &Value) -> bool {
+    summary["rollbackEvidence"]["status"] == "incomplete"
+        && summary["rollbackEvidence"]["errors"]
+            .as_array()
+            .is_some_and(|errors| {
+                errors.iter().any(|error| {
+                    error
+                        .as_str()
+                        .is_some_and(|error| error.starts_with("manifest:"))
+                })
+            })
 }
 
 async fn cleanup_spool_for_committed_archive(

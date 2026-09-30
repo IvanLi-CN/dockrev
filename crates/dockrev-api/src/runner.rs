@@ -1,3 +1,5 @@
+#[cfg(unix)]
+use std::os::unix::fs::PermissionsExt as _;
 use std::time::Duration;
 use std::{path::Path, process::Stdio};
 
@@ -293,7 +295,13 @@ impl CommandRunner for TokioCommandRunner {
         configure_process_group(&mut cmd);
 
         let (mut file, mut child) = match tokio::time::timeout_at(deadline, async {
-            let file = tokio::fs::File::create(output_path).await?;
+            let mut options = tokio::fs::OpenOptions::new();
+            options.write(true).create(true).truncate(true);
+            #[cfg(unix)]
+            options.mode(0o600);
+            let file = options.open(output_path).await?;
+            #[cfg(unix)]
+            tokio::fs::set_permissions(output_path, std::fs::Permissions::from_mode(0o600)).await?;
             let child = cmd.spawn()?;
             anyhow::Ok((file, child))
         })
@@ -630,6 +638,14 @@ mod tests {
         assert!(output.eof_reached);
         assert!(!output.timed_out);
         assert_eq!(actual, expected);
+        assert_eq!(
+            std::fs::metadata(&path)
+                .expect("captured file metadata")
+                .permissions()
+                .mode()
+                & 0o777,
+            0o600
+        );
         tokio::fs::remove_file(path).await.expect("remove capture");
     }
 
