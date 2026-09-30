@@ -314,6 +314,7 @@ pub(super) async fn handle_check_worker_result(
         .configured_tag_digest
         .as_deref()
         .and_then(snapshot_worker::normalize_digest);
+    let configured_tag_observed_at = outcome.configured_tag_observed_at.as_deref();
     let candidate_digest = outcome
         .candidate_digest
         .as_deref()
@@ -377,7 +378,11 @@ pub(super) async fn handle_check_worker_result(
     let candidate_needs_inference =
         crate::notify::notification_tag_requires_settle(candidate_raw_tag, &candidate_display_tag);
 
-    if let (Some(image_repo), Some(digest)) = (image_repo.as_deref(), configured_tag_digest) {
+    if let (Some(image_repo), Some(digest), Some(observed_at)) = (
+        image_repo.as_deref(),
+        configured_tag_digest,
+        configured_tag_observed_at,
+    ) {
         let version = configured_tag_observation_version(
             &service_image_tag,
             &digest,
@@ -390,7 +395,7 @@ pub(super) async fn handle_check_worker_result(
             configured_tag: service_image_tag.clone(),
             digest,
             version,
-            observed_at: now.to_string(),
+            observed_at: observed_at.to_string(),
         });
     }
 

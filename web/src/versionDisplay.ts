@@ -161,6 +161,33 @@ export function compareStrictSemverTags(
   return compareStrictSemver(leftParsed, rightParsed)
 }
 
+function isComparablePrereleaseToken(token: string): boolean {
+  if (/^\d+$/.test(token)) return true
+
+  const normalized = token.toLowerCase()
+  if (['alpha', 'beta', 'rc', 'pre', 'preview'].includes(normalized)) return true
+
+  return ['alpha', 'beta', 'rc', 'pre', 'preview'].some((prefix) => {
+    const suffix = normalized.startsWith(prefix) ? normalized.slice(prefix.length) : null
+    if (suffix == null) return false
+    const digits = suffix.startsWith('-') ? suffix.slice(1) : suffix
+    return digits.length > 0 && /^\d+$/.test(digits)
+  })
+}
+
+export function isComparableStrictSemverTag(tag: string | null | undefined): boolean {
+  const parsed = parseStrictSemver(trimOrEmpty(tag))
+  return parsed != null && parsed.prerelease.every(isComparablePrereleaseToken)
+}
+
+export function compareComparableStrictSemverTags(
+  a: string | null | undefined,
+  b: string | null | undefined,
+): number | null {
+  if (!isComparableStrictSemverTag(a) || !isComparableStrictSemverTag(b)) return null
+  return compareStrictSemverTags(a, b)
+}
+
 export function inferResolvedTagsFromSnapshot(
   tags: Array<string | null | undefined> | null | undefined,
   rawTag: string | null | undefined,

@@ -214,6 +214,45 @@ async fn successful_check_observation_binds_from_an_existing_snapshot() {
     assert_eq!(observations[0].version.as_deref(), Some("v2.71.37"));
 }
 
+#[tokio::test]
+async fn configured_tag_observation_timestamp_uses_registry_observation_time() {
+    let state = test_state_with(
+        ":memory:",
+        Arc::new(SelectedVersionRegistry),
+        Arc::new(FakeRunner),
+    )
+    .await;
+    let (stack_id, _, _) = selected_version_seed_service(&state).await;
+    let service = state.db.list_services_for_check(&stack_id).await.unwrap()[0].clone();
+    let check_started_at = "2000-01-01T00:00:00Z";
+
+    let outcome = crate::service_check::check_service_and_persist(
+        &state,
+        "selected-version-check",
+        &service,
+        None,
+        "linux/amd64",
+        check_started_at,
+        &crate::service_check::new_manifest_digest_cache(),
+        &crate::service_check::new_repo_tags_cache(),
+    )
+    .await
+    .unwrap();
+
+    let observed_at = outcome.configured_tag_observed_at.unwrap();
+    let observed_time = time::OffsetDateTime::parse(
+        &observed_at,
+        &time::format_description::well_known::Rfc3339,
+    )
+    .unwrap();
+    let started_time = time::OffsetDateTime::parse(
+        check_started_at,
+        &time::format_description::well_known::Rfc3339,
+    )
+    .unwrap();
+    assert!(observed_time > started_time);
+}
+
 #[derive(Clone, Default)]
 struct PendingSelectedVersionRunner;
 

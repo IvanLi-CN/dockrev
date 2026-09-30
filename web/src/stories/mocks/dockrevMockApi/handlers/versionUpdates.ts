@@ -1,22 +1,28 @@
 import { imageRepoFromImageRef } from '../../../../imageRepo'
-import { compareStrictSemverTags } from '../../../../versionDisplay'
+import { compareComparableStrictSemverTags } from '../../../../versionDisplay'
 import type { JobListItem } from '../../../../api'
 import type { MockRouteContext } from '../context'
 
 const observedVersionDigest = 'sha256:0000000000000000000000000000000000000000000000000000000000000023'
 
+const invalidReleaseTagMessage = 'releaseTag must be a strictly newer comparable SemVer version'
+
 function previewForRelease(found: NonNullable<ReturnType<MockRouteContext['findService']>>, releaseTag: string) {
+  const currentVersion = found.svc.image.resolvedTag ?? found.svc.image.tag
+  const comparison = compareComparableStrictSemverTags(releaseTag, currentVersion)
+  if (comparison == null || comparison <= 0) return null
+
   const imageRepo = imageRepoFromImageRef(found.svc.image.ref) ?? found.svc.image.ref
   const isObserved =
     found.svc.id === 'svc-prod-api' &&
     found.svc.image.tag === 'latest' &&
-    compareStrictSemverTags(releaseTag, '5.2.3') === 0
+    compareComparableStrictSemverTags(releaseTag, '5.2.3') === 0
   return {
     releaseTag,
     classification: isObserved ? 'normal' : 'forced',
     targetDigest: isObserved ? observedVersionDigest : `sha256:${'4'.repeat(64)}`,
     currentDigest: found.svc.image.digest,
-    currentVersion: found.svc.image.resolvedTag ?? found.svc.image.tag,
+    currentVersion,
     imageReference: found.svc.image.ref,
     imageRepo,
     configuredTag: found.svc.image.tag,
@@ -70,6 +76,15 @@ export function handleVersionUpdateRoutes(ctx: MockRouteContext): Response | nul
       return json({ error: 'invalid version update request' }, { status: 400 })
     }
     const preview = previewForRelease(found, releaseTag)
+    if (!preview) {
+      return json({
+        error: {
+          code: 'invalid_argument',
+          message: invalidReleaseTagMessage,
+          details: {},
+        },
+      }, { status: 400 })
+    }
     const previewMatches =
       classification === preview.classification &&
       targetDigest === preview.targetDigest &&
@@ -129,5 +144,15 @@ export function handleVersionUpdateRoutes(ctx: MockRouteContext): Response | nul
   }
 
   const releaseTag = getString(record.releaseTag) ?? ''
-  return json(previewForRelease(found, releaseTag))
+  const preview = previewForRelease(found, releaseTag)
+  if (!preview) {
+    return json({
+      error: {
+        code: 'invalid_argument',
+        message: invalidReleaseTagMessage,
+        details: {},
+      },
+    }, { status: 400 })
+  }
+  return json(preview)
 }

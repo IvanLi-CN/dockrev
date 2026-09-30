@@ -27,7 +27,7 @@ import { useServiceReleaseNotesSession } from '../useServiceReleaseNotesSession'
 import { blockedReasonFor, serviceRowStatus } from '../updateStatus'
 import { candidateHydrationDetail, candidateSettlementDetail } from './AutoUpdatePolicyResultCard'
 import {
-  compareStrictSemverTags,
+  compareComparableStrictSemverTags,
   formatCandidateTagDisplay,
   formatCurrentTagDisplay,
   isStrictSemverTag,
@@ -688,7 +688,7 @@ export function ServiceVersionsSection(props: ServiceVersionsSectionProps) {
       const currentMatch = releaseNotesTagMatchesVersion(item, currentVersion)
       const candidateMatch = releaseNotesTagMatchesVersion(item, candidateComparableVersion)
       const activeUpdateTargetMatch = operationProgress?.kind === 'update' && releaseNotesTagMatchesVersion(item, activeUpdateTargetVersion)
-      const semverComparison = compareStrictSemverTags(item.tagName, currentComparableVersion)
+      const semverComparison = compareComparableStrictSemverTags(item.tagName, currentComparableVersion)
       const olderThanCurrent = semverComparison != null && semverComparison < 0
       const newerThanCurrent = semverComparison != null && semverComparison > 0
       const deployedHistorical = deployedHistoricalVersions.has(normalizeVersion(item.tagName))
@@ -698,7 +698,7 @@ export function ServiceVersionsSection(props: ServiceVersionsSectionProps) {
         : newerThanCurrent || activeUpdateTargetMatch
       const showRollback = !dockrevService && (deployedHistorical || rollbackTargetMatch)
       const historicalAssociation = tagObservations?.observations.some(
-        (observation) => compareStrictSemverTags(observation.version, item.tagName) === 0,
+        (observation) => compareComparableStrictSemverTags(observation.version, item.tagName) === 0,
       ) ?? false
 
       let updateDisabledReason: string | null = null
