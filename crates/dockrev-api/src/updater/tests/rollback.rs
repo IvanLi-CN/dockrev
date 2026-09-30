@@ -389,13 +389,13 @@ impl CommandRunner for HealthRollbackRunner {
 }
 
 #[tokio::test]
-async fn healthcheck_failure_signal_survives_a_later_update_error() {
+async fn healthcheck_failure_count_survives_a_later_update_error() {
     let stack = single_service_stack("ghcr.io/org/web:1.0", None);
     let runner = HealthRollbackRunner {
         fail_rollback_image_inspect: true,
         ..Default::default()
     };
-    let signal = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let failure_count = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
     let result = run_update_job_with_gate_using_root_unlocked(
         &runner,
         "docker-compose",
@@ -419,12 +419,12 @@ async fn healthcheck_failure_signal_survives_a_later_update_error() {
         None,
         None,
         None,
-        Some(signal.clone()),
+        Some(failure_count.clone()),
     )
     .await;
 
     assert!(result.is_err());
-    assert!(signal.load(std::sync::atomic::Ordering::Relaxed));
+    assert_eq!(failure_count.load(std::sync::atomic::Ordering::Relaxed), 1);
     assert_eq!(*runner.events.lock().unwrap(), vec!["rollback"]);
 }
 
@@ -438,7 +438,7 @@ async fn healthcheck_failure_rolls_back_with_attempted_and_final_digests() {
     let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<UpdateProgressEvent>();
     let root = std::env::temp_dir().join(format!("dockrev-health-evidence-{}", ulid::Ulid::new()));
     std::fs::create_dir_all(&root).unwrap();
-    let healthcheck_failure_signal = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let healthcheck_failure_count = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
     let evidence = crate::rollback_evidence::RollbackEvidenceContext::new(
         "job-health-failure",
         &root.join("dockrev.sqlite"),
@@ -468,13 +468,16 @@ async fn healthcheck_failure_rolls_back_with_attempted_and_final_digests() {
         None,
         None,
         Some(evidence.clone()),
-        Some(healthcheck_failure_signal.clone()),
+        Some(healthcheck_failure_count.clone()),
     )
     .await
     .unwrap();
 
     assert_eq!(outcome.status, "rolled_back");
-    assert!(healthcheck_failure_signal.load(std::sync::atomic::Ordering::Relaxed));
+    assert_eq!(
+        healthcheck_failure_count.load(std::sync::atomic::Ordering::Relaxed),
+        1
+    );
     assert_eq!(
         outcome.summary_json["newDigests"]["svc_1"],
         json!("sha256:new")

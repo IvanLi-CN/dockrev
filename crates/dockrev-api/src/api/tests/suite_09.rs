@@ -857,6 +857,113 @@ services:
 }
 
 #[tokio::test]
+async fn spool_initialization_failure_records_healthcheck_candidate_in_terminal_summary() {
+    let root = std::env::temp_dir().join(format!(
+        "dockrev-spool-init-healthcheck-{}",
+        ulid::Ulid::new()
+    ));
+    tokio::fs::create_dir_all(&root).await.unwrap();
+    let db_path = root.join("dockrev.sqlite");
+    let state = test_state_with(
+        db_path.to_str().unwrap(),
+        Arc::new(FakeRegistry),
+        Arc::new(HealthRollbackUpdateRunner::default()),
+    )
+    .await;
+    let spool_root = crate::rollback_evidence::spool_root(&db_path);
+    tokio::fs::write(&spool_root, b"block spool initialization")
+        .await
+        .unwrap();
+    let app = api::router(state.clone());
+
+    let compose_path = root.join("compose.yml");
+    tokio::fs::write(
+        &compose_path,
+        "services:\n  web:\n    image: ghcr.io/acme/web:5.2\n",
+    )
+    .await
+    .unwrap();
+    let stack_id = seed_stack_from_compose(&state, "demo", compose_path.to_str().unwrap()).await;
+    seed_discovered_project(&state, &stack_id, "demo").await;
+    let service = state.db.list_services_for_check(&stack_id).await.unwrap()[0].clone();
+    let now = time::OffsetDateTime::now_utc()
+        .format(&time::format_description::well_known::Rfc3339)
+        .unwrap();
+    state
+        .db
+        .update_service_check_result(
+            &service.id,
+            Some("sha256:old".to_string()),
+            None,
+            None,
+            Some("5.2".to_string()),
+            Some("5.2".to_string()),
+            Some("sha256:new".to_string()),
+            Some("match".to_string()),
+            Some("[\"linux/amd64\"]".to_string()),
+            None,
+            None,
+            &now,
+            &now,
+        )
+        .await
+        .unwrap();
+
+    let update = serde_json::json!({
+        "scope": "service",
+        "stackId": stack_id,
+        "serviceId": service.id,
+        "targetTag": "5.2",
+        "targetDigest": "sha256:new",
+        "pullTags": [],
+        "mode": "apply",
+        "allowArchMismatch": false,
+        "backupMode": "skip",
+        "reason": "ui"
+    });
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/updates")
+                .header("content-type", "application/json")
+                .body(Body::from(update.to_string()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 200);
+    let job_id = response_json(response).await["jobId"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let job = wait_for_job_terminal(&state, &job_id).await;
+
+    assert_eq!(job.status, "rolled_back");
+    assert_eq!(
+        job.summary_json["rollbackEvidence"]["status"],
+        "incomplete"
+    );
+    assert_eq!(
+        job.summary_json["rollbackEvidence"]["failedCandidates"],
+        1
+    );
+    assert!(job.summary_json["rollbackEvidence"]["errors"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|error| error.as_str().unwrap_or_default().starts_with("spool setup:")));
+    assert!(state
+        .db
+        .get_rollback_evidence_archive(&job_id)
+        .await
+        .unwrap()
+        .is_none());
+
+    let _ = tokio::fs::remove_dir_all(root).await;
+}
+
+#[tokio::test]
 async fn service_rollback_target_matches_successful_service_update_history() {
     let state = test_state(":memory:").await;
     let app = api::router(state.clone());

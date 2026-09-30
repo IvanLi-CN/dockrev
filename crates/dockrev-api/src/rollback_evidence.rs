@@ -418,11 +418,32 @@ impl RollbackEvidenceContext {
             .iter()
             .flat_map(|record| record.capture_errors.iter().cloned())
             .collect::<Vec<_>>();
-        if let Err(error) = write_manifest(&spool, &records).await {
-            errors.push(format!("manifest: {error}"));
-        }
         let archive_path = spool.with_extension("tar.zst");
         let archive_part = spool.with_extension("tar.zst.part");
+        if let Err(error) = write_manifest(&spool, &records).await {
+            errors.push(format!("manifest: {error}"));
+            for (label, path) in [
+                ("archive", &archive_path),
+                ("partial archive", &archive_part),
+            ] {
+                if let Err(error) = tokio::fs::remove_file(path).await
+                    && error.kind() != std::io::ErrorKind::NotFound
+                {
+                    errors.push(format!("remove {label}: {error}"));
+                }
+            }
+            let failed_candidates = records.len();
+            let (services, services_truncated) = bounded_summary_services(&records);
+            return EvidenceSummary {
+                status: "incomplete",
+                failed_candidates,
+                archive_format: "tar",
+                compression: "zstd",
+                archive_size_bytes: None,
+                services,
+                errors: bounded_summary_errors(errors, services_truncated),
+            };
+        }
         let archive_size_bytes =
             match Box::pin(archive_dir(&spool, &archive_part, &archive_path)).await {
                 Ok(()) => tokio::fs::metadata(&archive_path)

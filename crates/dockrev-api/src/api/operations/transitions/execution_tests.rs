@@ -56,19 +56,21 @@ fn evidence_setup_failure_checks_healthchecks_across_all_stack_summaries() {
         transition_failure_step(TransitionJobKind::Update, &summaries),
         Some("pull_services")
     );
-    assert!(transition_has_failure_step(
-        TransitionJobKind::Update,
-        &summaries,
-        "healthcheck"
-    ));
+    assert_eq!(
+        transition_failed_candidate_count(TransitionJobKind::Update, "apply", &summaries, 0),
+        1
+    );
 
     let mut summary = serde_json::json!({"status":"rolled_back"});
+    let failed_candidates =
+        transition_failed_candidate_count(TransitionJobKind::Update, "apply", &summaries, 0);
     crate::rollback_evidence_finalize::record_spool_setup_failure(
         &mut summary,
         Some("spool setup: permission denied"),
-        transition_has_failure_step(TransitionJobKind::Update, &summaries, "healthcheck"),
+        failed_candidates,
     );
     assert_eq!(summary["rollbackEvidence"]["status"], "incomplete");
+    assert_eq!(summary["rollbackEvidence"]["failedCandidates"], 1);
 }
 
 #[test]
@@ -77,24 +79,18 @@ fn evidence_setup_failure_detects_later_healthcheck_failure_in_same_stack() {
         "update": {"failureStep":"pull_target_tag"}
     })];
 
-    assert!(!transition_requires_evidence_failure_metadata(
-        TransitionJobKind::Update,
-        "apply",
-        &summaries,
-        false,
-    ));
-    assert!(transition_requires_evidence_failure_metadata(
-        TransitionJobKind::Update,
-        "apply",
-        &summaries,
-        true,
-    ));
-    assert!(!transition_requires_evidence_failure_metadata(
-        TransitionJobKind::Update,
-        "dry-run",
-        &summaries,
-        true,
-    ));
+    assert_eq!(
+        transition_failed_candidate_count(TransitionJobKind::Update, "apply", &summaries, 0,),
+        0
+    );
+    assert_eq!(
+        transition_failed_candidate_count(TransitionJobKind::Update, "apply", &summaries, 1,),
+        1
+    );
+    assert_eq!(
+        transition_failed_candidate_count(TransitionJobKind::Update, "dry-run", &summaries, 1,),
+        0
+    );
 }
 
 #[test]

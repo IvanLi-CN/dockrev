@@ -78,28 +78,24 @@ pub(crate) fn normalize_transition_outcome_status(
     }
 }
 
-pub(crate) fn transition_has_failure_step(
-    kind: TransitionJobKind,
-    stack_summaries: &[serde_json::Value],
-    expected_step: &str,
-) -> bool {
-    stack_summaries.iter().any(|stack| {
-        stack
-            .get(kind.summary_key())
-            .and_then(|summary| summary.get("failureStep"))
-            .and_then(serde_json::Value::as_str)
-            == Some(expected_step)
-    })
-}
-
-pub(crate) fn transition_requires_evidence_failure_metadata(
+pub(crate) fn transition_failed_candidate_count(
     kind: TransitionJobKind,
     mode: &str,
     stack_summaries: &[serde_json::Value],
-    healthcheck_failure_observed: bool,
-) -> bool {
-    kind == TransitionJobKind::Update
-        && mode == "apply"
-        && (healthcheck_failure_observed
-            || transition_has_failure_step(kind, stack_summaries, "healthcheck"))
+    observed_healthcheck_failures: usize,
+) -> usize {
+    if kind != TransitionJobKind::Update || mode != "apply" {
+        return 0;
+    }
+    let summarized_failures = stack_summaries
+        .iter()
+        .filter(|stack| {
+            stack
+                .get(kind.summary_key())
+                .and_then(|summary| summary.get("failureStep"))
+                .and_then(serde_json::Value::as_str)
+                == Some("healthcheck")
+        })
+        .count();
+    observed_healthcheck_failures.max(summarized_failures)
 }

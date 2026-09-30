@@ -256,6 +256,134 @@ async fn manifest_checkpoint_failure_skips_raw_candidate_log_command() {
     let _ = tokio::fs::remove_dir_all(root).await;
 }
 
+struct FinalManifestFailureRunner {
+    manifest_tmp_path: PathBuf,
+}
+
+#[async_trait::async_trait]
+impl CommandRunner for FinalManifestFailureRunner {
+    async fn run(&self, _spec: CommandSpec, _timeout: Duration) -> anyhow::Result<CommandOutput> {
+        Ok(CommandOutput {
+            status: 0,
+            stdout: String::new(),
+            stderr: String::new(),
+        })
+    }
+
+    async fn run_raw(
+        &self,
+        _spec: CommandSpec,
+        _timeout: Duration,
+    ) -> anyhow::Result<RawCommandOutput> {
+        Ok(RawCommandOutput {
+            status: 0,
+            stdout: br#"{"Status":"running","Health":{"Log":[]}}"#.to_vec(),
+            stderr: Vec::new(),
+        })
+    }
+
+    async fn run_raw_to_file(
+        &self,
+        _spec: CommandSpec,
+        _timeout: Duration,
+        output_path: &Path,
+    ) -> anyhow::Result<RawFileCommandOutput> {
+        let log = b"complete candidate log";
+        tokio::fs::write(output_path, log).await?;
+        tokio::fs::create_dir(&self.manifest_tmp_path).await?;
+        Ok(RawFileCommandOutput {
+            status: 0,
+            bytes_written: log.len() as u64,
+            stderr: Vec::new(),
+            eof_reached: true,
+            timed_out: false,
+        })
+    }
+}
+
+#[tokio::test]
+async fn final_manifest_write_failure_does_not_attach_an_archive_with_stale_metadata() {
+    let root = std::env::temp_dir().join(format!(
+        "dockrev-rollback-final-manifest-failure-{}",
+        ulid::Ulid::new()
+    ));
+    fs::create_dir_all(&root).expect("test root");
+    let db_path = root.join("dockrev.sqlite");
+    let db = crate::db::Db::open(&db_path).await.expect("db");
+    let job_id = "job-final-manifest-failure";
+    db.insert_job(
+        crate::api::types::JobRecord::new_running(
+            job_id.to_string(),
+            crate::api::types::JobType::Update,
+            crate::api::types::JobScope::Service,
+            None,
+            None,
+            "2026-08-28T00:00:00Z",
+        )
+        .to_db(),
+    )
+    .await
+    .expect("insert job");
+    let evidence = RollbackEvidenceContext::new(job_id, &db_path).expect("evidence spool");
+    let manifest_tmp_path = evidence.job_spool_path().join("manifest.tmp");
+    let metadata = evidence
+        .capture_failure(
+            &FinalManifestFailureRunner { manifest_tmp_path },
+            &DockerRunnerConfig::default(),
+            "service-a",
+            "candidate-a",
+            "unhealthy",
+            None,
+            None,
+        )
+        .await;
+    assert!(!metadata.logs_truncated);
+    assert!(
+        metadata
+            .capture_errors
+            .iter()
+            .any(|error| error.starts_with("manifest update:"))
+    );
+
+    let evidence_summary = evidence.finalize().await;
+    assert_eq!(evidence_summary.status, "incomplete");
+    assert_eq!(evidence_summary.archive_size_bytes, None);
+    assert!(
+        evidence_summary
+            .errors
+            .iter()
+            .any(|error| error.starts_with("manifest:"))
+    );
+    let archive_path = (evidence_summary.status == "available").then(|| evidence.archive_path());
+    let mut summary = serde_json::json!({"rollbackEvidence": evidence_summary});
+    crate::rollback_evidence_finalize::finish_job_with_evidence_archive(
+        &db,
+        job_id,
+        "rolled_back",
+        "2026-08-28T00:05:00Z",
+        &mut summary,
+        archive_path,
+        Some(&evidence),
+        None,
+        None,
+    )
+    .await
+    .expect("terminal job should finish without attaching stale evidence");
+
+    let job = db.get_job(job_id).await.expect("load job").expect("job");
+    assert_eq!(job.status, "rolled_back");
+    assert_eq!(job.summary_json["rollbackEvidence"]["status"], "incomplete");
+    assert!(
+        db.get_rollback_evidence_archive(job_id)
+            .await
+            .expect("load archive")
+            .is_none()
+    );
+    assert!(!evidence.archive_path().exists());
+
+    let _ = tokio::fs::remove_dir_all(root).await;
+}
+
 #[tokio::test]
 async fn recovery_cleans_spool_without_overwriting_an_existing_archive() {
     let root = std::env::temp_dir().join(format!(

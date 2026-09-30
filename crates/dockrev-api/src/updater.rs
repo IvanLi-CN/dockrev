@@ -3,7 +3,7 @@ use std::{
     path::Path,
     sync::{
         Arc,
-        atomic::{AtomicBool, Ordering},
+        atomic::{AtomicUsize, Ordering},
     },
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
@@ -342,7 +342,7 @@ pub(crate) async fn run_update_job_with_gate_using_root_unlocked(
     apply_gate: Option<&dyn UpdateApplyGate>,
     managed_override_root: Option<&Path>,
     evidence: Option<crate::rollback_evidence::RollbackEvidenceContext>,
-    healthcheck_failure_signal: Option<Arc<AtomicBool>>,
+    healthcheck_failure_count: Option<Arc<AtomicUsize>>,
 ) -> anyhow::Result<UpdateOutcome> {
     let selection = select_update_services(
         stack,
@@ -747,8 +747,8 @@ pub(crate) async fn run_update_job_with_gate_using_root_unlocked(
             )
             .await?;
             if !health_result.healthy {
-                if let Some(signal) = healthcheck_failure_signal.as_ref() {
-                    signal.store(true, Ordering::Relaxed);
+                if let Some(count) = healthcheck_failure_count.as_ref() {
+                    count.fetch_add(1, Ordering::Relaxed);
                 }
                 rollback_failure_step = Some("healthcheck");
                 if let Some(evidence) = evidence.as_ref() {

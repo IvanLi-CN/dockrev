@@ -156,20 +156,19 @@ pub(crate) fn initialize_evidence_context(
 pub(crate) fn record_spool_setup_failure(
     summary_json: &mut serde_json::Value,
     error: Option<&str>,
-    is_healthcheck_apply_failure: bool,
+    failed_candidates: usize,
 ) {
-    let (Some(error), true, Some(summary)) = (
-        error,
-        is_healthcheck_apply_failure,
-        summary_json.as_object_mut(),
-    ) else {
+    let (Some(error), Some(summary)) = (error, summary_json.as_object_mut()) else {
         return;
     };
+    if failed_candidates == 0 {
+        return;
+    }
     summary.insert(
         "rollbackEvidence".to_string(),
         serde_json::json!({
             "status": "incomplete",
-            "failedCandidates": 0,
+            "failedCandidates": failed_candidates,
             "archiveFormat": "tar",
             "compression": "zstd",
             "archiveSizeBytes": null,
@@ -316,10 +315,10 @@ mod tests {
         let error = "spool setup: permission denied";
         let mut summary = serde_json::json!({"status":"rolled_back"});
 
-        record_spool_setup_failure(&mut summary, Some(error), false);
+        record_spool_setup_failure(&mut summary, Some(error), 0);
         assert!(summary.get("rollbackEvidence").is_none());
 
-        record_spool_setup_failure(&mut summary, Some(error), true);
+        record_spool_setup_failure(&mut summary, Some(error), 1);
         assert_eq!(summary["rollbackEvidence"]["status"], "incomplete");
         assert_eq!(
             summary["rollbackEvidence"]["archiveSizeBytes"],
@@ -337,7 +336,7 @@ mod tests {
         let error = bounded_error("spool setup", &anyhow::anyhow!("x".repeat(700)));
         let mut summary = serde_json::json!({"status":"rolled_back"});
 
-        record_spool_setup_failure(&mut summary, Some(&error), true);
+        record_spool_setup_failure(&mut summary, Some(&error), 1);
 
         let errors = summary["rollbackEvidence"]["errors"]
             .as_array()
@@ -401,7 +400,7 @@ mod tests {
         assert!(error.starts_with("spool setup:"));
 
         let mut summary = serde_json::json!({"status":"rolled_back"});
-        record_spool_setup_failure(&mut summary, Some(&error), true);
+        record_spool_setup_failure(&mut summary, Some(&error), 1);
         assert_eq!(summary["rollbackEvidence"]["status"], "incomplete");
         assert_eq!(summary["rollbackEvidence"]["errors"][0], error);
 
