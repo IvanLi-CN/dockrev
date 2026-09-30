@@ -433,6 +433,73 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn completed_update_stop_recovery_is_not_reclaimed_after_restart() {
+        let root = std::env::temp_dir().join(format!(
+            "dockrev-update-stop-complete-recovery-{}",
+            ulid::Ulid::new()
+        ));
+        std::fs::create_dir_all(&root).unwrap();
+        let db_path = root.join("dockrev.sqlite");
+        let db = Db::open(&db_path).await.unwrap();
+        let job_id = "job-recovery-complete-window";
+        let mut job = update_job(job_id);
+        job.summary_json["rollbackEvidence"] = serde_json::json!({
+            "status": "available",
+            "failedCandidates": 1
+        });
+        db.insert_job(job).await.unwrap();
+        db.create_update_stop_control(job_id, "2026-08-16T00:00:00Z")
+            .await
+            .unwrap();
+        db.save_update_stop_recovery_snapshot(
+            job_id,
+            &crate::backup::BackupRecoverySnapshot {
+                stack_id: "stack-1".to_string(),
+                services: vec!["web".to_string()],
+            },
+            "2026-08-16T00:01:00Z",
+        )
+        .await
+        .unwrap();
+        assert_eq!(
+            db.claim_pending_update_stop_recoveries("2026-08-16T00:02:00Z")
+                .await
+                .unwrap()
+                .len(),
+            1
+        );
+
+        db.finish_update_stop_recovery_job(
+            job_id,
+            "failed",
+            "2026-08-16T00:03:00Z",
+            &serde_json::json!({"mode": "apply", "recoveredOnStartup": true}),
+        )
+        .await
+        .unwrap();
+        drop(db);
+
+        let db = Db::open(&db_path).await.unwrap();
+        db.reset_update_stop_recovery_claims_for_startup("2026-08-16T00:04:00Z")
+            .await
+            .unwrap();
+        db.recover_incomplete_jobs("2026-08-16T00:04:00Z", "server_restart")
+            .await
+            .unwrap();
+        let job = db.get_job(job_id).await.unwrap().unwrap();
+        assert_eq!(job.summary_json["rollbackEvidence"]["status"], "available");
+        assert!(
+            db.claim_pending_update_stop_recoveries("2026-08-16T00:05:00Z")
+                .await
+                .unwrap()
+                .is_empty()
+        );
+
+        drop(db);
+        let _ = tokio::fs::remove_dir_all(root).await;
+    }
+
+    #[tokio::test]
     async fn terminal_update_recovery_is_not_rearmed() {
         let db = Db::open(Path::new(":memory:")).await.unwrap();
         db.insert_job(update_job("job-terminal-rearm"))

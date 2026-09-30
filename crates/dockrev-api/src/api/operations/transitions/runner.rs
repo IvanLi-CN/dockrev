@@ -129,15 +129,14 @@ async fn finish_recovered_update_job(
 ) {
     let mut last_error = None;
     for attempt in 0..3 {
-        match db.finish_job(job_id, status, finished_at, summary).await {
+        let finish_result = if clear_snapshot_on_success {
+            db.finish_update_stop_recovery_job(job_id, status, finished_at, summary)
+                .await
+        } else {
+            db.finish_job(job_id, status, finished_at, summary).await
+        };
+        match finish_result {
             Ok(()) => {
-                if clear_snapshot_on_success
-                    && let Err(error) = db
-                        .clear_update_stop_recovery_snapshot(job_id, finished_at)
-                        .await
-                {
-                    tracing::warn!(job_id = %job_id, error = %error, "could not clear completed update recovery snapshot");
-                }
                 return;
             }
             Err(error) => {

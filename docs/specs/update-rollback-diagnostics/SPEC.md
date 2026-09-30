@@ -70,7 +70,7 @@ Docker 的 health policy 由镜像的 `HEALTHCHECK` 定义，也可由 Compose `
 - spool 文件必须在候选自动回滚前以原子写入完成，并仅允许 Dockrev 运行用户读取。候选删除、证据采集失败、spool 失败、归档失败或 BLOB 持久化失败都不得阻止既有自动回滚。
 ### REQ-ROLLBACK-011
 - 归档 BLOB 与 `rollbackEvidence` summary 必须在同一数据库事务提交；只有提交成功后才能删除对应 spool。若归档写入失败，DockRev 必须在不带新 archive 的事务中完成既有 job 终态提交，将 evidence summary 标记为 `incomplete` 并记录有界错误；spool 保留供后续恢复，不能静默删除。若 evidence spool 初始化失败且候选健康检查随后触发回滚，任务 summary 必须记录 `rollbackEvidence.status=incomplete` 和有界初始化错误，不得创建下载附件。启动时先运行既有通用 job 恢复，再尝试附加带中断检查点的部分证据；对于仍由既有延后 update-backup recovery 处理的任务，证据可能先于该延后恢复完成而附加。证据恢复本身不改变任务状态，后续状态仍由既有恢复流程决定，并将 `logsTruncated` 保持为 true。若恢复清单、partial log、归档重建、归档大小读取或归档附加失败，job summary 必须在 archive BLOB 不存在时记录 `rollbackEvidence.status=incomplete` 与有界原因，并保留 spool；若 archive BLOB 已存在，不得以恢复失败元数据覆盖现有归档状态。对于已有 archive BLOB 的终态 job，恢复必须在读取 manifest 前清理残余 spool、本地归档和 part 文件，避免损坏或缺失的 manifest 使原始日志副本滞留。
-- 带有 update-stop 恢复快照的 job 必须在每次进程启动时重置上一进程留下的恢复领取标记，并且通用 incomplete-job recovery 不得终结仍持有该快照的 job。专用恢复流程随后重新领取并恢复服务；即使进程在领取快照后、恢复服务前再次退出，下一次启动仍必须重试。
+- 带有 update-stop 恢复快照的 job 必须在每次进程启动时重置上一进程留下的恢复领取标记，并且通用 incomplete-job recovery 不得终结仍持有该快照的 job。专用恢复流程随后重新领取并恢复服务；即使进程在领取快照后、恢复服务前再次退出，下一次启动仍必须重试。恢复成功后，job 终态与恢复快照清除必须在同一数据库事务提交，避免在终结与清除之间退出后再次执行服务恢复。
 ### REQ-ROLLBACK-012
 - 终态 job 的既有保留期清理必须同时删除与该 job 对应的遗留 spool；这属于 job 到期删除，不得产生无主原始日志文件。
 ### REQ-ROLLBACK-013

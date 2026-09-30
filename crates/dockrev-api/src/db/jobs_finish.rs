@@ -7,6 +7,27 @@ enum ArchiveSource {
 }
 
 impl Db {
+    pub async fn finish_update_stop_recovery_job(
+        &self,
+        job_id: &str,
+        status: &str,
+        finished_at: &str,
+        summary_json: &serde_json::Value,
+    ) -> anyhow::Result<()> {
+        self.finish_job_with_archive_source(
+            job_id,
+            status,
+            finished_at,
+            summary_json,
+            None,
+            None,
+            None,
+            true,
+        )
+        .await
+        .map(|_| ())
+    }
+
     #[allow(clippy::too_many_arguments)]
     pub async fn finish_job_with_archive_and_settlement_and_notification(
         &self,
@@ -26,6 +47,7 @@ impl Db {
             archive.map(ArchiveSource::Bytes),
             settlements,
             notification,
+            false,
         )
         .await
     }
@@ -49,6 +71,7 @@ impl Db {
             archive_path.map(ArchiveSource::File),
             settlements,
             notification,
+            false,
         )
         .await
     }
@@ -63,6 +86,7 @@ impl Db {
         archive: Option<ArchiveSource>,
         settlements: Option<&[ServiceAcceptedStateSettlement]>,
         notification: Option<&NotificationItemDraft>,
+        clear_update_stop_recovery_snapshot: bool,
     ) -> anyhow::Result<Option<bool>> {
         let job_id = job_id.to_string();
         let status = status.to_string();
@@ -135,6 +159,12 @@ WHERE id = ?1
                 )?;
                 if updated == 0 {
                     return Ok(None);
+                }
+                if clear_update_stop_recovery_snapshot {
+                    tx.execute(
+                        "UPDATE update_job_stop_controls SET recovery_snapshot_json = NULL, recovery_error = NULL, updated_at = ?2 WHERE job_id = ?1",
+                        params![job_id, finished_at],
+                    )?;
                 }
                 tx.execute(
                     r#"
