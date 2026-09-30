@@ -201,10 +201,10 @@ export const VersionsSection: ServiceDetailStory = {
     await waitForCondition(
       () =>
         normalizeText(findVersionAction(canvasElement, "update", "5.2.3")?.textContent) === "更新" &&
-        normalizeText(findVersionAction(canvasElement, "update", "5.4.4")?.textContent) === "强制更新",
+        normalizeText(findVersionAction(canvasElement, "update", "5.2.4")?.textContent) === "强制更新",
     );
     const updateCandidate = findVersionAction(canvasElement, "update", "5.2.3");
-    const forceUpdate = findVersionAction(canvasElement, "update", "5.4.4");
+    const forceUpdate = findVersionAction(canvasElement, "update", "5.2.4");
     const rollbackTarget = findVersionAction(canvasElement, "rollback", "5.2.0");
     const rollbackHint = findVersionAction(canvasElement, "rollback", "5.2.2");
     const githubLink = canvasElement.querySelector<HTMLAnchorElement>(
@@ -906,13 +906,18 @@ export const MobileVersionsSection: ServiceDetailStory = {
     const surface = versionsSurface(canvasElement);
     const card = findVersionCard(canvasElement, "5.2.1");
     const factsGrid = card?.querySelector<HTMLElement>(".serviceVersionFacts");
-    const primaryButton = findVersionAction(canvasElement, "update", "5.2.3");
-    const forceButton = findVersionAction(canvasElement, "update", "5.4.4");
     await waitForCondition(
-      () =>
-        normalizeText(primaryButton?.textContent) === "更新" &&
-        normalizeText(forceButton?.textContent) === "强制更新",
+      () => {
+        const primaryButton = findVersionAction(canvasElement, "update", "5.2.3");
+        const forceButton = findVersionAction(canvasElement, "update", "5.2.4");
+        return (
+          normalizeText(primaryButton?.textContent) === "更新" &&
+          normalizeText(forceButton?.textContent) === "强制更新"
+        );
+      },
     );
+    const primaryButton = findVersionAction(canvasElement, "update", "5.2.3");
+    const forceButton = findVersionAction(canvasElement, "update", "5.2.4");
     await waitForCondition(() => visibleVersionCards(canvasElement).length >= 2);
     const [firstVisibleCard, secondVisibleCard] = visibleVersionCards(canvasElement).sort(
       (left, right) => left.getBoundingClientRect().top - right.getBoundingClientRect().top,

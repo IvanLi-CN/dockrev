@@ -3,7 +3,11 @@ import { describe, expect, test } from 'bun:test'
 import { handleVersionUpdateRoutes } from '../src/stories/mocks/dockrevMockApi/handlers/versionUpdates'
 import type { MockRouteContext } from '../src/stories/mocks/dockrevMockApi/context'
 
-function previewResponse(releaseTag: string, submit = false): Response {
+function previewResponse(
+  releaseTag: string,
+  submit = false,
+  scenario: MockRouteContext['scenario'] = 'service-selected-version-updates',
+): Response {
   const service = {
     stack: { id: 'stack-prod' },
     svc: {
@@ -20,7 +24,7 @@ function previewResponse(releaseTag: string, submit = false): Response {
     ? { releaseTag, classification: 'forced', targetDigest: 'unused', backupMode: 'inherit' }
     : { releaseTag }
   const context = {
-    scenario: 'service-selected-version-updates',
+    scenario,
     method: 'POST',
     urlPath: submit
       ? '/api/services/svc-prod-api/version-update'
@@ -46,9 +50,21 @@ function previewResponse(releaseTag: string, submit = false): Response {
 describe('selected version update mock contract', () => {
   test('classifies observed and unknown newer releases', async () => {
     const normal = await previewResponse('v5.2.3').json()
+    const existingStory = await previewResponse(
+      '5.2.3',
+      false,
+      'service-detail-history-rollback-action',
+    ).json()
+    const noHistory = await previewResponse(
+      '5.2.3',
+      false,
+      'service-selected-version-updates-no-history',
+    ).json()
     const forced = await previewResponse('v5.2.4').json()
 
     expect(normal.classification).toBe('normal')
+    expect(existingStory.classification).toBe('normal')
+    expect(noHistory.classification).toBe('forced')
     expect(forced.classification).toBe('forced')
   })
 

@@ -8,7 +8,9 @@ import { selectSmokeShard } from "./storybook-sharding.mjs";
 const SCRIPT_DIR = path.dirname(fileURLToPath(import.meta.url));
 const DEFAULT_OUTDIR = path.resolve(SCRIPT_DIR, "../storybook-static");
 const DEFAULT_PORT = 50887;
-const SELECTED_VERSION_SUBMISSION_STORY_IDS = [
+const STORIES_REQUIRING_PLAY_SUCCESS = [
+  "pages-servicedetailpage--versions-section",
+  "pages-servicedetailpage--mobile-versions-section",
   "pages-servicedetailpage--versions-section-normal-update-submission",
   "pages-servicedetailpage--versions-section-forced-update-submission",
 ];
@@ -952,7 +954,7 @@ async function runSmoke({ baseUrl, storyIds, browser }) {
     const page = await browser.newPage();
     const pageErrors = [];
     page.on("pageerror", (err) => pageErrors.push(err));
-    const requireStoryFinished = SELECTED_VERSION_SUBMISSION_STORY_IDS.includes(id);
+    const requireStoryFinished = STORIES_REQUIRING_PLAY_SUCCESS.includes(id);
     if (requireStoryFinished) {
       await page.addInitScript(() => {
         window.__DOCKREV_STORY_FINISHED__ = [];

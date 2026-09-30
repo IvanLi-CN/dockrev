@@ -13,7 +13,8 @@ function observationsForService(
   configuredTag: string,
 ): ServiceVersionTagObservation[] {
   if (
-    ctx.scenario !== 'service-selected-version-updates' ||
+    (ctx.scenario !== 'service-selected-version-updates' &&
+      ctx.scenario !== 'service-detail-history-rollback-action') ||
     serviceId !== 'svc-prod-api' ||
     configuredTag !== 'latest'
   ) return []

@@ -15,15 +15,15 @@
 - API: 服务级观察查询、预检和提交接口已实现；普通更新使用历史摘要，强制更新实时解析原始 release tag，并在提交时重做预检。指定版本入队事务还会原子复核服务及其 Stack 未归档；接口回归测试覆盖三个新接口的未认证拒绝、Registry 查询期间归档冲突、强制确认缺失拒绝，以及强制确认后解析摘要并成功入队。
 - Execution: 选定摘要部署复用更新任务与回滚保护，跳过再次拉取配置标签，并将运行镜像同步到本地配置标签；Compose 文件不变。
 - Automatic updates: 成功的计划或匹配 GHCR Webhook 检查可重验已存在候选，但只有观测服务、镜像仓库、当前配置标签和候选摘要全部一致，且候选摘要仍不同于当前部署时才重新进入自动策略。严格 SemVer 仅从该条摘要绑定观测传入结算；普通展示字符串仍不能跳过候选推断。策略变化等原因取消尚未启动的 auto-policy 更新时，同一事务会释放其服务接受状态代次；启动迁移也会恢复仍匹配已取消任务租约的旧代次，避免取消任务永久阻塞后续操作。
-- UI: 普通/强制更新按钮和一层/两层确认已接入版本列表，其他更新入口沿用原行为。Storybook 交互故事等待历史观测查询完成，并分别断言有观测记录和无记录时按钮显示“更新”和“强制更新”。
+- UI: 普通/强制更新按钮和一层/两层确认已接入版本列表，其他更新入口沿用原行为。Storybook 交互故事等待历史观测查询完成，并分别断言有观测记录和无记录时按钮显示“更新”和“强制更新”；全量 smoke 额外等待桌面、移动版本列表和两个提交故事的 play 结果。
 - Verification commands:
   - `cargo fmt --all -- --check`
   - `cargo clippy --workspace --all-targets --all-features --locked -- -D warnings`（当前候选通过）
   - `cargo test --workspace --locked --all-features -- --test-threads=2`（主 crate 989 passed、1 ignored；另一个 crate 58 passed）
   - `cargo test -p dockrev-api --locked --all-features selected_version -- --test-threads=2`（12 passed；覆盖指定版本接口、未认证拒绝、严格 SemVer 历史绑定、架构和摘要校验及重启租约恢复）
   - `cargo test -p dockrev-api --locked --all-features snapshot_version_inference_binds_matching_observations_after_check_completion -- --test-threads=1`（通过；验证异步推断只绑定观测时相符的仓库与配置标签）
-  - In `web/`: `bun run build`（264 tests passed、830 assertions）、`bun run lint`（0 errors；3 existing hook warnings）、`bun run build:demo:pages`
-  - `python scripts/check-pwa-assets.py`、Storybook production build、rollback refresh race test 和 Storybook interaction test（421 stories passed）
+  - In `web/`: `bun run build`（264 tests passed、832 assertions）、`bun run lint`（0 errors；3 existing hook warnings）、`bun run build:demo:pages`
+  - `python scripts/check-pwa-assets.py`、Storybook production build、rollback refresh race test 和 Storybook interaction test（421 stories passed；桌面、移动版本列表和两个提交故事的 play 均完成）
   - TypeScript build、demo build、selected-version Spec contract check、visual-evidence document check、`cargo fmt --all -- --check` 和 `git diff --check` 均通过；相关旧版 service-detail Spec 保留历史格式，不通过当前 canonical-format checker。
 - Rollout facts: 新安装和升级数据库均从空的历史归属表开始，只积累今后成功检查产生的观察。
 
