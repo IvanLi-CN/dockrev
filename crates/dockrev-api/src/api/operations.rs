@@ -3,16 +3,25 @@ use super::*;
 use std::collections::HashSet;
 
 use crate::service_check;
+mod check_version_evidence;
 mod lifecycle;
 mod lifecycle_snapshot;
 mod notification_replay;
 mod progress_persistence;
 mod transitions;
+mod version_inference;
+pub(super) use check_version_evidence::{
+    CheckConfiguredTagObservation, CheckDiscoveredVersion, configured_tag_observation_version,
+};
 pub(crate) use lifecycle::*;
 pub(crate) use lifecycle_snapshot::LifecycleSnapshotCoordinator;
 pub(crate) use notification_replay::replay_pending_check_notifications;
 pub(crate) use progress_persistence::*;
 pub(crate) use transitions::*;
+use version_inference::{
+    NotificationSnapshotDisplay, notification_snapshot_display_for_digest, preferred_display_tag,
+    should_enqueue_new_version_inference,
+};
 
 pub(super) const CHECK_PROGRESS_LOG_INTERVAL: Duration = Duration::from_millis(500);
 pub(super) const CHECK_PARALLELISM: usize = crate::config::FIXED_CHECK_PARALLELISM;
@@ -273,6 +282,7 @@ pub(super) async fn handle_check_worker_result(
     services_checked: &mut u32,
     services_with_candidate: &mut u32,
     discovered_versions: &mut Vec<CheckDiscoveredVersion>,
+    configured_tag_observations: &mut Vec<CheckConfiguredTagObservation>,
     latest_target: &mut Option<String>,
     last_progress_logged_at: &mut Option<std::time::Instant>,
     latest_progress: &mut JobProgress,
@@ -300,6 +310,11 @@ pub(super) async fn handle_check_worker_result(
         .current_digest
         .as_deref()
         .and_then(snapshot_worker::normalize_digest);
+    let configured_tag_digest = outcome
+        .configured_tag_digest
+        .as_deref()
+        .and_then(snapshot_worker::normalize_digest);
+    let configured_tag_observed_at = outcome.configured_tag_observed_at.as_deref();
     let candidate_digest = outcome
         .candidate_digest
         .as_deref()
@@ -362,6 +377,27 @@ pub(super) async fn handle_check_worker_result(
         crate::notify::notification_tag_requires_settle(current_tag_trim, &current_display_tag);
     let candidate_needs_inference =
         crate::notify::notification_tag_requires_settle(candidate_raw_tag, &candidate_display_tag);
+
+    if let (Some(image_repo), Some(digest), Some(observed_at)) = (
+        image_repo.as_deref(),
+        configured_tag_digest,
+        configured_tag_observed_at,
+    ) {
+        let version = configured_tag_observation_version(
+            &service_image_tag,
+            &digest,
+            candidate_digest.as_deref(),
+            Some(&candidate_display_tag),
+        );
+        configured_tag_observations.push(CheckConfiguredTagObservation {
+            service_id: service_id.clone(),
+            image_repo: image_repo.to_string(),
+            configured_tag: service_image_tag.clone(),
+            digest,
+            version,
+            observed_at: observed_at.to_string(),
+        });
+    }
 
     if outcome.candidate_present
         && outcome.candidate_digest_changed
@@ -480,20 +516,6 @@ pub(super) struct CheckWorkerResult {
     outcome: anyhow::Result<crate::service_check::ServiceCheckOutcome>,
 }
 
-#[derive(Clone, Debug)]
-pub(super) struct CheckDiscoveredVersion {
-    stack_id: String,
-    service_id: String,
-    service_name: String,
-    image_ref: String,
-    current_tag: String,
-    current_digest: Option<String>,
-    current_display_tag: String,
-    candidate_tag: String,
-    candidate_display_tag: String,
-    candidate_digest: String,
-}
-
 pub(super) fn check_job_is_stale(
     existing: &JobListItem,
     now: &str,
@@ -511,86 +533,6 @@ pub(super) fn check_job_is_stale(
                 .map(|cur| cur - started)
         })
         .is_some_and(|age| age > stale_threshold)
-}
-
-fn preferred_display_tag(raw_tag: &str, resolved_tag: Option<&str>) -> String {
-    resolved_tag
-        .map(str::trim)
-        .filter(|tag| !tag.is_empty())
-        .unwrap_or_else(|| raw_tag.trim())
-        .to_string()
-}
-
-#[derive(Default)]
-struct NotificationSnapshotDisplay {
-    display_tag: Option<String>,
-    ready: bool,
-}
-
-async fn notification_snapshot_display_for_digest(
-    state: &AppState,
-    image_repo: &str,
-    digest: &str,
-    host_platform: &str,
-    raw_tag: &str,
-) -> Result<NotificationSnapshotDisplay, ApiError> {
-    let snapshot = state
-        .db
-        .get_image_digest_tags_snapshot(image_repo, digest, host_platform)
-        .await
-        .map_err(map_internal)?;
-    let Some((snapshot_json, checked_at, _updated_at)) = snapshot else {
-        return Ok(NotificationSnapshotDisplay::default());
-    };
-    let Some(snapshot_entry) =
-        super::stacks::parse_digest_snapshot_row(&snapshot_json, &checked_at)
-    else {
-        return Ok(NotificationSnapshotDisplay::default());
-    };
-    let ready = crate::notify::notification_snapshot_is_ready(
-        &snapshot_entry.snapshot,
-        snapshot_entry.snapshot.checked_at.as_str(),
-    );
-    let display_tag = ready
-        .then(|| {
-            super::stacks::infer_semver_tags_from_snapshot(&snapshot_entry.snapshot, raw_tag)
-                .into_iter()
-                .next()
-        })
-        .flatten();
-    Ok(NotificationSnapshotDisplay { display_tag, ready })
-}
-
-async fn notification_snapshot_ready_for_digest(
-    state: &AppState,
-    image_repo: &str,
-    digest: &str,
-    host_platform: &str,
-) -> Result<Option<bool>, ApiError> {
-    let snapshot = state
-        .db
-        .get_image_digest_tags_snapshot(image_repo, digest, host_platform)
-        .await
-        .map_err(map_internal)?;
-    let Some((snapshot_json, checked_at, _updated_at)) = snapshot else {
-        return Ok(None);
-    };
-    Ok(Some(
-        crate::notify::notification_snapshot_is_ready_from_row(&snapshot_json, &checked_at)
-            .unwrap_or(false),
-    ))
-}
-
-async fn should_enqueue_new_version_inference(
-    state: &AppState,
-    image_repo: &str,
-    digest: &str,
-    host_platform: &str,
-) -> Result<bool, ApiError> {
-    Ok(
-        notification_snapshot_ready_for_digest(state, image_repo, digest, host_platform).await?
-            != Some(true),
-    )
 }
 
 pub(crate) fn new_version_notification_reason(
@@ -1107,6 +1049,7 @@ pub(crate) async fn run_check_for_job(
     let mut services_checked = 0u32;
     let mut services_with_candidate = 0u32;
     let mut discovered_versions: Vec<CheckDiscoveredVersion> = Vec::new();
+    let mut configured_tag_observations: Vec<CheckConfiguredTagObservation> = Vec::new();
     let mut last_progress_logged_at: Option<std::time::Instant> = None;
     let mut latest_target: Option<String> = None;
     let mut next_spawn_not_before: Option<std::time::Instant> = None;
@@ -1127,6 +1070,7 @@ pub(crate) async fn run_check_for_job(
                 &mut services_checked,
                 &mut services_with_candidate,
                 &mut discovered_versions,
+                &mut configured_tag_observations,
                 &mut latest_target,
                 &mut last_progress_logged_at,
                 &mut latest_progress,
@@ -1147,6 +1091,7 @@ pub(crate) async fn run_check_for_job(
                     &mut services_checked,
                     &mut services_with_candidate,
                     &mut discovered_versions,
+                    &mut configured_tag_observations,
                     &mut latest_target,
                     &mut last_progress_logged_at,
                     &mut latest_progress,
@@ -1169,6 +1114,7 @@ pub(crate) async fn run_check_for_job(
                     &mut services_checked,
                     &mut services_with_candidate,
                     &mut discovered_versions,
+                    &mut configured_tag_observations,
                     &mut latest_target,
                     &mut last_progress_logged_at,
                     &mut latest_progress,
@@ -1198,6 +1144,7 @@ pub(crate) async fn run_check_for_job(
                             &mut services_checked,
                             &mut services_with_candidate,
                             &mut discovered_versions,
+                            &mut configured_tag_observations,
                             &mut latest_target,
                             &mut last_progress_logged_at,
                             &mut latest_progress,
@@ -1333,12 +1280,26 @@ pub(crate) async fn run_check_for_job(
             })
         })
         .collect::<Vec<_>>();
+    let configured_tag_observations_json = configured_tag_observations
+        .iter()
+        .map(|item| {
+            json!({
+                "serviceId": item.service_id,
+                "imageRepo": item.image_repo,
+                "configuredTag": item.configured_tag,
+                "digest": item.digest,
+                "version": item.version,
+                "observedAt": item.observed_at,
+            })
+        })
+        .collect::<Vec<_>>();
     Ok(json!({
         "hostPlatform": host_platform,
         "scope": scope.as_str(),
         "stackIds": stack_ids,
         "servicesChecked": services_checked,
         "servicesWithCandidate": services_with_candidate,
+        "configuredTagObservations": configured_tag_observations_json,
         "newVersions": {
             "count": new_versions_json.len(),
             "services": new_versions_json,

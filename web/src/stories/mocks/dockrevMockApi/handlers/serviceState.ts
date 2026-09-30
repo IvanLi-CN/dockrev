@@ -10,6 +10,7 @@ import type { MockRouteContext } from '../context'
 import { handleJobStateRoutes } from './jobState'
 import { handleLifecycleEventsRoute, projectLifecycleSnapshot } from './lifecycleEvents'
 import { handleNotificationInboxRoutes } from './notificationInbox'
+import { handleVersionUpdateRoutes } from './versionUpdates'
 import {
   buildMockReleaseNotesItems,
   buildMockReleaseNotesExternalLinks,
@@ -93,6 +94,8 @@ export async function handleServiceStateRoutes(ctx: MockRouteContext): Promise<R
   if (lifecycleEventsResponse) return lifecycleEventsResponse
   const notificationInboxResponse = handleNotificationInboxRoutes(ctx)
   if (notificationInboxResponse) return notificationInboxResponse
+  const versionUpdateResponse = handleVersionUpdateRoutes(ctx)
+  if (versionUpdateResponse) return versionUpdateResponse
 
   if (method === 'GET' && (urlPathWithQuery === '/api/discovery/projects' || urlPathWithQuery.startsWith('/api/discovery/projects?'))) {
     const query = url?.search

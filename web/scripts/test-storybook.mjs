@@ -8,6 +8,12 @@ import { selectSmokeShard } from "./storybook-sharding.mjs";
 const SCRIPT_DIR = path.dirname(fileURLToPath(import.meta.url));
 const DEFAULT_OUTDIR = path.resolve(SCRIPT_DIR, "../storybook-static");
 const DEFAULT_PORT = 50887;
+const STORIES_REQUIRING_PLAY_SUCCESS = [
+  "pages-servicedetailpage--versions-section",
+  "pages-servicedetailpage--mobile-versions-section",
+  "pages-servicedetailpage--versions-section-normal-update-submission",
+  "pages-servicedetailpage--versions-section-forced-update-submission",
+];
 
 function parsePort(value, fallback) {
   const parsed = Number(value);
@@ -948,6 +954,23 @@ async function runSmoke({ baseUrl, storyIds, browser }) {
     const page = await browser.newPage();
     const pageErrors = [];
     page.on("pageerror", (err) => pageErrors.push(err));
+    const requireStoryFinished = STORIES_REQUIRING_PLAY_SUCCESS.includes(id);
+    if (requireStoryFinished) {
+      await page.addInitScript(() => {
+        window.__DOCKREV_STORY_FINISHED__ = [];
+        let preview;
+        Object.defineProperty(window, "__STORYBOOK_PREVIEW__", {
+          configurable: true,
+          get: () => preview,
+          set: (value) => {
+            preview = value;
+            value?.channel?.on?.("storyFinished", (result) => {
+              window.__DOCKREV_STORY_FINISHED__.push(result);
+            });
+          },
+        });
+      });
+    }
 
     try {
       const base = normalizeBaseUrl(baseUrl);
@@ -967,6 +990,17 @@ async function runSmoke({ baseUrl, storyIds, browser }) {
         null,
         { timeout: 60_000 },
       );
+      if (requireStoryFinished) {
+        const resultHandle = await page.waitForFunction(
+          (storyId) => window.__DOCKREV_STORY_FINISHED__?.find((result) => result.storyId === storyId) ?? null,
+          id,
+          { timeout: 60_000 },
+        );
+        const result = await resultHandle.jsonValue();
+        if (result.status !== "success") {
+          failures.push({ id, error: new Error(`Storybook finished with status ${result.status}: ${JSON.stringify(result)}`) });
+        }
+      }
 
       if (pageErrors.length > 0) {
         failures.push({ id, error: pageErrors[0] });

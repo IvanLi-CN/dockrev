@@ -334,6 +334,10 @@ WHERE id = ?1 AND status = 'queued' AND created_by = 'auto-policy'
                     params![cancel_job_id, cancel_started_at],
                 )?;
                 if changed > 0 {
+                    super::release_cancelled_auto_policy_job_service_leases_tx(
+                        &tx,
+                        &cancel_job_id,
+                    )?;
                     tx.execute(
                         r#"
 UPDATE auto_update_pending

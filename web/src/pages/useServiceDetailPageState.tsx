@@ -26,6 +26,7 @@ import { useSupervisorHealth } from '../useSupervisorHealth'
 import { formatCandidateTagDisplay, formatCurrentTagDisplay as formatTagDisplay, inferResolvedTagsFromSnapshot, isStrictSemverTag } from '../versionDisplay'
 import { isRollbackTargetRefreshCurrent, retryRollbackTargetDigestMismatch } from './rollbackTargetRefresh'
 import { managementEventAffectsServiceDetail } from './serviceDetailManagement'
+import { useSelectedVersionUpdateAction } from './useSelectedVersionUpdateAction'
 import type { AsyncDataPhase, AsyncDataTrigger } from '../asyncData'
 export { managementEventAffectsServiceDetail } from './serviceDetailManagement'
 export function useServiceDetailPageState(props: {
@@ -854,6 +855,11 @@ export function useServiceDetailPageState(props: {
     stackId,
     trackJob,
   ])
+  const requestApplyVersion = useSelectedVersionUpdateAction({
+    applyActionKey, applyActiveJob, beginSubmitting, confirm, endSubmitting,
+    pageGeneration, pageGenerationRef, refreshLifecycleStatus, requestRefresh,
+    service, setError, setNotice, submittingTokensRef, trackJob,
+  })
   const openDockrevSelfUpgrade = useCallback(() => {
     openSelfUpgradeUrl(selfUpgradeUrl)
   }, [selfUpgradeUrl])
@@ -1147,6 +1153,7 @@ export function useServiceDetailPageState(props: {
     requestRefresh,
     refreshTrigger,
     requestApplyUpdate,
+    requestApplyVersion,
     requestRollback,
     rollbackTarget,
     rollbackActiveJobId,

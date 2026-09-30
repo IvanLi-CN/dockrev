@@ -26,6 +26,7 @@ mod notification_outbox;
 mod repo_links;
 mod resource_usage;
 mod schema;
+mod schema_path;
 mod service_operations;
 mod settings;
 mod snapshots;
@@ -34,6 +35,7 @@ mod stacks_accepted_state;
 mod stacks_backup_targets;
 mod tag_history;
 mod update_stops;
+mod version_update_observations;
 
 pub(super) fn canonical_digest_sql(column: &str) -> String {
     format!(
@@ -46,6 +48,72 @@ pub(super) fn strict_canonical_digest_sql(column: &str) -> String {
     let payload = format!("substr({value}, 8)");
     format!(
         "CASE WHEN NULLIF(TRIM({column}), '') IS NULL THEN NULL WHEN length({value}) = 71 AND substr({value}, 1, 7) = 'sha256:' AND NOT ({payload} GLOB '*[^0-9a-f]*') THEN {value} WHEN length({value}) = 64 AND NOT ({value} GLOB '*[^0-9a-f]*') THEN 'sha256:' || {value} ELSE NULL END"
+    )
+}
+
+fn release_cancelled_auto_policy_job_service_leases_tx(
+    tx: &rusqlite::Transaction<'_>,
+    job_id: &str,
+) -> rusqlite::Result<usize> {
+    tx.execute(
+        r#"
+UPDATE services
+SET accepted_state_generation = (
+  SELECT target.opened_generation + 1
+  FROM job_service_targets target
+  WHERE target.job_id = ?1
+    AND target.service_id = services.id
+    AND target.opened_generation = services.accepted_state_generation
+    AND target.opened_generation % 2 = 1
+)
+WHERE EXISTS (
+  SELECT 1 FROM jobs
+  WHERE id = ?1 AND status = 'cancelled' AND created_by = 'auto-policy'
+)
+  AND accepted_state_generation % 2 = 1
+  AND EXISTS (
+    SELECT 1
+    FROM job_service_targets target
+    WHERE target.job_id = ?1
+      AND target.service_id = services.id
+      AND target.opened_generation = services.accepted_state_generation
+  )
+"#,
+        [job_id],
+    )
+}
+
+fn release_stale_cancelled_auto_policy_job_service_leases_tx(
+    tx: &rusqlite::Transaction<'_>,
+) -> rusqlite::Result<usize> {
+    tx.execute(
+        r#"
+UPDATE services
+SET accepted_state_generation = (
+  SELECT target.opened_generation + 1
+  FROM job_service_targets target
+  JOIN jobs ON jobs.id = target.job_id
+  WHERE target.service_id = services.id
+    AND target.opened_generation = services.accepted_state_generation
+    AND target.opened_generation % 2 = 1
+    AND jobs.status = 'cancelled'
+    AND jobs.created_by = 'auto-policy'
+  ORDER BY jobs.finished_at DESC, jobs.id DESC
+  LIMIT 1
+)
+WHERE accepted_state_generation % 2 = 1
+  AND EXISTS (
+    SELECT 1
+    FROM job_service_targets target
+    JOIN jobs ON jobs.id = target.job_id
+    WHERE target.service_id = services.id
+      AND target.opened_generation = services.accepted_state_generation
+      AND target.opened_generation % 2 = 1
+      AND jobs.status = 'cancelled'
+      AND jobs.created_by = 'auto-policy'
+  )
+"#,
+        [],
     )
 }
 
@@ -83,8 +151,9 @@ pub(super) fn append_management_entity_if_missing(
 pub(crate) use jobs::JobListFilters;
 pub(crate) use lifecycle_events::{ServiceLifecycleEventInput, ServiceLifecycleEventRow};
 pub(crate) use service_operations::{
-    AcceptedStateCasOutcome, AutoPolicyEnqueueGuard, ServiceAcceptedState,
-    ServiceAcceptedStateSettlement, ServiceOperationAcquireOutcome, ServiceOperationTarget,
+    AcceptedStateCasOutcome, AutoPolicyEnqueueGuard, SelectedServiceOperationBaseline,
+    ServiceAcceptedState, ServiceAcceptedStateSettlement, ServiceOperationAcquireOutcome,
+    ServiceOperationTarget,
 };
 pub(crate) use update_stops::UpdateStopRequestOutcome;
 
@@ -1002,7 +1071,7 @@ impl ArchivedFilter {
 
 impl Db {
     pub async fn open(path: &Path) -> anyhow::Result<Self> {
-        let path = schema::ensure_parent_dir(path)?;
+        let path = schema_path::ensure_parent_dir(path)?;
         let conn = Connection::open(path).await?;
 
         let db = Self {

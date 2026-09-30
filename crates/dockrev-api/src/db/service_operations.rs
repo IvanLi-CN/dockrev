@@ -6,6 +6,23 @@ pub(crate) struct ServiceOperationTarget {
     pub(crate) stack_id: String,
 }
 
+#[derive(Clone, Copy)]
+struct ServiceOperationBaseline<'a> {
+    current_digest: &'a str,
+    image_reference: Option<&'a str>,
+    configured_tag: Option<&'a str>,
+    accepted_state_generation: Option<i64>,
+    require_unarchived: bool,
+}
+
+#[derive(Clone, Copy)]
+pub(crate) struct SelectedServiceOperationBaseline<'a> {
+    pub(crate) current_digest: &'a str,
+    pub(crate) image_reference: &'a str,
+    pub(crate) configured_tag: &'a str,
+    pub(crate) accepted_state_generation: i64,
+}
+
 #[derive(Clone, Debug)]
 pub(crate) struct AutoPolicyEnqueueGuard {
     pub(crate) pending_id: String,
@@ -264,7 +281,7 @@ WHERE id = ?1
         job: JobListItem,
         targets: Vec<ServiceOperationTarget>,
         initial_log: Option<JobLogLine>,
-        expected_current_digest: Option<&str>,
+        expected_baseline: Option<ServiceOperationBaseline<'_>>,
         auto_policy_guard: Option<&AutoPolicyEnqueueGuard>,
     ) -> anyhow::Result<ServiceOperationAcquireOutcome> {
         let event_job_id = job.id.clone();
@@ -273,7 +290,18 @@ WHERE id = ?1
         let event_service_id = job.service_id.clone();
         let event_type = job.r#type.as_str().to_string();
         let job_id = job.id.clone();
-        let expected_current_digest = expected_current_digest.map(str::to_string);
+        let expected_current_digest =
+            expected_baseline.map(|baseline| baseline.current_digest.to_string());
+        let expected_service_image = expected_baseline.and_then(|baseline| {
+            Some((
+                baseline.image_reference?.to_string(),
+                baseline.configured_tag?.to_string(),
+            ))
+        });
+        let expected_accepted_state_generation =
+            expected_baseline.and_then(|baseline| baseline.accepted_state_generation);
+        let require_unarchived =
+            expected_baseline.is_some_and(|baseline| baseline.require_unarchived);
         let auto_policy_guard = auto_policy_guard.cloned();
         let outcome = self
             .call(move |conn| {
@@ -434,6 +462,29 @@ WHERE id = ?1 AND status <> 'superseded'
                         return Ok(ServiceOperationAcquireOutcome::StaleAutoPolicy);
                     }
                 }
+                if require_unarchived {
+                    for target in &targets {
+                        let active = tx
+                            .query_row(
+                                r#"
+SELECT EXISTS (
+  SELECT 1
+  FROM services sv
+  JOIN stacks st ON st.id = sv.stack_id
+  WHERE sv.id = ?1
+    AND sv.stack_id = ?2
+    AND sv.archived = 0
+    AND st.archived = 0
+)
+"#,
+                                params![target.service_id, target.stack_id],
+                                |row| row.get::<_, bool>(0),
+                            )?;
+                        if !active {
+                            return Ok(ServiceOperationAcquireOutcome::StaleCurrentDigest);
+                        }
+                    }
+                }
                 if let Some(conflict) = find_blocking_job_tx(&tx, &targets)? {
                     tx.commit()?;
                     return Ok(ServiceOperationAcquireOutcome::Conflict(Box::new(conflict)));
@@ -455,6 +506,68 @@ WHERE id = ?1 AND status <> 'superseded'
                             .optional()?
                             .unwrap_or(false);
                         if !matches {
+                            return Ok(ServiceOperationAcquireOutcome::StaleCurrentDigest);
+                        }
+                    }
+                }
+
+                if let Some((expected_image_ref, expected_image_tag)) =
+                    expected_service_image.as_ref()
+                {
+                    for target in &targets {
+                        let matches = tx
+                            .query_row(
+                                "SELECT COALESCE(image_ref = ?2 AND image_tag = ?3, 0) FROM services WHERE id = ?1",
+                                params![target.service_id, expected_image_ref, expected_image_tag],
+                                |row| row.get::<_, bool>(0),
+                            )
+                            .optional()?
+                            .unwrap_or(false);
+                        if !matches {
+                            return Ok(ServiceOperationAcquireOutcome::StaleCurrentDigest);
+                        }
+                    }
+                }
+
+                if let Some(expected_generation) = expected_accepted_state_generation {
+                    for target in &targets {
+                        let matches = tx
+                            .query_row(
+                                r#"
+SELECT accepted_state_generation = ?2
+  AND accepted_state_generation % 2 = 0
+FROM services
+WHERE id = ?1
+"#,
+                                params![target.service_id, expected_generation],
+                                |row| row.get::<_, bool>(0),
+                            )
+                            .optional()?
+                            .unwrap_or(false);
+                        if !matches {
+                            return Ok(ServiceOperationAcquireOutcome::StaleCurrentDigest);
+                        }
+                    }
+
+                    for target in &targets {
+                        let unblocked = tx
+                            .query_row(
+                                r#"
+SELECT CASE
+  WHEN update_guard_json IS NULL THEN 1
+  WHEN json_valid(update_guard_json) THEN
+    CASE WHEN json_type(update_guard_json, '$.blocked') = 'false' THEN 1 ELSE 0 END
+  ELSE 0
+END
+FROM services
+WHERE id = ?1
+"#,
+                                [&target.service_id],
+                                |row| row.get::<_, bool>(0),
+                            )
+                            .optional()?
+                            .unwrap_or(false);
+                        if !unblocked {
                             return Ok(ServiceOperationAcquireOutcome::StaleCurrentDigest);
                         }
                     }
@@ -740,7 +853,45 @@ WHERE id = ?1 AND accepted_state_generation = ?2 AND accepted_state_generation %
                 job,
                 targets,
                 initial_log,
-                Some(expected_current_digest),
+                Some(ServiceOperationBaseline {
+                    current_digest: expected_current_digest,
+                    image_reference: None,
+                    configured_tag: None,
+                    accepted_state_generation: None,
+                    require_unarchived: false,
+                }),
+                None,
+            )
+            .await?
+        {
+            outcome @ ServiceOperationAcquireOutcome::Acquired(_)
+            | outcome @ ServiceOperationAcquireOutcome::StaleCurrentDigest
+            | outcome @ ServiceOperationAcquireOutcome::StaleAutoPolicy => Ok(outcome),
+            ServiceOperationAcquireOutcome::Conflict(job) => {
+                Ok(ServiceOperationAcquireOutcome::Conflict(job))
+            }
+        }
+    }
+
+    pub async fn insert_service_operation_job_if_unblocked_with_service_baseline(
+        &self,
+        job: JobListItem,
+        targets: Vec<ServiceOperationTarget>,
+        initial_log: Option<JobLogLine>,
+        baseline: SelectedServiceOperationBaseline<'_>,
+    ) -> anyhow::Result<ServiceOperationAcquireOutcome> {
+        match self
+            .insert_service_operation_job_with_accepted_state_if_unblocked_inner(
+                job,
+                targets,
+                initial_log,
+                Some(ServiceOperationBaseline {
+                    current_digest: baseline.current_digest,
+                    image_reference: Some(baseline.image_reference),
+                    configured_tag: Some(baseline.configured_tag),
+                    accepted_state_generation: Some(baseline.accepted_state_generation),
+                    require_unarchived: true,
+                }),
                 None,
             )
             .await?
@@ -765,7 +916,13 @@ WHERE id = ?1 AND accepted_state_generation = ?2 AND accepted_state_generation %
             job,
             targets,
             initial_log,
-            Some(&guard.expected_current_digest),
+            Some(ServiceOperationBaseline {
+                current_digest: &guard.expected_current_digest,
+                image_reference: None,
+                configured_tag: None,
+                accepted_state_generation: None,
+                require_unarchived: false,
+            }),
             Some(&guard),
         )
         .await
@@ -1083,6 +1240,141 @@ INSERT INTO services (
                 .unwrap()
                 .generation,
             0
+        );
+    }
+
+    #[tokio::test]
+    async fn selected_version_enqueue_rechecks_configured_image_baseline_atomically() {
+        let db = Db::open(Path::new(":memory:")).await.unwrap();
+        let (stack_id, service_id) = seed_service(&db).await;
+        let baseline_digest =
+            "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+        let updated_service_id = service_id.clone();
+        db.call(move |conn| {
+            conn.execute(
+                "UPDATE services SET current_digest = ?1 WHERE id = ?2",
+                params![baseline_digest, updated_service_id],
+            )?;
+            Ok(())
+        })
+        .await
+        .unwrap();
+        let accepted_state_generation = db
+            .get_versioned_service_accepted_state(&service_id)
+            .await
+            .unwrap()
+            .unwrap()
+            .generation;
+        let job = crate::api::types::JobRecord::new_running(
+            "job_stale_selected_version".to_string(),
+            JobType::Update,
+            JobScope::Service,
+            Some(stack_id.clone()),
+            Some(service_id.clone()),
+            "2026-08-30T00:01:00Z",
+        );
+
+        let outcome = db
+            .insert_service_operation_job_if_unblocked_with_service_baseline(
+                job.to_db(),
+                vec![ServiceOperationTarget {
+                    service_id: service_id.clone(),
+                    stack_id,
+                }],
+                None,
+                SelectedServiceOperationBaseline {
+                    current_digest: baseline_digest,
+                    image_reference: "ghcr.io/acme/web:stable",
+                    configured_tag: "stable",
+                    accepted_state_generation,
+                },
+            )
+            .await
+            .unwrap();
+
+        assert!(matches!(
+            outcome,
+            ServiceOperationAcquireOutcome::StaleCurrentDigest
+        ));
+        assert!(
+            db.get_job("job_stale_selected_version")
+                .await
+                .unwrap()
+                .is_none()
+        );
+    }
+
+    #[tokio::test]
+    async fn selected_version_enqueue_rejects_a_newly_blocked_update_guard() {
+        let db = Db::open(Path::new(":memory:")).await.unwrap();
+        let (stack_id, service_id) = seed_service(&db).await;
+        let baseline_digest =
+            "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+        let updated_service_id = service_id.clone();
+        db.call(move |conn| {
+            conn.execute(
+                "UPDATE services SET current_digest = ?1 WHERE id = ?2",
+                params![baseline_digest, updated_service_id],
+            )?;
+            Ok(())
+        })
+        .await
+        .unwrap();
+        let accepted_state_generation = db
+            .get_versioned_service_accepted_state(&service_id)
+            .await
+            .unwrap()
+            .unwrap()
+            .generation;
+        let blocked_service_id = service_id.clone();
+        db.call(move |conn| {
+            conn.execute(
+                "UPDATE services SET update_guard_json = ?1 WHERE id = ?2",
+                params![
+                    r#"{"blocked":true,"code":"maintenance","reason":"deployment paused"}"#,
+                    blocked_service_id
+                ],
+            )?;
+            Ok(())
+        })
+        .await
+        .unwrap();
+        let job = crate::api::types::JobRecord::new_running(
+            "job_blocked_selected_version".to_string(),
+            JobType::Update,
+            JobScope::Service,
+            Some(stack_id.clone()),
+            Some(service_id.clone()),
+            "2026-08-30T00:01:00Z",
+        );
+
+        let outcome = db
+            .insert_service_operation_job_if_unblocked_with_service_baseline(
+                job.to_db(),
+                vec![ServiceOperationTarget {
+                    service_id: service_id.clone(),
+                    stack_id,
+                }],
+                None,
+                SelectedServiceOperationBaseline {
+                    current_digest: baseline_digest,
+                    image_reference: "ghcr.io/acme/web:latest",
+                    configured_tag: "latest",
+                    accepted_state_generation,
+                },
+            )
+            .await
+            .unwrap();
+
+        assert!(matches!(
+            outcome,
+            ServiceOperationAcquireOutcome::StaleCurrentDigest
+        ));
+        assert!(
+            db.get_job("job_blocked_selected_version")
+                .await
+                .unwrap()
+                .is_none()
         );
     }
 

@@ -213,3 +213,89 @@ async fn recovered_auto_policy_job_reopens_its_pending_candidate() {
         Some("update_job_recovered")
     );
 }
+
+#[tokio::test]
+async fn startup_releases_stale_cancelled_auto_policy_service_lease() {
+    let db_path = std::env::temp_dir().join(format!(
+        "dockrev-stale-cancelled-auto-policy-{}.sqlite3",
+        ulid::Ulid::new()
+    ));
+    {
+        let db = Db::open(&db_path).await.unwrap();
+        db.call(|conn| {
+            conn.execute(
+                "INSERT INTO stacks (id, name, compose_type, compose_files_json, backup_targets_json, backup_retention_keep_last, backup_retention_delete_after_stable_seconds, created_at, updated_at, last_check_at) VALUES ('stack', 'stack', 'path', '[]', '[]', 0, 0, '2026-04-30', '2026-04-30', '2026-04-30')",
+                [],
+            )?;
+            conn.execute(
+                "INSERT INTO services (id, stack_id, name, image_ref, image_tag, auto_rollback, backup_targets_bind_paths_json, backup_targets_volume_names_json, created_at, updated_at) VALUES ('service', 'stack', 'service', 'ghcr.io/acme/app', 'latest', 0, '{}', '{}', '2026-04-30', '2026-04-30')",
+                [],
+            )?;
+            Ok(())
+        })
+        .await
+        .unwrap();
+        let acquired = db
+            .insert_service_operation_job_with_accepted_state_if_unblocked(
+                crate::api::types::JobListItem {
+                    id: "stale-cancelled-auto-job".to_string(),
+                    r#type: crate::api::types::JobType::Update,
+                    scope: crate::api::types::JobScope::Service,
+                    stack_id: Some("stack".to_string()),
+                    service_id: Some("service".to_string()),
+                    status: "queued".to_string(),
+                    created_by: "auto-policy".to_string(),
+                    reason: "auto_policy".to_string(),
+                    created_at: "2026-04-30T00:00:00Z".to_string(),
+                    started_at: None,
+                    finished_at: None,
+                    allow_arch_mismatch: false,
+                    backup_mode: "inherit".to_string(),
+                    summary_json: serde_json::json!({}),
+                },
+                vec![ServiceOperationTarget {
+                    service_id: "service".to_string(),
+                    stack_id: "stack".to_string(),
+                }],
+                None,
+            )
+            .await
+            .unwrap();
+        assert!(matches!(
+            acquired,
+            ServiceOperationAcquireOutcome::Acquired(ref leases)
+                if leases.len() == 1 && leases[0].opened_generation == 1
+        ));
+        db.call(|conn| {
+            conn.execute(
+                "UPDATE jobs SET status = 'cancelled', finished_at = '2026-04-30T00:00:01Z' WHERE id = 'stale-cancelled-auto-job'",
+                [],
+            )?;
+            Ok(())
+        })
+        .await
+        .unwrap();
+        assert_eq!(
+            db.get_versioned_service_accepted_state("service")
+                .await
+                .unwrap()
+                .unwrap()
+                .generation,
+            1
+        );
+    }
+
+    {
+        let reopened = Db::open(&db_path).await.unwrap();
+        assert_eq!(
+            reopened
+                .get_versioned_service_accepted_state("service")
+                .await
+                .unwrap()
+                .unwrap()
+                .generation,
+            2
+        );
+    }
+    std::fs::remove_file(db_path).unwrap();
+}

@@ -3,12 +3,22 @@ import { describe, expect, test } from 'bun:test'
 import {
   formatCandidateTagDisplay,
   formatCurrentTagDisplay,
+  compareComparableStrictSemverTags,
+  isComparableStrictSemverTag,
   isStrictSemverTag,
   pickSnapshotDisplayTag,
   shouldReleaseLocalDisplayTag,
 } from '../src/versionDisplay'
 
 describe('versionDisplay', () => {
+  test('matches backend comparable SemVer prerelease rules', () => {
+    expect(isComparableStrictSemverTag('1.2.3-rc.2')).toBe(true)
+    expect(isComparableStrictSemverTag('1.2.3-alpha2')).toBe(true)
+    expect(isComparableStrictSemverTag('1.2.3-foo')).toBe(false)
+    expect(compareComparableStrictSemverTags('1.2.3-foo', '1.2.2')).toBeNull()
+    expect(compareComparableStrictSemverTags('v1.2.3', '1.2.2')).toBe(1)
+  })
+
   test('treats leading zeros in numeric identifiers as non-strict semver', () => {
     expect(isStrictSemverTag('01.2.3')).toBe(false)
     expect(isStrictSemverTag('1.2.3-01')).toBe(false)

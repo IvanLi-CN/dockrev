@@ -61,6 +61,8 @@ export type DockrevApiScenario =
   | 'service-detail-rollback-active'
   | 'service-detail-rollback-confirm-open'
   | 'service-detail-history-rollback-action'
+  | 'service-selected-version-updates'
+  | 'service-selected-version-updates-no-history'
   | 'service-detail-rollback-stale-after-update'
   | 'service-detail-lifecycle-running'
   | 'service-detail-lifecycle-stopped'
@@ -357,6 +359,7 @@ export type MockDebug = {
   lastUpdateRequest: unknown | null
   lastUpdateUrl: string | null
   lastUpdateMethod: string | null
+  versionUpdateObservationsCalls: number
   lastLifecycleRequest: { kind: 'stack' | 'service'; id: string; action: string } | null
   stackDetailCalls: number
   stackDetailCallsById: Record<string, number>
@@ -821,6 +824,7 @@ export function makeMockDebug(): MockDebug {
     lastUpdateRequest: null,
     lastUpdateUrl: null,
     lastUpdateMethod: null,
+    versionUpdateObservationsCalls: 0,
     lastLifecycleRequest: null,
     stackDetailCalls: 0,
     stackDetailCallsById: {},

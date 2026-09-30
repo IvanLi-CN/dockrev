@@ -10,6 +10,8 @@ use crate::{
 #[derive(Clone, Debug)]
 pub(crate) struct ServiceCheckOutcome {
     pub current_digest: Option<String>,
+    pub configured_tag_digest: Option<String>,
+    pub configured_tag_observed_at: Option<String>,
     pub current_resolved_tag: Option<String>,
     pub current_resolved_tags_json: Option<String>,
     pub current_runtime_started_at: Option<String>,
@@ -57,6 +59,12 @@ pub(crate) fn new_manifest_digest_cache() -> ManifestDigestCache {
 
 pub(crate) fn new_repo_tags_cache() -> RepoTagsCache {
     Arc::new(RepoTagsCacheInner)
+}
+
+fn observation_timestamp() -> Option<String> {
+    time::OffsetDateTime::now_utc()
+        .format(&time::format_description::well_known::Rfc3339)
+        .ok()
 }
 
 pub(crate) fn normalize_runtime_started_at(input: Option<&str>) -> Option<String> {
@@ -107,6 +115,8 @@ pub(crate) async fn check_service_and_persist(
                 .await?;
             return Ok(ServiceCheckOutcome {
                 current_digest: None,
+                configured_tag_digest: None,
+                configured_tag_observed_at: None,
                 current_resolved_tag: None,
                 current_resolved_tags_json: None,
                 current_runtime_started_at: None,
@@ -156,23 +166,37 @@ pub(crate) async fn check_service_and_persist(
         .cloned()
         .collect::<Vec<_>>();
 
-    let mut current_manifest = state
+    let mut current_manifest_observed_at = None;
+    let mut current_manifest = match state
         .registry
         .get_manifest_if_changed(&img, &svc.image_tag, host_platform, &known_manifest_digests)
         .await
-        .ok();
+    {
+        Ok(manifest) => {
+            current_manifest_observed_at = observation_timestamp();
+            Some(manifest)
+        }
+        Err(_) => None,
+    };
     if current_manifest.is_none() {
         // Best-effort retry: the configured tag is the most important lookup for candidate
         // digest-only updates, so transient registry failures should not immediately erase it.
-        current_manifest = state
+        current_manifest = match state
             .registry
             .get_manifest_if_changed(&img, &svc.image_tag, host_platform, &known_manifest_digests)
             .await
-            .ok();
+        {
+            Ok(manifest) => {
+                current_manifest_observed_at = observation_timestamp();
+                Some(manifest)
+            }
+            Err(_) => None,
+        };
     }
     let current_manifest_digest = current_manifest
         .as_ref()
         .and_then(|m| m.digest.clone().or(m.platform_digest.clone()));
+    let configured_tag_digest = current_manifest_digest.clone();
     let current_manifest_is_multi_arch = current_manifest.as_ref().is_some_and(|manifest| {
         matches!(
             (&manifest.digest, &manifest.platform_digest),
@@ -348,6 +372,8 @@ pub(crate) async fn check_service_and_persist(
 
     Ok(ServiceCheckOutcome {
         current_digest,
+        configured_tag_digest,
+        configured_tag_observed_at: current_manifest_observed_at,
         current_resolved_tag,
         current_resolved_tags_json,
         current_runtime_started_at,

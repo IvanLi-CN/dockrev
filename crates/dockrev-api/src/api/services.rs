@@ -4,6 +4,7 @@ use std::collections::BTreeMap;
 use std::convert::Infallible;
 
 mod backup_records;
+mod backup_target_routes;
 mod backup_targets;
 mod github_releases;
 mod lifecycle;
@@ -11,8 +12,10 @@ mod logs;
 mod release_notes;
 mod repo_links;
 mod settings;
+mod version_updates;
 
 use backup_records::get_service_backup_records as load_service_backup_records_response;
+pub(super) use backup_target_routes::{get_service_backup_targets, put_service_backup_targets};
 use backup_targets::{
     get_service_backup_targets as load_service_backup_targets_response,
     put_service_backup_targets as save_service_backup_targets_response, read_compose_service_specs,
@@ -39,29 +42,10 @@ use github_releases::{
 };
 pub(super) use release_notes::{list_service_release_notes, locate_service_release_notes};
 pub(super) use settings::{get_service_settings, put_service_settings};
-
-pub(super) async fn get_service_backup_targets(
-    State(state): State<Arc<AppState>>,
-    headers: HeaderMap,
-    Path(service_id): Path<String>,
-) -> Result<Json<ServiceBackupTargetsResponse>, ApiError> {
-    let _user = require_user(&state, &headers).await?;
-    Ok(Json(
-        load_service_backup_targets_response(&state, &service_id).await?,
-    ))
-}
-
-pub(super) async fn put_service_backup_targets(
-    State(state): State<Arc<AppState>>,
-    headers: HeaderMap,
-    Path(service_id): Path<String>,
-    Json(req): Json<PutServiceBackupTargetsRequest>,
-) -> Result<Json<PutServiceBackupTargetsResponse>, ApiError> {
-    let _user = require_user(&state, &headers).await?;
-    Ok(Json(
-        save_service_backup_targets_response(&state, &service_id, req).await?,
-    ))
-}
+pub(super) use version_updates::{
+    get_service_version_tag_observations, preview_service_version_update,
+    trigger_service_version_update,
+};
 
 pub(super) async fn get_service_backup_records(
     State(state): State<Arc<AppState>>,

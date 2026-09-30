@@ -379,44 +379,6 @@ fn candidate_digest_is_valid(candidate_digest: &str) -> bool {
     crate::snapshot_worker::normalize_digest_identity(candidate_digest).is_some()
 }
 
-fn candidate_settlement_state(
-    candidate: &notify::NewVersionDiscoveredService,
-) -> (&'static str, Option<String>, Option<String>) {
-    if candidate.candidate_digest.trim().is_empty() {
-        return (
-            "unresolved",
-            None,
-            Some("missing_candidate_evidence".to_string()),
-        );
-    }
-    if !candidate_digest_is_valid(&candidate.candidate_digest) {
-        return (
-            "unresolved",
-            None,
-            Some("invalid_candidate_digest".to_string()),
-        );
-    }
-    if let Some(version) = resolved_candidate_version(candidate) {
-        return (
-            "ready",
-            Some(version),
-            Some("digest_bound_version".to_string()),
-        );
-    }
-    if candidate.candidate_tag.trim().is_empty() {
-        return (
-            "unresolved",
-            None,
-            Some("missing_candidate_evidence".to_string()),
-        );
-    }
-    (
-        "awaiting_inference",
-        None,
-        Some("version_inference_pending".to_string()),
-    )
-}
-
 fn update_request_from_job(job: &api::types::JobListItem) -> anyhow::Result<TriggerUpdateRequest> {
     let mode = job
         .summary_json
@@ -752,6 +714,7 @@ pub async fn reconcile_inference_for_digest(
                 now,
                 &candidate_from_row(&settled),
                 Some(&settled.source),
+                None,
             )
             .await?;
         }
@@ -837,6 +800,7 @@ pub async fn reevaluate_service_policy(
                 now,
                 &candidate_from_row(&candidate),
                 Some(&candidate.source),
+                None,
             )
             .await?;
         }
@@ -967,6 +931,7 @@ fn build_auto_update_target(
         target_digest: candidate.digest.clone(),
         pull_tags: Some(pull_tags),
         skip_tag_followups: false,
+        skip_target_tag_pull: false,
         auto_policy_context: None,
     })
 }
@@ -1200,6 +1165,7 @@ async fn evaluate_candidate(
     finished_at: &str,
     candidate: &notify::NewVersionDiscoveredService,
     source: Option<&str>,
+    digest_bound_version: Option<&str>,
 ) -> anyhow::Result<()> {
     if !candidate_digest_is_valid(&candidate.candidate_digest) {
         tracing::warn!(
@@ -1234,7 +1200,7 @@ async fn evaluate_candidate(
         return Ok(());
     }
     let (settlement_status, resolved_version, settlement_reason) =
-        candidate_settlement_state(candidate);
+        candidate_settlement_state_with_version(candidate, digest_bound_version);
     let candidate_row = state
         .db
         .upsert_auto_update_candidate(

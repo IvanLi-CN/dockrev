@@ -63,6 +63,16 @@ pub(crate) async fn trigger_update(
         req.service_id.as_deref(),
     )?;
 
+    if req
+        .targets
+        .as_deref()
+        .is_some_and(|targets| targets.iter().any(|target| target.skip_target_tag_pull))
+    {
+        return Err(ApiError::invalid_argument(
+            "skipTargetTagPull is reserved for selected-version updates",
+        ));
+    }
+
     match req.scope {
         JobScope::Service => {
             if req.targets.is_none() {
@@ -168,7 +178,10 @@ pub(crate) async fn enqueue_update_job(
     req: TriggerUpdateRequest,
     now: String,
 ) -> Result<String, ApiError> {
-    enqueue_update_job_with_start(state, created_by, reason, req, now, true).await
+    enqueue_update_job_with_start_and_targets(
+        state, created_by, reason, req, now, true, None, None, None, None,
+    )
+    .await
 }
 
 pub(crate) async fn enqueue_update_job_deferred(
@@ -178,21 +191,59 @@ pub(crate) async fn enqueue_update_job_deferred(
     req: TriggerUpdateRequest,
     now: String,
 ) -> Result<String, ApiError> {
-    enqueue_update_job_with_start(state, created_by, reason, req, now, false).await
+    enqueue_update_job_with_start_and_targets(
+        state, created_by, reason, req, now, false, None, None, None, None,
+    )
+    .await
 }
 
-async fn enqueue_update_job_with_start(
+#[allow(clippy::too_many_arguments)]
+pub(crate) async fn enqueue_selected_version_update_job(
+    state: Arc<AppState>,
+    created_by: String,
+    req: TriggerUpdateRequest,
+    target: UpdateServiceTarget,
+    expected_current_digest: String,
+    expected_image_reference: String,
+    expected_configured_tag: String,
+    expected_accepted_state_generation: i64,
+    now: String,
+) -> Result<String, ApiError> {
+    enqueue_update_job_with_start_and_targets(
+        state,
+        created_by,
+        "selected-version".to_string(),
+        req,
+        now,
+        true,
+        Some(vec![target]),
+        Some(expected_current_digest),
+        Some((expected_image_reference, expected_configured_tag)),
+        Some(expected_accepted_state_generation),
+    )
+    .await
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn enqueue_update_job_with_start_and_targets(
     state: Arc<AppState>,
     created_by: String,
     reason: String,
     mut req: TriggerUpdateRequest,
     now: String,
     start_immediately: bool,
+    prevalidated_targets: Option<Vec<UpdateServiceTarget>>,
+    expected_current_digest_override: Option<String>,
+    expected_service_image_override: Option<(String, String)>,
+    expected_accepted_state_generation_override: Option<i64>,
 ) -> Result<String, ApiError> {
     let stack_ids = resolve_stack_ids_for_update(&state, &req)
         .await
         .map_err(map_internal)?;
-    let validated_targets = resolve_validated_update_targets(&state, &req, &stack_ids).await?;
+    let validated_targets = match prevalidated_targets {
+        Some(targets) => targets,
+        None => resolve_validated_update_targets(&state, &req, &stack_ids).await?,
+    };
     req.targets = Some(validated_targets);
 
     let operation_targets = if req.mode.as_str() == "apply" {
@@ -265,17 +316,19 @@ async fn enqueue_update_job_with_start(
                 "update queued".to_string()
             },
         });
-        let expected_current_digest = req.targets.as_deref().and_then(|targets| {
-            let values = targets
-                .iter()
-                .filter_map(|target| target.auto_policy_context.as_ref())
-                .filter_map(|context| context.expected_current_digest.as_deref())
-                .collect::<Vec<_>>();
-            if values.len() == 1 {
-                values.into_iter().next()
-            } else {
-                None
-            }
+        let expected_current_digest = expected_current_digest_override.or_else(|| {
+            req.targets.as_deref().and_then(|targets| {
+                let values = targets
+                    .iter()
+                    .filter_map(|target| target.auto_policy_context.as_ref())
+                    .filter_map(|context| context.expected_current_digest.as_deref())
+                    .collect::<Vec<_>>();
+                if values.len() == 1 {
+                    values.into_iter().next().map(ToOwned::to_owned)
+                } else {
+                    None
+                }
+            })
         });
         let auto_policy_guard = req.targets.as_deref().and_then(|targets| {
             if targets.len() != 1 {
@@ -306,7 +359,10 @@ async fn enqueue_update_job_with_start(
                     })),
             );
         }
-        if auto_policy_job && expected_current_digest.is_none_or(|digest| digest.trim().is_empty())
+        if auto_policy_job
+            && expected_current_digest
+                .as_deref()
+                .is_none_or(|digest| digest.trim().is_empty())
         {
             return Err(ApiError::conflict(
                 "auto policy update is missing the current digest baseline",
@@ -340,20 +396,52 @@ async fn enqueue_update_job_with_start(
                 }
             }
         } else if let Some(expected_current_digest) = expected_current_digest {
-            match state
-                .db
-                .insert_service_operation_job_if_unblocked_with_current_digest(
-                    job_db,
-                    operation_targets,
-                    initial_log,
-                    expected_current_digest,
-                )
-                .await
-                .map_err(map_internal)?
+            let selected_version_update = expected_service_image_override.is_some();
+            let outcome = if let Some((image_reference, configured_tag)) =
+                expected_service_image_override
             {
+                let expected_generation =
+                    expected_accepted_state_generation_override.ok_or_else(|| {
+                        ApiError::conflict("selected version accepted-state baseline is missing")
+                    })?;
+                state
+                    .db
+                    .insert_service_operation_job_if_unblocked_with_service_baseline(
+                        job_db,
+                        operation_targets,
+                        initial_log,
+                        crate::db::SelectedServiceOperationBaseline {
+                            current_digest: &expected_current_digest,
+                            image_reference: &image_reference,
+                            configured_tag: &configured_tag,
+                            accepted_state_generation: expected_generation,
+                        },
+                    )
+                    .await
+            } else {
+                state
+                    .db
+                    .insert_service_operation_job_if_unblocked_with_current_digest(
+                        job_db,
+                        operation_targets,
+                        initial_log,
+                        &expected_current_digest,
+                    )
+                    .await
+            }
+            .map_err(map_internal)?;
+            match outcome {
                 crate::db::ServiceOperationAcquireOutcome::Acquired(_) => None,
                 crate::db::ServiceOperationAcquireOutcome::Conflict(job) => Some(*job),
                 crate::db::ServiceOperationAcquireOutcome::StaleCurrentDigest => {
+                    if selected_version_update {
+                        return Err(ApiError::conflict(
+                            "selected version preview is stale; preview the release again",
+                        )
+                        .with_details(json!({
+                            "reason": "selected_version_preview_stale"
+                        })));
+                    }
                     return Err(ApiError::conflict(
                         "service candidate changed while enqueueing auto policy update",
                     )
@@ -603,6 +691,7 @@ pub(crate) fn normalize_update_service_target(
             &target_tag,
         )?),
         skip_tag_followups: target.skip_tag_followups,
+        skip_target_tag_pull: target.skip_target_tag_pull,
         auto_policy_context: target.auto_policy_context.clone(),
     })
 }
@@ -643,6 +732,7 @@ pub(crate) fn requested_update_targets(
                     &target_tag,
                 )?),
                 skip_tag_followups: false,
+                skip_target_tag_pull: false,
                 auto_policy_context: None,
             }])
         }

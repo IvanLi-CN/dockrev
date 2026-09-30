@@ -527,3 +527,68 @@ pub struct VersionInferenceOverviewRow {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub progress: Option<VersionInferenceTaskProgressState>,
 }
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ServiceVersionUpdateClassification {
+    Normal,
+    Forced,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ServiceVersionTagObservationItem {
+    pub version: String,
+    pub digest: String,
+    pub observed_at: String,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ServiceVersionTagObservationsResponse {
+    pub image_repo: String,
+    pub configured_tag: String,
+    pub observations: Vec<ServiceVersionTagObservationItem>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PreviewServiceVersionUpdateRequest {
+    pub release_tag: String,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PreviewServiceVersionUpdateResponse {
+    pub release_tag: String,
+    pub classification: ServiceVersionUpdateClassification,
+    pub target_digest: String,
+    pub current_digest: String,
+    pub current_version: String,
+    pub image_reference: String,
+    pub image_repo: String,
+    pub configured_tag: String,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TriggerServiceVersionUpdateRequest {
+    pub release_tag: String,
+    pub classification: ServiceVersionUpdateClassification,
+    pub target_digest: String,
+    pub current_digest: String,
+    pub current_version: String,
+    pub image_reference: String,
+    pub image_repo: String,
+    pub configured_tag: String,
+    #[serde(default)]
+    pub force_confirmed: bool,
+    #[serde(default)]
+    pub backup_mode: BackupMode,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TriggerServiceVersionUpdateResponse {
+    pub job_id: String,
+}

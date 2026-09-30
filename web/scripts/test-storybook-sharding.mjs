@@ -2,7 +2,11 @@ import assert from "node:assert/strict";
 import { shardCoverage, selectSmokeShard } from "./storybook-sharding.mjs";
 import { verifyCoverage } from "./verify-storybook-coverage.mjs";
 
-const storyIds = Array.from({ length: 381 }, (_, index) => `story-${index}`);
+const storyIds = [
+  ...Array.from({ length: 381 }, (_, index) => `story-${index}`),
+  "pages-servicedetailpage--versions-section-normal-update-submission",
+  "pages-servicedetailpage--versions-section-forced-update-submission",
+];
 
 for (const total of [2, 3]) {
   const shards = shardCoverage(storyIds, total);

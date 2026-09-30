@@ -195,19 +195,26 @@ fn candidate_settlement_requires_a_strict_or_digest_bound_version() {
             .to_string(),
     };
     assert_eq!(
-        candidate_settlement_state(&candidate).0,
+        candidate_settlement_state_with_version(&candidate, None).0,
         "awaiting_inference"
     );
 
     candidate.candidate_display_tag = "1.4.0".to_string();
     assert_eq!(
-        candidate_settlement_state(&candidate).0,
+        candidate_settlement_state_with_version(&candidate, None).0,
         "awaiting_inference"
+    );
+    assert_eq!(
+        candidate_settlement_state_with_version(&candidate, Some("1.4.0")).0,
+        "ready"
     );
 
     candidate.candidate_tag = "1.5.0".to_string();
     candidate.candidate_display_tag = "1.5.0".to_string();
-    assert_eq!(candidate_settlement_state(&candidate).0, "ready");
+    assert_eq!(
+        candidate_settlement_state_with_version(&candidate, None).0,
+        "ready"
+    );
 }
 
 #[test]
@@ -225,7 +232,7 @@ fn candidate_settlement_rejects_malformed_digest_evidence() {
     };
 
     assert_eq!(
-        candidate_settlement_state(&candidate),
+        candidate_settlement_state_with_version(&candidate, None),
         (
             "unresolved",
             None,
@@ -234,9 +241,14 @@ fn candidate_settlement_rejects_malformed_digest_evidence() {
     );
 
     candidate.candidate_digest = "not-a-digest".to_string();
-    assert_eq!(candidate_settlement_state(&candidate).0, "unresolved");
     assert_eq!(
-        candidate_settlement_state(&candidate).2.as_deref(),
+        candidate_settlement_state_with_version(&candidate, None).0,
+        "unresolved"
+    );
+    assert_eq!(
+        candidate_settlement_state_with_version(&candidate, None)
+            .2
+            .as_deref(),
         Some("invalid_candidate_digest")
     );
 }
@@ -264,8 +276,14 @@ fn candidate_settlement_rejects_strict_tags_without_digest_evidence() {
         candidate_display_tag: "1.4.0".to_string(),
         candidate_digest: "".to_string(),
     };
-    assert_eq!(candidate_settlement_state(&candidate).0, "unresolved");
-    assert_eq!(candidate_settlement_state(&candidate).1, None);
+    assert_eq!(
+        candidate_settlement_state_with_version(&candidate, None).0,
+        "unresolved"
+    );
+    assert_eq!(
+        candidate_settlement_state_with_version(&candidate, None).1,
+        None
+    );
 }
 
 #[test]

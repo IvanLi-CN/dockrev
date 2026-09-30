@@ -585,7 +585,7 @@ async fn cancelled_stale_queued_job_updates_candidate_projection() {
         .try_claim_auto_update_pending(&pending.id, "2026-04-30T00:00:03Z")
         .await
         .unwrap());
-    db.insert_job(crate::api::types::JobListItem {
+    let job = crate::api::types::JobListItem {
         id: "stale-queued-job".to_string(),
         r#type: crate::api::types::JobType::Update,
         scope: crate::api::types::JobScope::Service,
@@ -600,9 +600,23 @@ async fn cancelled_stale_queued_job_updates_candidate_projection() {
         allow_arch_mismatch: false,
         backup_mode: "inherit".to_string(),
         summary_json: serde_json::json!({}),
-    })
+    };
+    let acquired = db
+        .insert_service_operation_job_with_accepted_state_if_unblocked(
+            job,
+            vec![ServiceOperationTarget {
+                service_id: "service".to_string(),
+                stack_id: "stack".to_string(),
+            }],
+            None,
+        )
     .await
     .unwrap();
+    assert!(matches!(
+        acquired,
+        ServiceOperationAcquireOutcome::Acquired(ref leases)
+            if leases.len() == 1 && leases[0].opened_generation == 1
+    ));
     assert!(db
         .mark_auto_update_pending_enqueued(
             &pending.id,
@@ -634,6 +648,14 @@ async fn cancelled_stale_queued_job_updates_candidate_projection() {
     assert_eq!(candidate.policy_scope_type.as_deref(), Some("stack"));
     assert_eq!(candidate.policy_scope_id.as_deref(), Some("stack"));
     assert_eq!(candidate.update_job_id.as_deref(), Some("stale-queued-job"));
+    assert_eq!(
+        db.get_versioned_service_accepted_state("service")
+            .await
+            .unwrap()
+            .unwrap()
+            .generation,
+        2
+    );
 }
 
 #[tokio::test]

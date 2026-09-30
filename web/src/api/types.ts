@@ -1,6 +1,7 @@
 import type { ServiceResourceOverviewItem, ServiceResourceOverviewResponse } from './serviceResourceTypes'
 import type { VersionInferenceState } from './autoUpdateTypes'
 export * from './notificationTypes'
+export * from './versionUpdateTypes'
 export type {
   AutoUpdateProjection,
   CandidateHydrationDiagnostic,
@@ -465,7 +466,6 @@ export type ServiceReleaseNotesResponse = {
   refresh?: ServiceReleaseNotesRefresh | null
   anchor?: ServiceReleaseNotesAnchor | null
 }
-
 export type VersionInferenceOverviewStatus = 'queued' | 'running' | 'ready' | 'stale' | 'all_failed' | string
 
 export type VersionInferenceTaskProgress = {

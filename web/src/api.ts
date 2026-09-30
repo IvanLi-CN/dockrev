@@ -1,4 +1,5 @@
 export * from './api/types'
+export * from './api/versionUpdates'
 
 import type {
   StackListItem,

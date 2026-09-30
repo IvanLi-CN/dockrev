@@ -1,9 +1,5 @@
 use super::*;
 use rusqlite::{TransactionBehavior, params};
-use std::{
-    fs,
-    path::{Path, PathBuf},
-};
 #[path = "schema_accepted_state_generation.rs"]
 mod schema_accepted_state_generation;
 #[path = "schema_backup_cleanup_state.rs"]
@@ -17,17 +13,11 @@ mod schema_lifecycle_events;
 #[path = "../db/schema_notification_inbox.rs"]
 mod schema_notification_inbox;
 mod schema_resource_latest;
+#[path = "schema_service_version_tag_observations.rs"]
+mod schema_service_version_tag_observations;
 mod schema_settings_release_notes;
 include!("schema_auto_update.rs");
-pub(super) fn ensure_parent_dir(path: &Path) -> anyhow::Result<PathBuf> {
-    let path = path.to_path_buf();
-    if let Some(parent) = path.parent()
-        && !parent.as_os_str().is_empty()
-    {
-        fs::create_dir_all(parent).with_context(|| format!("create dir {:?}", parent))?;
-    }
-    Ok(path)
-}
+
 fn ensure_service_columns(conn: &rusqlite::Connection) -> anyhow::Result<()> {
     #[derive(Clone)]
     struct Col<'a> {
@@ -662,10 +652,14 @@ pub(super) fn migrate(conn: &mut rusqlite::Connection) -> anyhow::Result<()> {
     apply_migration_0025_normalize_new_version_notification_digest_identity(conn)?;
     apply_migration_0026_reject_invalid_auto_update_digest_identity(conn)?;
     schema_notification_inbox::apply_migrations(conn)?;
+    schema_service_version_tag_observations::apply(conn)?;
     schema_lifecycle_events::apply(conn)?;
     schema_job_history_retention::apply(conn)?;
     schema_backup_cleanup_state::apply(conn)?;
     schema_accepted_state_generation::apply(conn)?;
+    let tx = conn.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
+    super::release_stale_cancelled_auto_policy_job_service_leases_tx(&tx)?;
+    tx.commit()?;
     Ok(())
 }
 
