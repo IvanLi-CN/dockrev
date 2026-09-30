@@ -1,26 +1,44 @@
 import { imageRepoFromImageRef } from '../../../../imageRepo'
 import { compareComparableStrictSemverTags } from '../../../../versionDisplay'
-import type { JobListItem } from '../../../../api'
+import type { JobListItem, ServiceVersionTagObservation } from '../../../../api'
 import type { MockRouteContext } from '../context'
 
 const observedVersionDigest = 'sha256:0000000000000000000000000000000000000000000000000000000000000023'
 
 const invalidReleaseTagMessage = 'releaseTag must be a strictly newer comparable SemVer version'
 
-function previewForRelease(found: NonNullable<ReturnType<MockRouteContext['findService']>>, releaseTag: string) {
+function observationsForService(
+  ctx: MockRouteContext,
+  serviceId: string,
+  configuredTag: string,
+): ServiceVersionTagObservation[] {
+  if (
+    ctx.scenario !== 'service-selected-version-updates' ||
+    serviceId !== 'svc-prod-api' ||
+    configuredTag !== 'latest'
+  ) return []
+
+  return [{ version: '5.2.3', digest: observedVersionDigest, observedAt: ctx.nowIso() }]
+}
+
+function previewForRelease(
+  found: NonNullable<ReturnType<MockRouteContext['findService']>>,
+  releaseTag: string,
+  observations: ServiceVersionTagObservation[],
+) {
   const currentVersion = found.svc.image.resolvedTag ?? found.svc.image.tag
   const comparison = compareComparableStrictSemverTags(releaseTag, currentVersion)
   if (comparison == null || comparison <= 0) return null
 
   const imageRepo = imageRepoFromImageRef(found.svc.image.ref) ?? found.svc.image.ref
-  const isObserved =
-    found.svc.id === 'svc-prod-api' &&
-    found.svc.image.tag === 'latest' &&
-    compareComparableStrictSemverTags(releaseTag, '5.2.3') === 0
+  const observation = observations.find(
+    (item) => compareComparableStrictSemverTags(item.version, releaseTag) === 0,
+  )
+  const isObserved = observation != null
   return {
     releaseTag,
     classification: isObserved ? 'normal' : 'forced',
-    targetDigest: isObserved ? observedVersionDigest : `sha256:${'4'.repeat(64)}`,
+    targetDigest: observation?.digest ?? `sha256:${'4'.repeat(64)}`,
     currentDigest: found.svc.image.digest,
     currentVersion,
     imageReference: found.svc.image.ref,
@@ -59,9 +77,9 @@ export function handleVersionUpdateRoutes(ctx: MockRouteContext): Response | nul
   if (!found) return json({ error: 'not found' }, { status: 404 })
   const imageRepo = imageRepoFromImageRef(found.svc.image.ref) ?? found.svc.image.ref
   if (isObservationsRoute) {
-    const observations = serviceId === 'svc-prod-api' && found.svc.image.tag === 'latest'
-      ? [{ version: '5.2.3', digest: observedVersionDigest, observedAt: nowIso() }]
-      : []
+    const observations = observationsForService(ctx, serviceId, found.svc.image.tag)
+    const debug = globalThis.__DOCKREV_MOCK_DEBUG__
+    if (debug) debug.versionUpdateObservationsCalls += 1
     return json({ imageRepo, configuredTag: found.svc.image.tag, observations })
   }
   const parsed = parseJsonBody(init?.body)
@@ -75,7 +93,11 @@ export function handleVersionUpdateRoutes(ctx: MockRouteContext): Response | nul
     if (!releaseTag || !['normal', 'forced'].includes(classification) || !['inherit', 'skip', 'force'].includes(backupMode)) {
       return json({ error: 'invalid version update request' }, { status: 400 })
     }
-    const preview = previewForRelease(found, releaseTag)
+    const preview = previewForRelease(
+      found,
+      releaseTag,
+      observationsForService(ctx, serviceId, found.svc.image.tag),
+    )
     if (!preview) {
       return json({
         error: {
@@ -144,7 +166,11 @@ export function handleVersionUpdateRoutes(ctx: MockRouteContext): Response | nul
   }
 
   const releaseTag = getString(record.releaseTag) ?? ''
-  const preview = previewForRelease(found, releaseTag)
+  const preview = previewForRelease(
+    found,
+    releaseTag,
+    observationsForService(ctx, serviceId, found.svc.image.tag),
+  )
   if (!preview) {
     return json({
       error: {

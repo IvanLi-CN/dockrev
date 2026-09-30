@@ -1309,6 +1309,39 @@ async fn startup_recovery_fails_selected_version_job_and_releases_its_service_le
 }
 
 #[tokio::test]
+async fn selected_version_observations_preview_and_submit_require_authentication() {
+    let state = test_state_with_authz(":memory:", Some("alice"), None, false).await;
+    let app = api::router(state.clone());
+    let requests = [
+        ("GET", "/api/services/svc-auth/version-update-observations", None),
+        ("POST", "/api/services/svc-auth/version-update/preview", Some(r#"{"releaseTag":"v2.71.38"}"#)),
+        (
+            "POST",
+            "/api/services/svc-auth/version-update",
+            Some(
+                r#"{"releaseTag":"v2.71.38","classification":"forced","targetDigest":"sha256:target","currentDigest":"sha256:current","currentVersion":"v2.71.34","imageReference":"ghcr.io/example/api:latest","imageRepo":"ghcr.io/example/api","configuredTag":"latest","forceConfirmed":true,"backupMode":"inherit"}"#,
+            ),
+        ),
+    ];
+
+    for (method, uri, body) in requests {
+        let mut request = Request::builder().method(method).uri(uri);
+        if body.is_some() {
+            request = request.header("content-type", "application/json");
+        }
+        let response = app
+            .clone()
+            .oneshot(request.body(Body::from(body.unwrap_or_default())).unwrap())
+            .await
+            .unwrap();
+        assert_eq!(response.status(), 401, "{method} {uri}");
+        assert_eq!(response_json(response).await["error"]["code"], "auth_required");
+    }
+
+    assert!(state.db.list_jobs().await.unwrap().is_empty());
+}
+
+#[tokio::test]
 async fn normal_selected_version_submit_persists_exact_digest_and_tag_pull_policy() {
     let state = test_state_with(
         ":memory:",

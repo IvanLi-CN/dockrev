@@ -407,7 +407,9 @@ function selectedVersionSubmissionStory(input: {
   return {
     parameters: {
       viewport: { defaultViewport: "dockrevWide" },
-      dockrevApiScenario: "service-detail-history-rollback-action",
+      dockrevApiScenario: forced
+        ? "service-selected-version-updates-no-history"
+        : "service-selected-version-updates",
       dockrevServiceOverridesById: {
         "svc-prod-api": acmeLatestServiceOverride,
       },
@@ -415,11 +417,9 @@ function selectedVersionSubmissionStory(input: {
         "svc-prod-api": {
           authMode: "anonymous",
           repo: { fullName: "acme/api", htmlUrl: "https://github.com/acme/api" },
-          items: forced
-            ? versionReleaseNotes
-            : versionReleaseNotes.map((release) => release.tagName === "5.2.3"
-              ? { ...release, tagName: "v5.2.3" }
-              : release),
+          items: versionReleaseNotes.map((release) => release.tagName === "5.2.3"
+            ? { ...release, tagName: "v5.2.3" }
+            : release),
         },
       },
     },
@@ -429,6 +429,9 @@ function selectedVersionSubmissionStory(input: {
     }),
     play: async ({ canvasElement }) => {
       const doc = canvasElement.ownerDocument;
+      await waitForCondition(() => Number(
+        globalThis.__DOCKREV_MOCK_DEBUG__?.versionUpdateObservationsCalls ?? 0,
+      ) > 0);
       await waitForCondition(() => Boolean(findVersionCard(canvasElement, input.releaseTag)));
       await waitForCondition(() => {
         const action = findVersionAction(canvasElement, "update", input.releaseTag);
@@ -436,6 +439,10 @@ function selectedVersionSubmissionStory(input: {
       });
       const action = findVersionAction(canvasElement, "update", input.releaseTag);
       expectStory(action && !action.disabled, `${input.releaseTag} should expose an enabled version update action`);
+      expectStory(
+        normalizeText(action?.textContent) === (forced ? "强制更新" : "更新"),
+        `${input.releaseTag} action should reflect its configured-tag history classification`,
+      );
       action?.click();
 
       await waitForCondition(() => Boolean(doc.querySelector('[role="alertdialog"], [role="dialog"]')));
@@ -485,7 +492,7 @@ export const VersionsSectionNormalUpdateSubmission = selectedVersionSubmissionSt
 });
 
 export const VersionsSectionForcedUpdateSubmission = selectedVersionSubmissionStory({
-  releaseTag: "5.4.4",
+  releaseTag: "v5.2.3",
   classification: "forced",
   targetDigest: `sha256:${"4".repeat(64)}`,
 });

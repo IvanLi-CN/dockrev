@@ -20,11 +20,13 @@ function previewResponse(releaseTag: string, submit = false): Response {
     ? { releaseTag, classification: 'forced', targetDigest: 'unused', backupMode: 'inherit' }
     : { releaseTag }
   const context = {
+    scenario: 'service-selected-version-updates',
     method: 'POST',
     urlPath: submit
       ? '/api/services/svc-prod-api/version-update'
       : '/api/services/svc-prod-api/version-update/preview',
     init: { body: JSON.stringify(body) },
+    nowIso: () => '2026-09-30T00:00:00.000Z',
     findService: () => service,
     json: (data: unknown, init?: ResponseInit) =>
       new Response(JSON.stringify(data), {

@@ -481,7 +481,10 @@ export function buildFixture(scenario: Exclude<DockrevApiScenario, 'error'>): Fi
     }
     return fixture
   }
-  if (scenario === 'service-selected-version-updates') {
+  if (
+    scenario === 'service-selected-version-updates' ||
+    scenario === 'service-selected-version-updates-no-history'
+  ) {
     const fixture = buildDashboardDemo()
     const service = fixture.stackById['stack-prod']?.services.find((item) => item.id === 'svc-prod-api')
     if (service) {
