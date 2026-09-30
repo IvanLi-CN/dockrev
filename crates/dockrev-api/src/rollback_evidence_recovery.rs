@@ -1077,6 +1077,88 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn manifest_read_failure_preserves_known_zero_candidate_count() {
+        let root = std::env::temp_dir().join(format!(
+            "dockrev-manifest-retry-known-zero-{}",
+            ulid::Ulid::new()
+        ));
+        tokio::fs::create_dir_all(&root).await.expect("test root");
+        let db_path = root.join("dockrev.sqlite");
+        let db = crate::db::Db::open(&db_path).await.expect("db");
+        let job_id = "job-manifest-retry-known-zero";
+        insert_running_job(&db, job_id).await;
+        db.finish_job(
+            job_id,
+            "failed",
+            "2026-08-28T00:05:00Z",
+            &serde_json::json!({
+                "rollbackEvidence": {
+                    "status": "incomplete",
+                    "failedCandidates": 0,
+                    "errors": ["archive persistence: injected failure"]
+                }
+            }),
+        )
+        .await
+        .expect("finish job");
+        let spool = spool_root(&db_path).join(job_id);
+        tokio::fs::create_dir_all(&spool).await.expect("spool");
+
+        recover_orphaned_evidence(&db, &db_path).await;
+
+        let first_job = db.get_job(job_id).await.expect("load first job").unwrap();
+        assert_eq!(
+            first_job.summary_json["rollbackEvidence"]["failedCandidates"],
+            0
+        );
+        let records = [EvidenceMetadata {
+            service_id: "service-a".to_string(),
+            candidate_id: "candidate-a".to_string(),
+            health_status: "unhealthy".to_string(),
+            ..Default::default()
+        }];
+        let candidate_dir = spool.join("service-a").join("candidate-a");
+        tokio::fs::create_dir_all(&candidate_dir)
+            .await
+            .expect("candidate directory");
+        tokio::fs::write(candidate_dir.join("container.log"), b"candidate logs")
+            .await
+            .expect("candidate log");
+        write_manifest(&spool, &records)
+            .await
+            .expect("recovered manifest");
+
+        recover_orphaned_evidence(&db, &db_path).await;
+
+        let recovered_job = db
+            .get_job(job_id)
+            .await
+            .expect("load recovered job")
+            .unwrap();
+        let archive_exists = db
+            .get_rollback_evidence_archive(job_id)
+            .await
+            .expect("read archive")
+            .is_some();
+        let spool_exists = spool.exists();
+        drop(db);
+        let _ = tokio::fs::remove_dir_all(root).await;
+        assert_eq!(
+            recovered_job.summary_json["rollbackEvidence"]["status"],
+            "incomplete"
+        );
+        assert_eq!(
+            recovered_job.summary_json["rollbackEvidence"]["failedCandidates"],
+            0
+        );
+        assert!(!archive_exists, "mismatched checkpoint must not attach");
+        assert!(
+            spool_exists,
+            "mismatched checkpoint must remain for recovery"
+        );
+    }
+
+    #[tokio::test]
     async fn archive_persistence_retry_preserves_complete_candidate_logs() {
         let root = std::env::temp_dir().join(format!(
             "dockrev-archive-retry-preserves-complete-logs-{}",

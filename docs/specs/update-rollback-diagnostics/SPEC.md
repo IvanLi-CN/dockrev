@@ -77,7 +77,7 @@ Docker 的 health policy 由镜像的 `HEALTHCHECK` 定义，也可由 Compose `
 - 终态 job 的既有保留期清理必须同时删除与该 job 对应的遗留 spool；这属于 job 到期删除，不得产生无主原始日志文件。
 ### REQ-ROLLBACK-013
 - 对带有 archive BLOB 的终态 job，启动恢复必须在读取 manifest 前清理 spool、`.tar.zst` 和 `.tar.zst.part`，包括 spool 目录已缺失的 archive-only/part-only 文件。删除失败时必须记录告警并保留未删副本，不得覆盖已提交的归档状态。恢复附加必须只在 evidence BLOB 尚为空时执行；已有 BLOB 及其 summary 对恢复过程不可覆盖。
-- 每种 `rollbackEvidence` summary（包括常规终结与恢复失败）最多包含 32 条服务记录、每服务最多 4 条捕获错误、每个元数据文本字段最多 256 个字符、最多 16 条顶层错误且每条最多 512 个字符。发生截断时必须附带有界说明并保留已知失败候选总数；若恢复清单无法读取且没有既有计数，不得将未知数写成 0，必须省略 `failedCandidates`，后续恢复不得因此拒绝有效 manifest。这些上限只适用于 summary；归档 manifest 和已采集日志必须保持原始内容。
+- 每种 `rollbackEvidence` summary（包括常规终结与恢复失败）最多包含 32 条服务记录、每服务最多 4 条捕获错误、每个元数据文本字段最多 256 个字符、最多 16 条顶层错误且每条最多 512 个字符。发生截断时必须附带有界说明并保留已知失败候选总数（包括 0）；若恢复清单无法读取且没有既有计数，不得将未知数写成 0，必须省略 `failedCandidates`，后续恢复不得因此拒绝有效 manifest。这些上限只适用于 summary；归档 manifest 和已采集日志必须保持原始内容。
 - `State.Error` 可能包含 Docker 运行时细节，只能保留在私有 spool/归档 manifest 中，不得进入普通 job summary、列表、详情正文、job log、SSE 或通知；授权下载的完整归档仍保留其原始值。
 - 恢复失败不得用空服务列表或空错误列表抹除先前已记录的有界服务诊断和错误。顶层错误达到限额时，应优先保留因 32 条服务摘要限制而不会显示在服务列表中的候选捕获错误；所有摘要仍遵守上述数量和文本长度限制。
 ### REQ-ROLLBACK-014

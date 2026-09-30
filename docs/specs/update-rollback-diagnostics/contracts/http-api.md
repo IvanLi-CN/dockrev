@@ -25,7 +25,7 @@ The existing `job.summary` may contain `rollbackEvidence` metadata when evidence
 ```
 
 - `status` is `available`, `incomplete`, or `absent`.
-- `failedCandidates`, when present, counts candidate records captured into evidence. It is zero when spool setup fails before any candidate record can be written, even though the update may still roll back. If manifest recovery fails before any count is known and no earlier count was recorded, the field is omitted rather than reporting a false zero; a previously known count is preserved.
+- `failedCandidates`, when present, counts candidate records captured into evidence. It is zero when spool setup fails before any candidate record can be written, even though the update may still roll back. If manifest recovery fails before any count is known and no earlier count was recorded, the field is omitted rather than reporting a false zero; a previously known count, including zero, is preserved.
 - Summary metadata is bounded: at most 32 service records, 4 capture errors per service, 256 characters per metadata text field, 16 top-level errors, and 512 characters per top-level error. If any item is omitted or shortened, `errors` includes a bounded note. A known `failedCandidates` value still reports the full total; the limits do not apply to the downloadable archive manifest or raw log bytes.
 - Docker `State.Error` is omitted from this ordinary job summary because runtime details may be sensitive. Its original value remains only in the private evidence archive manifest returned through the authorized download endpoint.
 - `absent` omits the archive metadata from jobs that produced no failed candidate evidence.

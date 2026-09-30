@@ -23,7 +23,7 @@
 6. Completed the Job Detail download affordance; focused and environment-dependent validation is tracked by the delivery gate.
 
 - Spool initialization failures now use the same bounded top-level error projection as archive persistence failures, including the truncation note for overlong messages.
-- Evidence summaries count only candidates whose evidence capture was actually established; recovery preserves a previously recorded candidate total when a manifest cannot be read, and omits the field when no count is known rather than inventing zero.
+- Evidence summaries count only candidates whose evidence capture was actually established; recovery preserves a previously recorded candidate total, including zero, when a manifest cannot be read, and omits the field when no count is known rather than inventing zero.
 - Docker `State.Error` is retained in the private archive manifest but excluded from ordinary job-summary metadata because the runtime value may contain sensitive details.
 - Interrupted update-backup recovery claims snapshots atomically; successful recovery commits job terminalization with snapshot clearing, terminal jobs are not rearmed within the same process, while snapshots left by an interrupted restore are reclaimed on the next startup.
 - Successful deferred update-stop recovery removes a stale `recoveryError` from the new terminal summary while retaining unrelated prior summary fields.
@@ -32,7 +32,7 @@
 
 ## Validation Evidence
 
-- The current repair candidate passed `cargo test --workspace --locked --all-features` on the shared Linux testbox: `dockrev-api` 1047 passed and 1 ignored, `dockrev-common` 1 passed, and `dockrev-supervisor` 58 passed; doctests completed with no tests. The focused rollback-evidence group passed (43 tests), as did the unknown-count recovery, private `State.Error` summary, and post-BLOB summary-transaction failure regressions.
+- The current repair candidate passed `cargo test --workspace --locked --all-features` on the shared Linux testbox: `dockrev-api` 1048 passed and 1 ignored, `dockrev-common` 1 passed, and `dockrev-supervisor` 58 passed; doctests completed with no tests. The focused rollback-evidence group passed (44 tests), including unknown-count recovery, known-zero preservation, private `State.Error` summary, and post-BLOB summary-transaction failure regressions.
 - The same candidate passed `cargo fmt --all -- --check`, `cargo clippy --workspace --all-targets --all-features -- -D warnings`, and `cargo check --workspace --locked --all-targets --all-features`. File-budget, Spec contract, and Spec drift checks pass for this working tree.
 - `bun run lint` passed locally with 0 errors and 3 existing warnings in unrelated frontend files. No frontend files changed; frontend build and Storybook validation are not claimed for this repair batch.
 - Existing regressions also cover retrying final-manifest failure without losing the spool, preserving prior summary metadata, capture errors beyond the service-summary limit, two-start claim retry, atomic terminalization, watchdog partial-output retention, owner-only archive/log files, spool-initialization failure metadata, and summary bounds.

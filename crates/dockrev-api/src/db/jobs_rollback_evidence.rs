@@ -73,13 +73,12 @@ impl Db {
                 summary = serde_json::json!({ "result": summary });
             }
             let previous_evidence = summary["rollbackEvidence"].clone();
-            let recorded_candidate_total = summary["rollbackEvidence"]["failedCandidates"]
-                .as_u64()
-                .unwrap_or_default();
-            let incoming_candidate_total = metadata["failedCandidates"]
-                .as_u64()
-                .unwrap_or_default();
-            if recorded_candidate_total > incoming_candidate_total
+            let recorded_candidate_total =
+                summary["rollbackEvidence"]["failedCandidates"].as_u64();
+            let incoming_candidate_total = metadata["failedCandidates"].as_u64();
+            if let Some(recorded_candidate_total) = recorded_candidate_total
+                && incoming_candidate_total
+                    .is_none_or(|incoming| recorded_candidate_total > incoming)
                 && let Some(metadata) = metadata.as_object_mut()
             {
                 metadata.insert(
