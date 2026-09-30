@@ -114,7 +114,13 @@ async fn service_backup_records_report_stack_wide_retention_metadata() {
 
 #[tokio::test]
 async fn rollback_evidence_api_download_preserves_raw_candidate_logs_end_to_end() {
-    let state = test_state_with_authz(":memory:", Some("alice"), None, false).await;
+    let root = std::env::temp_dir().join(format!(
+        "dockrev-rollback-evidence-api-{}",
+        ulid::Ulid::new()
+    ));
+    std::fs::create_dir_all(&root).expect("test root");
+    let db_path = root.join("dockrev.sqlite3");
+    let state = test_state_with_authz(db_path.to_str().expect("database path"), Some("alice"), None, false).await;
     let job_id = ids::new_job_id();
     let job = crate::api::types::JobRecord::new_running(
         job_id.clone(),
@@ -131,7 +137,6 @@ async fn rollback_evidence_api_download_preserves_raw_candidate_logs_end_to_end(
         &state.config.db_path,
     )
     .expect("evidence spool");
-    let evidence_spool_root = crate::rollback_evidence::spool_root(&state.config.db_path);
     let mut random_state = 0x9e37_79b9_u32;
     let mut expected_logs = (0..(2 * 1024 * 1024 + 173))
         .map(|_| {
@@ -265,7 +270,8 @@ async fn rollback_evidence_api_download_preserves_raw_candidate_logs_end_to_end(
         .to_string()
         .contains("candidate-log-private-marker"));
     tokio::fs::remove_file(downloaded_archive).await.unwrap();
-    let _ = tokio::fs::remove_dir(evidence_spool_root).await;
+    drop(app);
+    let _ = tokio::fs::remove_dir_all(root).await;
 }
 
 #[tokio::test]

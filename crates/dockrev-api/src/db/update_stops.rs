@@ -433,6 +433,46 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn successful_update_stop_recovery_clears_previous_recovery_error() {
+        let db = Db::open(Path::new(":memory:")).await.unwrap();
+        let job_id = "job-recovery-clears-old-error";
+        let mut job = update_job(job_id);
+        job.summary_json["recoveryError"] = serde_json::json!("temporary restore failure");
+        job.summary_json["rollbackEvidence"] = serde_json::json!({
+            "status": "incomplete",
+            "failedCandidates": 1
+        });
+        db.insert_job(job).await.unwrap();
+        db.create_update_stop_control(job_id, "2026-08-16T00:00:00Z")
+            .await
+            .unwrap();
+        db.save_update_stop_recovery_snapshot(
+            job_id,
+            &crate::backup::BackupRecoverySnapshot {
+                stack_id: "stack-1".to_string(),
+                services: vec!["web".to_string()],
+            },
+            "2026-08-16T00:01:00Z",
+        )
+        .await
+        .unwrap();
+
+        db.finish_update_stop_recovery_job(
+            job_id,
+            "cancelled",
+            "2026-08-16T00:03:00Z",
+            &serde_json::json!({"mode": "apply", "recoveredOnStartup": true}),
+        )
+        .await
+        .unwrap();
+
+        let job = db.get_job(job_id).await.unwrap().unwrap();
+        assert_eq!(job.status, "cancelled");
+        assert!(job.summary_json.get("recoveryError").is_none());
+        assert_eq!(job.summary_json["rollbackEvidence"]["status"], "incomplete");
+    }
+
+    #[tokio::test]
     async fn completed_update_stop_recovery_is_not_reclaimed_after_restart() {
         let root = std::env::temp_dir().join(format!(
             "dockrev-update-stop-complete-recovery-{}",

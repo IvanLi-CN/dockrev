@@ -125,6 +125,9 @@ WHERE id = ?1
                         && let Some(obj) = summary_json.as_object_mut()
                     {
                         for (key, value) in previous {
+                            if clear_update_stop_recovery_snapshot && key == "recoveryError" {
+                                continue;
+                            }
                             obj.entry(key.clone()).or_insert_with(|| value.clone());
                         }
                     }
