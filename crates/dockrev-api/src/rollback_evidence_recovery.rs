@@ -214,24 +214,22 @@ pub(super) async fn recover_evidence(
         let checkpoint_count_required = retry_final_manifest
             || evidence_summary["status"] == "incomplete"
                 && evidence_summary.get("failedCandidates").is_some();
-        if checkpoint_count_required {
-            if recorded_candidates != Some(records.len()) {
-                let expected = recorded_candidates
-                    .map(|count| count.to_string())
-                    .unwrap_or_else(|| "a recorded candidate count".to_string());
-                record_recovery_failure(
-                    db,
-                    job_id,
-                    &[],
-                    "validate checkpoint",
-                    format!(
-                        "checkpoint contains {} candidate records; expected {expected}",
-                        records.len()
-                    ),
-                )
-                .await;
-                continue;
-            }
+        if checkpoint_count_required && recorded_candidates != Some(records.len()) {
+            let expected = recorded_candidates
+                .map(|count| count.to_string())
+                .unwrap_or_else(|| "a recorded candidate count".to_string());
+            record_recovery_failure(
+                db,
+                job_id,
+                &[],
+                "validate checkpoint",
+                format!(
+                    "checkpoint contains {} candidate records; expected {expected}",
+                    records.len()
+                ),
+            )
+            .await;
+            continue;
         }
         if retry_final_manifest {
             if records.is_empty() {
