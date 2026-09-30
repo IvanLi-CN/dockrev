@@ -31,8 +31,8 @@
 
 ## Validation Evidence
 
-- The final repair worktree passed `cargo test --workspace --locked --all-features` on the shared Linux testbox: `dockrev-api` 1022 passed and 1 ignored, `dockrev-common` 1 passed, and `dockrev-supervisor` 58 passed; doctests completed with no tests. Focused rollback-evidence tests passed (40 passed), as did the successful update-stop recovery summary regression (1 passed).
-- The same worktree passed `cargo fmt --all -- --check`, `cargo clippy --workspace --all-targets --all-features -- -D warnings`, and `cargo check --workspace --locked --all-targets --all-features`. `git diff --check`, Spec contract/drift checks, and file-budget validation also passed.
+- The rebased candidate passed `cargo test --workspace --locked --all-features` on the shared Linux testbox: `dockrev-api` 1045 passed and 1 ignored, `dockrev-common` 1 passed, and `dockrev-supervisor` 58 passed; doctests completed with no tests. Focused rollback-evidence tests passed (41 passed), including archive-persistence retry preserving complete candidate logs.
+- The same candidate passed `cargo fmt --all -- --check`, `cargo clippy --workspace --all-targets --all-features -- -D warnings`, and `cargo check --workspace --locked --all-targets --all-features`. File-budget and release/spec contract checks passed; Spec drift is rechecked after this implementation record is committed.
 - `bun run lint` passed locally with 0 errors and 3 existing warnings in unrelated frontend files. No frontend files changed; frontend build and Storybook validation are not claimed for this repair batch.
 - Existing regressions also cover retrying final-manifest failure without losing the spool, preserving prior summary metadata, capture errors beyond the service-summary limit, two-start claim retry, atomic terminalization, watchdog partial-output retention, owner-only archive/log files, spool-initialization failure metadata, and summary bounds.
 
@@ -43,7 +43,7 @@
 
 ## Related Changes
 
-- Runtime: `crates/dockrev-api/src/rollback_evidence.rs`, `crates/dockrev-api/src/rollback_evidence_archive.rs`, updater, DB, API, and Job Detail integration.
+- Runtime: `crates/dockrev-api/src/rollback_evidence.rs`, `crates/dockrev-api/src/rollback_evidence_archive.rs`, `crates/dockrev-api/src/db/jobs_rollback_evidence.rs`, updater, DB, API, and Job Detail integration.
 - Data/API contracts: `./contracts/db.md`, `./contracts/http-api.md`.
 
 ## References
