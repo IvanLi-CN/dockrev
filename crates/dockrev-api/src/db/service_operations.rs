@@ -12,6 +12,7 @@ struct ServiceOperationBaseline<'a> {
     image_reference: Option<&'a str>,
     configured_tag: Option<&'a str>,
     accepted_state_generation: Option<i64>,
+    require_unarchived: bool,
 }
 
 #[derive(Clone, Copy)]
@@ -299,6 +300,8 @@ WHERE id = ?1
         });
         let expected_accepted_state_generation =
             expected_baseline.and_then(|baseline| baseline.accepted_state_generation);
+        let require_unarchived =
+            expected_baseline.is_some_and(|baseline| baseline.require_unarchived);
         let auto_policy_guard = auto_policy_guard.cloned();
         let outcome = self
             .call(move |conn| {
@@ -457,6 +460,29 @@ WHERE id = ?1 AND status <> 'superseded'
                         }
                         tx.commit()?;
                         return Ok(ServiceOperationAcquireOutcome::StaleAutoPolicy);
+                    }
+                }
+                if require_unarchived {
+                    for target in &targets {
+                        let active = tx
+                            .query_row(
+                                r#"
+SELECT EXISTS (
+  SELECT 1
+  FROM services sv
+  JOIN stacks st ON st.id = sv.stack_id
+  WHERE sv.id = ?1
+    AND sv.stack_id = ?2
+    AND sv.archived = 0
+    AND st.archived = 0
+)
+"#,
+                                params![target.service_id, target.stack_id],
+                                |row| row.get::<_, bool>(0),
+                            )?;
+                        if !active {
+                            return Ok(ServiceOperationAcquireOutcome::StaleCurrentDigest);
+                        }
                     }
                 }
                 if let Some(conflict) = find_blocking_job_tx(&tx, &targets)? {
@@ -832,6 +858,7 @@ WHERE id = ?1 AND accepted_state_generation = ?2 AND accepted_state_generation %
                     image_reference: None,
                     configured_tag: None,
                     accepted_state_generation: None,
+                    require_unarchived: false,
                 }),
                 None,
             )
@@ -863,6 +890,7 @@ WHERE id = ?1 AND accepted_state_generation = ?2 AND accepted_state_generation %
                     image_reference: Some(baseline.image_reference),
                     configured_tag: Some(baseline.configured_tag),
                     accepted_state_generation: Some(baseline.accepted_state_generation),
+                    require_unarchived: true,
                 }),
                 None,
             )
@@ -893,6 +921,7 @@ WHERE id = ?1 AND accepted_state_generation = ?2 AND accepted_state_generation %
                 image_reference: None,
                 configured_tag: None,
                 accepted_state_generation: None,
+                require_unarchived: false,
             }),
             Some(&guard),
         )

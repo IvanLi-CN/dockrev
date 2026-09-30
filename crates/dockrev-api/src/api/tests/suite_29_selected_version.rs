@@ -40,6 +40,18 @@ struct InferenceRaceSelectedVersionRegistry {
     update_on_manifest: Arc<std::sync::Mutex<Option<(Db, String)>>>,
 }
 
+#[derive(Clone)]
+enum SelectedVersionArchiveTarget {
+    Service(String),
+    Stack(String),
+}
+
+#[derive(Clone)]
+struct ArchiveRaceSelectedVersionRegistry {
+    archive_on_manifest:
+        Arc<std::sync::Mutex<Option<(Db, SelectedVersionArchiveTarget)>>>,
+}
+
 #[async_trait::async_trait]
 impl RegistryClient for InferenceRaceSelectedVersionRegistry {
     async fn list_tags(&self, _image: &ImageRef) -> anyhow::Result<Vec<String>> {
@@ -78,6 +90,42 @@ impl RegistryClient for InferenceRaceSelectedVersionRegistry {
         }
         SelectedVersionRegistry
             .get_manifest(_image, reference, host_platform)
+            .await
+    }
+}
+
+#[async_trait::async_trait]
+impl RegistryClient for ArchiveRaceSelectedVersionRegistry {
+    async fn list_tags(&self, image: &ImageRef) -> anyhow::Result<Vec<String>> {
+        SelectedVersionRegistry.list_tags(image).await
+    }
+
+    async fn get_manifest(
+        &self,
+        image: &ImageRef,
+        reference: &str,
+        host_platform: &str,
+    ) -> anyhow::Result<ManifestInfo> {
+        let pending_archive = if reference == selected_version_digest('7') {
+            self.archive_on_manifest.lock().unwrap().take()
+        } else {
+            None
+        };
+        if let Some((db, target)) = pending_archive {
+            let now = test_now_rfc3339();
+            match target {
+                SelectedVersionArchiveTarget::Service(service_id) => {
+                    db.set_service_archived(&service_id, true, Some("test"), &now)
+                        .await?;
+                }
+                SelectedVersionArchiveTarget::Stack(stack_id) => {
+                    db.set_stack_archived(&stack_id, true, Some("test"), &now)
+                        .await?;
+                }
+            }
+        }
+        SelectedVersionRegistry
+            .get_manifest(image, reference, host_platform)
             .await
     }
 }
@@ -846,6 +894,86 @@ async fn selected_version_submit_rejects_same_digest_version_inference_race() {
         .unwrap()
         .iter()
         .all(|job| job.r#type.as_str() != "update"));
+}
+
+#[tokio::test]
+async fn selected_version_submit_rejects_service_or_stack_archived_during_registry_lookup() {
+    for archive_stack in [false, true] {
+        let archive_on_manifest = Arc::new(std::sync::Mutex::new(None));
+        let state = test_state_with(
+            ":memory:",
+            Arc::new(ArchiveRaceSelectedVersionRegistry {
+                archive_on_manifest: archive_on_manifest.clone(),
+            }),
+            Arc::new(FakeRunner),
+        )
+        .await;
+        let (stack_id, service_id, _) = selected_version_seed_service(&state).await;
+        let target_digest = selected_version_digest('7');
+        record_selected_version_observation(
+            &state,
+            &service_id,
+            &target_digest,
+            Some("v2.71.37"),
+        )
+        .await;
+        let app = api::router(state.clone());
+
+        let preview_response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri(format!("/api/services/{service_id}/version-update/preview"))
+                    .header("content-type", "application/json")
+                    .body(Body::from(r#"{"releaseTag":"v2.71.37"}"#))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(preview_response.status(), 200);
+        let preview = response_json(preview_response).await;
+
+        let archive_target = if archive_stack {
+            SelectedVersionArchiveTarget::Stack(stack_id.clone())
+        } else {
+            SelectedVersionArchiveTarget::Service(service_id.clone())
+        };
+        *archive_on_manifest.lock().unwrap() = Some((state.db.clone(), archive_target));
+        let submit_response = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri(format!("/api/services/{service_id}/version-update"))
+                    .header("content-type", "application/json")
+                    .body(Body::from(
+                        serde_json::json!({
+                            "releaseTag": preview["releaseTag"],
+                            "classification": preview["classification"],
+                            "targetDigest": preview["targetDigest"],
+                            "currentDigest": preview["currentDigest"],
+                            "currentVersion": preview["currentVersion"],
+                            "imageReference": preview["imageReference"],
+                            "imageRepo": preview["imageRepo"],
+                            "configuredTag": preview["configuredTag"],
+                            "forceConfirmed": false,
+                            "backupMode": "inherit",
+                        })
+                        .to_string(),
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(submit_response.status(), 409);
+        assert!(state
+            .db
+            .list_jobs()
+            .await
+            .unwrap()
+            .iter()
+            .all(|job| job.r#type.as_str() != "update"));
+    }
 }
 
 #[tokio::test]
