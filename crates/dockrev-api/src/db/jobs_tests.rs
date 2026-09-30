@@ -167,6 +167,62 @@ async fn recovery_incomplete_metadata_never_replaces_a_committed_archive_summary
 }
 
 #[tokio::test]
+async fn recovery_does_not_copy_legacy_state_error_or_unbounded_services() {
+    let db = Db::open(Path::new(":memory:")).await.unwrap();
+    let mut legacy_job = job(
+        "job-legacy-evidence-summary",
+        JobType::Update,
+        "running",
+        "2026-01-01T00:00:00Z",
+    );
+    legacy_job.summary_json = serde_json::json!({
+        "rollbackEvidence": {
+            "status": "incomplete",
+            "failedCandidates": 1,
+            "services": [{
+                "serviceId": "s".repeat(300),
+                "candidateId": "candidate-a",
+                "healthStatus": "unhealthy",
+                "stateError": "legacy docker state error private marker",
+                "logsTruncated": true,
+                "captureErrors": vec!["capture error"; 5]
+            }],
+            "errors": []
+        }
+    });
+    db.insert_job(legacy_job).await.unwrap();
+
+    let updated = db
+        .mark_rollback_evidence_incomplete_if_archive_absent(
+            "job-legacy-evidence-summary",
+            &serde_json::json!({
+                "status": "incomplete",
+                "failedCandidates": 1,
+                "services": [],
+                "errors": ["manifest: unreadable"]
+            }),
+        )
+        .await
+        .unwrap();
+
+    assert!(updated);
+    let summary = db
+        .get_job("job-legacy-evidence-summary")
+        .await
+        .unwrap()
+        .unwrap()
+        .summary_json;
+    let services = summary["rollbackEvidence"]["services"].as_array().unwrap();
+    assert_eq!(services.len(), 1);
+    assert!(services[0].get("stateError").is_none());
+    assert_eq!(
+        services[0]["serviceId"].as_str().unwrap().chars().count(),
+        256
+    );
+    assert_eq!(services[0]["captureErrors"].as_array().unwrap().len(), 4);
+}
+
+#[tokio::test]
 async fn recovery_archive_attach_never_replaces_a_committed_archive_or_summary() {
     let root = std::env::temp_dir().join(format!(
         "dockrev-job-evidence-attach-race-{}",

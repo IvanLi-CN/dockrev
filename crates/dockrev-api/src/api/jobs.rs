@@ -269,7 +269,7 @@ pub(super) async fn get_job(
             finished_at: job.finished_at,
             allow_arch_mismatch: job.allow_arch_mismatch,
             backup_mode: job.backup_mode,
-            summary: job.summary_json,
+            summary: crate::rollback_evidence::sanitize_summary_for_api(&job.summary_json),
             progress,
             result_reason,
             stop,

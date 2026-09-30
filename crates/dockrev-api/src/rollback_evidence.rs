@@ -24,6 +24,9 @@ use archive::{
 
 #[path = "rollback_evidence_log_status.rs"]
 mod log_status;
+#[path = "rollback_evidence_summary.rs"]
+mod summary;
+pub(crate) use summary::{sanitize_evidence_metadata, sanitize_summary_for_api};
 #[path = "rollback_evidence_recovery.rs"]
 mod recovery;
 #[cfg(test)]

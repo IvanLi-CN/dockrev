@@ -903,7 +903,7 @@ impl JobListItem {
             finished_at: self.finished_at,
             allow_arch_mismatch: self.allow_arch_mismatch,
             backup_mode: self.backup_mode,
-            summary: self.summary_json,
+            summary: crate::rollback_evidence::sanitize_summary_for_api(&self.summary_json),
             progress,
             result_reason,
         }

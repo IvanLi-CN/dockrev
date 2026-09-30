@@ -72,7 +72,8 @@ impl Db {
             if !summary.is_object() {
                 summary = serde_json::json!({ "result": summary });
             }
-            let previous_evidence = summary["rollbackEvidence"].clone();
+            let mut previous_evidence = summary["rollbackEvidence"].clone();
+            crate::rollback_evidence::sanitize_evidence_metadata(&mut previous_evidence);
             let recorded_candidate_total =
                 summary["rollbackEvidence"]["failedCandidates"].as_u64();
             let incoming_candidate_total = metadata["failedCandidates"].as_u64();

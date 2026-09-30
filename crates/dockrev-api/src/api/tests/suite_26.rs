@@ -275,6 +275,80 @@ async fn rollback_evidence_api_download_preserves_raw_candidate_logs_end_to_end(
 }
 
 #[tokio::test]
+async fn legacy_rollback_evidence_summary_is_sanitized_in_jobs_list_and_detail() {
+    let state = test_state_with_authz(":memory:", Some("alice"), None, false).await;
+    let job_id = "job-legacy-rollback-summary";
+    let private_state_error = "legacy docker state error private marker";
+    let oversized_service_id = "s".repeat(300);
+    let oversized_capture_error = "capture-error".repeat(30);
+    let summary = json!({
+        "rollbackEvidence": {
+            "status": "incomplete",
+            "failedCandidates": 33,
+            "services": (0..33).map(|index| json!({
+                "serviceId": oversized_service_id.clone(),
+                "candidateId": format!("candidate-{index}"),
+                "healthStatus": "unhealthy",
+                "stateError": private_state_error,
+                "logsTruncated": true,
+                "captureErrors": vec![oversized_capture_error.clone(); 5]
+            })).collect::<Vec<_>>(),
+            "errors": vec!["top-level-error".repeat(60); 18]
+        }
+    });
+    insert_update_job_with_summary(
+        &state,
+        job_id,
+        crate::api::types::JobScope::Service,
+        None,
+        None,
+        summary,
+        "2026-09-30T00:00:00Z",
+    )
+    .await;
+    let app = api::router(state);
+
+    let list = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/api/jobs?type=update")
+                .header("X-Forwarded-User", "alice")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(list.status(), 200);
+    let list = response_json(list).await;
+    assert!(!list.to_string().contains(private_state_error));
+    let listed_summary = &list["jobs"][0]["summary"]["rollbackEvidence"];
+    assert_eq!(listed_summary["services"].as_array().unwrap().len(), 32);
+    assert_eq!(listed_summary["services"][0]["serviceId"].as_str().unwrap().chars().count(), 256);
+    assert!(listed_summary["services"][0].get("stateError").is_none());
+    assert_eq!(listed_summary["services"][0]["captureErrors"].as_array().unwrap().len(), 4);
+    assert_eq!(listed_summary["errors"].as_array().unwrap().len(), 16);
+
+    let detail = app
+        .oneshot(
+            Request::builder()
+                .uri(format!("/api/jobs/{job_id}"))
+                .header("X-Forwarded-User", "alice")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(detail.status(), 200);
+    let detail = response_json(detail).await;
+    assert!(!detail.to_string().contains(private_state_error));
+    let detailed_summary = &detail["job"]["summary"]["rollbackEvidence"];
+    assert_eq!(detailed_summary["services"].as_array().unwrap().len(), 32);
+    assert!(detailed_summary["services"][0].get("stateError").is_none());
+    assert_eq!(detailed_summary["errors"].as_array().unwrap().len(), 16);
+}
+
+#[tokio::test]
 async fn interrupted_backup_recovery_remains_retryable_when_job_finalization_fails() {
     let root = std::env::temp_dir().join(format!("dockrev-finish-retry-{}", ulid::Ulid::new()));
     std::fs::create_dir_all(&root).expect("test root");
