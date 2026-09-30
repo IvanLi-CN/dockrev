@@ -1231,7 +1231,7 @@ pub(crate) async fn restore_services_after_failed_apply_unlocked(
     }
     let out = runner
         .run(
-            compose_stack.up_services_no_pull_no_deps_force_recreate(&compose_cfg, services),
+            compose_stack.up_services_no_pull_no_deps(&compose_cfg, services),
             Duration::from_secs(180),
         )
         .await?;

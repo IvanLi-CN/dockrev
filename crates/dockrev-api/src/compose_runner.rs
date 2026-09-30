@@ -95,6 +95,23 @@ impl ComposeStack {
         cmd
     }
 
+    pub fn up_services_no_pull_no_deps(
+        &self,
+        cfg: &ComposeRunnerConfig,
+        services: &[String],
+    ) -> CommandSpec {
+        let mut cmd = self.base_command(cfg);
+        cmd.args.extend([
+            "up".to_string(),
+            "-d".to_string(),
+            "--pull".to_string(),
+            "never".to_string(),
+            "--no-deps".to_string(),
+        ]);
+        cmd.args.extend(services.iter().cloned());
+        cmd
+    }
+
     pub fn stop_services(&self, cfg: &ComposeRunnerConfig, services: &[String]) -> CommandSpec {
         let mut cmd = self.base_command(cfg);
         cmd.args.push("stop".to_string());
@@ -346,6 +363,16 @@ mod tests {
         assert!(cmd.args.windows(2).any(|pair| pair == ["--pull", "never"]));
         assert!(cmd.args.iter().any(|arg| arg == "--no-deps"));
         assert!(cmd.args.iter().any(|arg| arg == "--force-recreate"));
+
+        let recovery = stack.up_services_no_pull_no_deps(&cfg, &["web".to_string()]);
+        assert!(
+            recovery
+                .args
+                .windows(2)
+                .any(|pair| pair == ["--pull", "never"])
+        );
+        assert!(recovery.args.iter().any(|arg| arg == "--no-deps"));
+        assert!(!recovery.args.iter().any(|arg| arg == "--force-recreate"));
 
         let rollback = stack.up_service_no_pull(&cfg, "web");
         assert!(rollback.args.iter().any(|arg| arg == "--no-deps"));

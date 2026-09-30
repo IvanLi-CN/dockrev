@@ -31,6 +31,7 @@ The existing `job.summary` may contain `rollbackEvidence` metadata when evidence
 - A successfully completed update with no rollback does not create rollback evidence metadata or an archive download attachment.
 - An archive can be `available` even when an individual service capture is incomplete; that service's metadata explains which collection step failed. `logsTruncated=false` means the command exited successfully, Dockrev reached EOF on the merged stdout/stderr output, and all received bytes were written; `true` means capture did not meet all three conditions or was recovered from an interrupted capture. It does not claim that Docker retained logs already removed by its own rotation.
 - If storing an archive fails, job finalization records `status=incomplete` and a bounded persistence error; unless an archive is already attached, the existing download endpoint returns `404` and the private spool remains available for recovery.
+- Startup binds the API listener before reconstructing legacy evidence archives in the background. An existing job can therefore be readable with `status=incomplete` while recovery is still running; the download endpoint returns `404` until the archive BLOB commits, after which the summary reports `available` and the same authorized endpoint serves it.
 - Jobs without evidence omit `rollbackEvidence`.
 
 ## `GET /api/jobs/{job_id}/rollback-evidence`

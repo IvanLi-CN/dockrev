@@ -1306,6 +1306,7 @@ WHERE id = ?1
             if !summary.is_object() {
                 summary = serde_json::json!({ "result": summary });
             }
+            let previous_evidence = summary["rollbackEvidence"].clone();
             let recorded_candidate_total = summary["rollbackEvidence"]["failedCandidates"]
                 .as_u64()
                 .unwrap_or_default();
@@ -1318,6 +1319,31 @@ WHERE id = ?1
                     serde_json::json!(recorded_candidate_total),
                 );
             }
+            if metadata["services"].as_array().is_some_and(Vec::is_empty)
+                && let Some(previous_services) = previous_evidence["services"].as_array()
+            {
+                metadata["services"] = serde_json::json!(previous_services);
+            }
+            let mut errors = metadata["errors"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .filter_map(serde_json::Value::as_str)
+                .map(str::to_owned)
+                .collect::<Vec<_>>();
+            for error in previous_evidence["errors"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .filter_map(serde_json::Value::as_str)
+            {
+                if !errors.iter().any(|existing| existing == error) {
+                    errors.push(error.to_owned());
+                }
+            }
+            metadata["errors"] = serde_json::json!(
+                crate::rollback_evidence::bounded_summary_errors(errors, false)
+            );
             summary
                 .as_object_mut()
                 .expect("summary was normalized to an object")

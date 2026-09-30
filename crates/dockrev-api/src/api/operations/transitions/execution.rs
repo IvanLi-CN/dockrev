@@ -14,6 +14,17 @@ pub(crate) type UpdateJobOutcome = (
     usize,
 );
 
+async fn clear_recovery_snapshot_after_restore(
+    recovery_store: &dyn BackupRecoveryStore,
+    restore_result: &anyhow::Result<()>,
+) -> anyhow::Result<()> {
+    if restore_result.is_ok() {
+        recovery_store.clear().await
+    } else {
+        Ok(())
+    }
+}
+
 fn mark_archive_metadata_unavailable(
     summary: &mut crate::rollback_evidence::EvidenceSummary,
     error: impl std::fmt::Display,
@@ -641,7 +652,8 @@ pub(crate) async fn run_update_job(
                             .await
                         }
                     };
-                    let cleanup = recovery_store.clear().await;
+                    let cleanup =
+                        clear_recovery_snapshot_after_restore(&recovery_store, &restored).await;
                     final_status = if prepare_stop_requested && restored.is_ok() && cleanup.is_ok() {
                         "cancelled".to_string()
                     } else {
@@ -856,7 +868,8 @@ pub(crate) async fn run_update_job(
                             )
                             .await
                         };
-                        let cleanup = recovery_store.clear().await;
+                        let cleanup =
+                            clear_recovery_snapshot_after_restore(&recovery_store, &restored).await;
                         if let Some(error) = restored.err().or_else(|| cleanup.err()) {
                             outcome.status = "failed".to_string();
                             if let Some(summary) = outcome.summary_json.as_object_mut() {
@@ -1006,7 +1019,8 @@ pub(crate) async fn run_update_job(
                         )
                         .await
                     };
-                    let cleanup = recovery_store.clear().await;
+                    let cleanup =
+                        clear_recovery_snapshot_after_restore(&recovery_store, &restored).await;
                     let recovery_error = restored.err().or_else(|| cleanup.err());
                     final_status = if stop_requested && recovery_error.is_none() {
                         "cancelled".to_string()

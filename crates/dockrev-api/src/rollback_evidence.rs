@@ -120,6 +120,17 @@ fn bounded_summary_services(records: &[EvidenceMetadata]) -> (Vec<EvidenceMetada
     (services, truncated)
 }
 
+pub(crate) fn ordered_capture_errors(records: &[EvidenceMetadata]) -> Vec<String> {
+    let visible_service_count = records.len().min(MAX_SUMMARY_SERVICES);
+    records
+        .iter()
+        .skip(visible_service_count)
+        .chain(records.iter().take(visible_service_count))
+        .flat_map(|record| record.capture_errors.iter().cloned())
+        .take(MAX_SUMMARY_ERRORS + 1)
+        .collect()
+}
+
 pub(crate) fn bounded_summary_errors(
     mut errors: Vec<String>,
     metadata_truncated: bool,
@@ -418,6 +429,15 @@ pub async fn recover_orphaned_evidence(db: &crate::db::Db, db_path: &Path) {
 
 pub async fn recover_startup_interrupted_evidence(db: &crate::db::Db, db_path: &Path) {
     Box::pin(recovery::recover_evidence(db, db_path, true)).await;
+}
+
+pub fn spawn_startup_interrupted_evidence_recovery(
+    db: crate::db::Db,
+    db_path: PathBuf,
+) -> tokio::task::JoinHandle<()> {
+    tokio::spawn(async move {
+        recover_startup_interrupted_evidence(&db, &db_path).await;
+    })
 }
 
 pub fn derive_deadline(policy: &HealthPolicy, poll_interval: Duration) -> Duration {

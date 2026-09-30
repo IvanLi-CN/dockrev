@@ -359,7 +359,6 @@ async fn main() -> anyhow::Result<()> {
             }
         }
     });
-    rollback_evidence::recover_startup_interrupted_evidence(&state.db, &state.config.db_path).await;
     let host_platform = registry::host_platform_override(state.config.host_platform.as_deref())
         .unwrap_or_else(|| "linux/amd64".to_string());
     state.snapshot_worker.spawn_startup_warmup(&host_platform);
@@ -396,6 +395,10 @@ async fn main() -> anyhow::Result<()> {
     // Recovery owns only the services recorded before a pre-apply backup stopped them. It is
     // deliberately detached from startup so a failed restore cannot prevent Dockrev serving.
     tokio::spawn(api::recover_interrupted_update_backups(state.clone()));
+    rollback_evidence::spawn_startup_interrupted_evidence_recovery(
+        state.db.clone(),
+        state.config.db_path.clone(),
+    );
     spawn_managed_override_recovery(state.clone());
 
     axum::serve(listener, app)

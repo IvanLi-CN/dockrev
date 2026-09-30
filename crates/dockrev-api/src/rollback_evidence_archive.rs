@@ -10,7 +10,7 @@ use crate::backup_helper;
 
 use super::{
     CAPTURE_INTERRUPTED_REASON, EvidenceMetadata, EvidenceSummary, RollbackEvidenceContext,
-    bounded_summary_errors, bounded_summary_services,
+    bounded_summary_errors, bounded_summary_services, ordered_capture_errors,
 };
 
 pub(super) async fn finalize(context: &RollbackEvidenceContext) -> EvidenceSummary {
@@ -57,10 +57,7 @@ pub(super) async fn finalize(context: &RollbackEvidenceContext) -> EvidenceSumma
             ),
         };
     }
-    let mut errors = records
-        .iter()
-        .flat_map(|record| record.capture_errors.iter().cloned())
-        .collect::<Vec<_>>();
+    let mut errors = ordered_capture_errors(&records);
     let archive_path = spool.with_extension("tar.zst");
     let archive_part = spool.with_extension("tar.zst.part");
     if let Err(error) = write_manifest(&spool, &records).await {

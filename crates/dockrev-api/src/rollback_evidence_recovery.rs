@@ -191,9 +191,7 @@ pub(super) async fn recover_evidence(
                 }
             }
         }
-        if terminal && has_final_manifest_write_failure(&job.summary_json) {
-            continue;
-        }
+        let retry_final_manifest = terminal && has_final_manifest_write_failure(&job.summary_json);
         let manifest = spool.join("manifest.json");
         let manifest_bytes = match tokio::fs::read(&manifest).await {
             Ok(bytes) => bytes,
@@ -209,6 +207,26 @@ pub(super) async fn recover_evidence(
                 continue;
             }
         };
+        if retry_final_manifest {
+            if records.is_empty() {
+                record_recovery_failure(
+                    db,
+                    job_id,
+                    &records,
+                    "rebuild final manifest",
+                    "checkpoint contains no candidate records",
+                )
+                .await;
+                continue;
+            }
+            for record in &mut records {
+                record.logs_truncated = true;
+                let reason = "final manifest write failed; capture completeness is uncertain";
+                if !record.capture_errors.iter().any(|error| error == reason) {
+                    record.capture_errors.push(reason.to_string());
+                }
+            }
+        }
         let capture_interrupted = records.iter().any(|record| {
             record
                 .capture_errors
@@ -220,6 +238,10 @@ pub(super) async fn recover_evidence(
         }
         if let Err(error) = Box::pin(recover_interrupted_capture(&spool, &mut records)).await {
             record_recovery_failure(db, job_id, &records, "recover partial logs", error).await;
+            continue;
+        }
+        if retry_final_manifest && let Err(error) = write_manifest(&spool, &records).await {
+            record_recovery_failure(db, job_id, &records, "rebuild final manifest", error).await;
             continue;
         }
         match cleanup_spool_for_committed_archive(db, job_id, &spool).await {
@@ -244,6 +266,7 @@ pub(super) async fn recover_evidence(
             }
         };
         let (services, services_truncated) = bounded_summary_services(&records);
+        let capture_errors = ordered_capture_errors(&records);
         let summary = EvidenceSummary {
             status: "available",
             failed_candidates: records.len(),
@@ -251,7 +274,7 @@ pub(super) async fn recover_evidence(
             compression: "zstd",
             archive_size_bytes: Some(archive_size_bytes),
             services,
-            errors: bounded_summary_errors(Vec::new(), services_truncated),
+            errors: bounded_summary_errors(capture_errors, services_truncated),
         };
         let metadata = serde_json::to_value(&summary).unwrap_or_else(|_| serde_json::json!({}));
         match db
@@ -390,7 +413,9 @@ async fn record_recovery_failure(
     let mut metadata_truncated = truncate_summary_text(&mut message, MAX_SUMMARY_ERROR_CHARS);
     let (services, services_truncated) = bounded_summary_services(records);
     metadata_truncated |= services_truncated;
-    let errors = bounded_summary_errors(vec![message], metadata_truncated);
+    let mut errors = vec![message];
+    errors.extend(ordered_capture_errors(records));
+    let errors = bounded_summary_errors(errors, metadata_truncated);
     let summary = EvidenceSummary {
         status: "incomplete",
         failed_candidates: records.len(),
@@ -607,6 +632,13 @@ mod tests {
                 "rollbackEvidence": {
                     "status": "incomplete",
                     "failedCandidates": 3,
+                    "services": [{
+                        "serviceId": "service-retained",
+                        "candidateId": "candidate-retained",
+                        "healthStatus": "unhealthy",
+                        "logsTruncated": true,
+                        "captureErrors": ["candidate logs were incomplete"]
+                    }],
                     "errors": ["archive persistence: injected failure"]
                 }
             }),
@@ -625,11 +657,19 @@ mod tests {
         let summary = &job.summary_json["rollbackEvidence"];
         assert_eq!(summary["status"], "incomplete");
         assert_eq!(summary["failedCandidates"], 3);
+        assert_eq!(summary["services"][0]["serviceId"], "service-retained");
         assert!(
             summary["errors"][0]
                 .as_str()
                 .unwrap_or_default()
                 .starts_with("parse manifest:")
+        );
+        assert!(
+            summary["errors"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|error| { error.as_str() == Some("archive persistence: injected failure") })
         );
         assert!(
             db.get_rollback_evidence_archive(job_id)
@@ -771,6 +811,89 @@ mod tests {
             .await,
             expected_logs
         );
+        let _ = tokio::fs::remove_dir_all(root).await;
+    }
+
+    #[tokio::test]
+    async fn recovered_archive_keeps_capture_errors_from_services_beyond_summary_limit() {
+        let root = std::env::temp_dir().join(format!(
+            "dockrev-recovered-summary-late-error-{}",
+            ulid::Ulid::new()
+        ));
+        tokio::fs::create_dir_all(&root).await.expect("test root");
+        let db_path = root.join("dockrev.sqlite");
+        let db = crate::db::Db::open(&db_path).await.expect("db");
+        let job_id = "job-recovered-summary-late-error";
+        insert_running_job(&db, job_id).await;
+        db.finish_job(
+            job_id,
+            "failed",
+            "2026-08-28T00:05:00Z",
+            &serde_json::json!({}),
+        )
+        .await
+        .expect("finish job");
+
+        let mut records = (0..MAX_SUMMARY_SERVICES + 1)
+            .map(|index| EvidenceMetadata {
+                service_id: format!("service-{index:02}"),
+                candidate_id: format!("candidate-{index:02}"),
+                health_status: "unhealthy".to_string(),
+                capture_errors: vec![format!("candidate {index} capture failed")],
+                ..Default::default()
+            })
+            .collect::<Vec<_>>();
+        let late_error = "candidate 33 logs capture failed";
+        records[MAX_SUMMARY_SERVICES]
+            .capture_errors
+            .push(late_error.to_string());
+        let spool = spool_root(&db_path).join(job_id);
+        tokio::fs::create_dir_all(&spool).await.expect("spool");
+        write_manifest(&spool, &records)
+            .await
+            .expect("recovery manifest");
+
+        recover_orphaned_evidence(&db, &db_path).await;
+
+        let job = db.get_job(job_id).await.expect("load job").expect("job");
+        assert_eq!(job.summary_json["rollbackEvidence"]["status"], "available");
+        assert_eq!(
+            job.summary_json["rollbackEvidence"]["services"]
+                .as_array()
+                .unwrap()
+                .len(),
+            MAX_SUMMARY_SERVICES
+        );
+        assert!(
+            job.summary_json["rollbackEvidence"]["errors"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|error| error.as_str() == Some(late_error))
+        );
+
+        let _ = tokio::fs::remove_dir_all(root).await;
+    }
+
+    #[tokio::test]
+    async fn startup_evidence_recovery_returns_while_archive_scan_is_blocked() {
+        let root = std::env::temp_dir().join(format!(
+            "dockrev-startup-recovery-background-{}",
+            ulid::Ulid::new()
+        ));
+        tokio::fs::create_dir_all(&root).await.expect("test root");
+        let db_path = root.join("dockrev.sqlite");
+        let db = crate::db::Db::open(&db_path).await.expect("db");
+
+        let recovery_guard = EVIDENCE_RECOVERY_LOCK.lock().await;
+        let recovery = super::spawn_startup_interrupted_evidence_recovery(db, db_path);
+        assert!(!recovery.is_finished());
+        drop(recovery_guard);
+        tokio::time::timeout(Duration::from_secs(2), recovery)
+            .await
+            .expect("background recovery should finish")
+            .expect("recovery task should not panic");
+
         let _ = tokio::fs::remove_dir_all(root).await;
     }
 }
