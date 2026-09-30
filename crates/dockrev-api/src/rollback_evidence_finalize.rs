@@ -17,7 +17,7 @@ pub(crate) async fn finish_job_with_evidence_archive(
     notification: Option<&crate::db::NotificationItemDraft>,
 ) -> anyhow::Result<Option<bool>> {
     let Some(archive_path) = archive_path else {
-        let notification_enabled = db
+        let result = db
             .finish_job_with_archive_file_and_settlement_and_notification(
                 job_id,
                 status,
@@ -27,8 +27,11 @@ pub(crate) async fn finish_job_with_evidence_archive(
                 settlements,
                 notification,
             )
-            .await?;
-        return Ok(notification_enabled);
+            .await;
+        if let Some(evidence) = evidence {
+            evidence.release_active_spool_from_recovery();
+        }
+        return result;
     };
 
     let notification_enabled = match db
@@ -45,7 +48,7 @@ pub(crate) async fn finish_job_with_evidence_archive(
     {
         Ok(notification_enabled) => notification_enabled,
         Err(error) => {
-            return finish_after_archive_error(
+            let result = finish_after_archive_error(
                 db,
                 job_id,
                 status,
@@ -57,11 +60,16 @@ pub(crate) async fn finish_job_with_evidence_archive(
                 error,
             )
             .await;
+            if let Some(evidence) = evidence {
+                evidence.release_active_spool_from_recovery();
+            }
+            return result;
         }
     };
     if let Some(evidence) = evidence {
         let archive_lookup = db.rollback_evidence_archive_size(job_id).await;
         cleanup_evidence_after_archive_lookup(job_id, Some(evidence), archive_lookup).await;
+        evidence.release_active_spool_from_recovery();
     }
     Ok(notification_enabled)
 }
@@ -145,7 +153,10 @@ pub(crate) fn initialize_evidence_context(
         return (None, None);
     }
     match RollbackEvidenceContext::new(job_id, db_path) {
-        Ok(context) => (Some(context), None),
+        Ok(mut context) => {
+            context.protect_active_spool_from_recovery();
+            (Some(context), None)
+        }
         Err(error) => {
             tracing::warn!(job_id = %job_id, error = %error, "rollback evidence spool unavailable");
             (None, Some(bounded_error("spool setup", &error)))

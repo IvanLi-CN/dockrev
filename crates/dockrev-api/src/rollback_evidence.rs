@@ -22,6 +22,8 @@ use archive::{
     write_capture, write_manifest,
 };
 
+#[path = "rollback_evidence_activity.rs"]
+mod activity;
 #[path = "rollback_evidence_log_status.rs"]
 mod log_status;
 #[path = "rollback_evidence_summary.rs"]
@@ -57,6 +59,7 @@ pub struct RollbackEvidenceContext {
     root: PathBuf,
     records: Arc<Mutex<BTreeMap<String, EvidenceMetadata>>>,
     manifest_lock: Arc<tokio::sync::Mutex<()>>,
+    recovery_activity: Option<Arc<activity::ActiveSpool>>,
 }
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
@@ -179,6 +182,7 @@ impl RollbackEvidenceContext {
             root,
             records: Arc::new(Mutex::new(BTreeMap::new())),
             manifest_lock: Arc::new(tokio::sync::Mutex::new(())),
+            recovery_activity: None,
         })
     }
 

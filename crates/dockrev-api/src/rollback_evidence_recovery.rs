@@ -168,6 +168,13 @@ pub(super) async fn recover_evidence(
         let Some(job_id) = spool.file_name().and_then(|name| name.to_str()) else {
             continue;
         };
+        if super::activity::is_active(&spool) {
+            tracing::debug!(
+                job_id,
+                "skipping rollback evidence recovery for active update"
+            );
+            continue;
+        }
         if let Err(error) = set_owner_only(&spool) {
             tracing::warn!(path = %spool.display(), error = %error, "could not protect rollback evidence recovery spool");
             continue;
@@ -331,6 +338,10 @@ pub(super) async fn recover_evidence(
         }
     }
 }
+
+#[cfg(test)]
+#[path = "rollback_evidence_recovery_activity_tests.rs"]
+mod activity_tests;
 
 fn has_final_manifest_write_failure(summary: &Value) -> bool {
     summary["rollbackEvidence"]["status"] == "incomplete"

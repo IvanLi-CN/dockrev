@@ -196,7 +196,7 @@ async fn rollback_evidence_api_download_preserves_raw_candidate_logs_end_to_end(
     assert!(!evidence.job_spool_path().exists());
     assert!(!archive_path.exists());
 
-    let app = api::router(state);
+    let app = api::router(state.clone());
     let unauthorized = app
         .clone()
         .oneshot(
@@ -269,6 +269,42 @@ async fn rollback_evidence_api_download_preserves_raw_candidate_logs_end_to_end(
     assert!(!detail_json
         .to_string()
         .contains("candidate-log-private-marker"));
+
+    state
+        .db
+        .insert_job_log(
+            &job_id,
+            &crate::api::types::JobLogLine {
+                ts: "2026-08-28T00:02:00Z".to_string(),
+                level: "info".to_string(),
+                msg: "rollback evidence archive attached".to_string(),
+            },
+        )
+        .await
+        .unwrap();
+    let event_response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri(format!("/api/jobs/{job_id}/events"))
+                .header("X-Forwarded-User", "alice")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(event_response.status(), 200);
+    let mut event_body = event_response.into_body();
+    let event = wait_for_sse_event(
+        &mut event_body,
+        "job_log",
+        std::time::Duration::from_secs(2),
+    )
+    .await;
+    let event_json: serde_json::Value = serde_json::from_str(&event.data).unwrap();
+    assert_eq!(event_json["msg"], "rollback evidence archive attached");
+    assert!(!event.data.contains("candidate-log-private-marker"));
+
     tokio::fs::remove_file(downloaded_archive).await.unwrap();
     drop(app);
     let _ = tokio::fs::remove_dir_all(root).await;
