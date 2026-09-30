@@ -232,6 +232,8 @@ pub(super) async fn recover_evidence(
                 .await;
                 continue;
             }
+        }
+        if retry_final_manifest {
             if records.is_empty() {
                 record_recovery_failure(
                     db,
@@ -951,6 +953,86 @@ mod tests {
                     .is_some_and(|error| error.starts_with("validate checkpoint:"))
             })
         }));
+    }
+
+    #[tokio::test]
+    async fn archive_persistence_retry_preserves_complete_candidate_logs() {
+        let root = std::env::temp_dir().join(format!(
+            "dockrev-archive-retry-preserves-complete-logs-{}",
+            ulid::Ulid::new()
+        ));
+        tokio::fs::create_dir_all(&root).await.expect("test root");
+        let db_path = root.join("dockrev.sqlite");
+        let db = crate::db::Db::open(&db_path).await.expect("db");
+        let job_id = "job-archive-retry-preserves-complete-logs";
+        insert_running_job(&db, job_id).await;
+        db.finish_job(
+            job_id,
+            "failed",
+            "2026-08-28T00:05:00Z",
+            &serde_json::json!({
+                "rollbackEvidence": {
+                    "status": "incomplete",
+                    "failedCandidates": 1,
+                    "errors": ["archive persistence: injected failure"]
+                }
+            }),
+        )
+        .await
+        .expect("finish job");
+        let spool = spool_root(&db_path).join(job_id);
+        let candidate_dir = spool.join("service-a").join("candidate-a");
+        tokio::fs::create_dir_all(&candidate_dir)
+            .await
+            .expect("candidate directory");
+        tokio::fs::write(
+            candidate_dir.join("container.log"),
+            b"complete candidate output\n",
+        )
+        .await
+        .expect("candidate log");
+        write_manifest(
+            &spool,
+            &[EvidenceMetadata {
+                service_id: "service-a".to_string(),
+                candidate_id: "candidate-a".to_string(),
+                health_status: "unhealthy".to_string(),
+                logs_truncated: false,
+                ..Default::default()
+            }],
+        )
+        .await
+        .expect("checkpoint");
+
+        recover_orphaned_evidence(&db, &db_path).await;
+
+        let job = db.get_job(job_id).await.expect("load job").expect("job");
+        let summary = &job.summary_json["rollbackEvidence"];
+        let archive_exists = db
+            .get_rollback_evidence_archive(job_id)
+            .await
+            .expect("read archive")
+            .is_some();
+
+        drop(db);
+        let _ = tokio::fs::remove_dir_all(root).await;
+        assert!(
+            archive_exists,
+            "archive persistence retry should attach evidence"
+        );
+        assert_eq!(summary["status"], "available");
+        assert_eq!(summary["services"][0]["logsTruncated"], false);
+        assert!(
+            summary["services"][0]["captureErrors"]
+                .as_array()
+                .is_some_and(|errors| {
+                    !errors.iter().any(|error| {
+                        error
+                            .as_str()
+                            .is_some_and(|error| error.contains("final manifest write failed"))
+                    })
+                })
+        );
     }
 
     #[tokio::test]
