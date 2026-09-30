@@ -1164,3 +1164,69 @@ async fn normal_selected_version_submit_persists_exact_digest_and_tag_pull_polic
         serde_json::from_value(target.clone()).unwrap();
     assert!(recovered_target.skip_target_tag_pull);
 }
+
+#[tokio::test]
+async fn confirmed_forced_selected_version_submit_persists_resolved_digest() {
+    let state = test_state_with(
+        ":memory:",
+        Arc::new(SelectedVersionRegistry),
+        Arc::new(PendingSelectedVersionRunner),
+    )
+    .await;
+    let (_, service_id, _) = selected_version_seed_service(&state).await;
+    let app = api::router(state.clone());
+    let preview_response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri(format!("/api/services/{service_id}/version-update/preview"))
+                .header("content-type", "application/json")
+                .body(Body::from(r#"{"releaseTag":"v2.71.38"}"#))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(preview_response.status(), 200);
+    let preview = response_json(preview_response).await;
+    assert_eq!(preview["classification"], "forced");
+    assert_eq!(preview["targetDigest"], selected_version_digest('8'));
+
+    let submit_response = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri(format!("/api/services/{service_id}/version-update"))
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    serde_json::json!({
+                        "releaseTag": preview["releaseTag"],
+                        "classification": preview["classification"],
+                        "targetDigest": preview["targetDigest"],
+                        "currentDigest": preview["currentDigest"],
+                        "currentVersion": preview["currentVersion"],
+                        "imageReference": preview["imageReference"],
+                        "imageRepo": preview["imageRepo"],
+                        "configuredTag": preview["configuredTag"],
+                        "forceConfirmed": true,
+                        "backupMode": "inherit",
+                    })
+                    .to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(submit_response.status(), 200);
+    let submitted = response_json(submit_response).await;
+    let job = state
+        .db
+        .get_job(submitted["jobId"].as_str().unwrap())
+        .await
+        .unwrap()
+        .unwrap();
+    let target = &job.summary_json["targets"][0];
+    assert_eq!(target["targetTag"], "latest");
+    assert_eq!(target["targetDigest"], selected_version_digest('8'));
+    assert_eq!(target["skipTargetTagPull"], true);
+}
