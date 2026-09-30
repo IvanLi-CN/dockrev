@@ -23,7 +23,8 @@ impl RegistryClient for SelectedVersionRegistry {
             let byte = match reference {
                 "v2.71.37" => '7',
                 "v2.71.38" => '8',
-                _ => '9',
+                "latest" => '9',
+                _ => anyhow::bail!("unknown test image reference: {reference}"),
             };
             format!("sha256:{}", byte.to_string().repeat(64))
         };
@@ -32,6 +33,57 @@ impl RegistryClient for SelectedVersionRegistry {
             platform_digest: None,
             arch: vec!["linux/amd64".to_string()],
         })
+    }
+}
+
+#[derive(Clone, Default)]
+struct UnknownArchitectureSelectedVersionRegistry;
+
+#[async_trait::async_trait]
+impl RegistryClient for UnknownArchitectureSelectedVersionRegistry {
+    async fn list_tags(&self, image: &ImageRef) -> anyhow::Result<Vec<String>> {
+        SelectedVersionRegistry.list_tags(image).await
+    }
+
+    async fn get_manifest(
+        &self,
+        image: &ImageRef,
+        reference: &str,
+        host_platform: &str,
+    ) -> anyhow::Result<ManifestInfo> {
+        let mut manifest = SelectedVersionRegistry
+            .get_manifest(image, reference, host_platform)
+            .await?;
+        manifest.arch.clear();
+        Ok(manifest)
+    }
+}
+
+#[derive(Clone, Default)]
+struct InvalidDigestSelectedVersionRegistry;
+
+#[async_trait::async_trait]
+impl RegistryClient for InvalidDigestSelectedVersionRegistry {
+    async fn list_tags(&self, image: &ImageRef) -> anyhow::Result<Vec<String>> {
+        SelectedVersionRegistry.list_tags(image).await
+    }
+
+    async fn get_manifest(
+        &self,
+        image: &ImageRef,
+        reference: &str,
+        host_platform: &str,
+    ) -> anyhow::Result<ManifestInfo> {
+        if reference == "v2.71.38" {
+            return Ok(ManifestInfo {
+                digest: Some("sha256:abc".to_string()),
+                platform_digest: None,
+                arch: vec!["linux/amd64".to_string()],
+            });
+        }
+        SelectedVersionRegistry
+            .get_manifest(image, reference, host_platform)
+            .await
     }
 }
 
@@ -175,17 +227,23 @@ async fn snapshot_version_inference_binds_matching_observations_after_check_comp
     .await;
     let (_, service_id, _) = selected_version_seed_service(&state).await;
     let digest = selected_version_digest('7');
-    record_selected_version_observation(&state, &service_id, &digest, None).await;
+    record_selected_version_observation(
+        &state,
+        &service_id,
+        &digest,
+        Some("15-alpine"),
+    )
+    .await;
 
     let checked_at = test_now_rfc3339();
     let snapshot = serde_json::json!({
         "digest": digest,
-        "tags": ["latest", "v2.71.37"],
+        "tags": ["latest", "15-alpine", "v2.71.37"],
         "checkedAt": checked_at,
         "scan": {
-            "repoTagsTotal": 2,
-            "repoTagsConsidered": 2,
-            "manifestsOk": 2,
+            "repoTagsTotal": 3,
+            "repoTagsConsidered": 3,
+            "manifestsOk": 3,
             "manifestsTimeout": 0,
             "manifestsError": 0,
         },
@@ -1094,6 +1152,160 @@ async fn selected_version_preview_and_submit_reject_target_architecture_mismatch
         .unwrap()
         .iter()
         .all(|job| job.r#type.as_str() != "update"));
+}
+
+#[tokio::test]
+async fn selected_version_preview_and_submit_reject_unknown_target_architecture() {
+    let state = test_state_with(
+        ":memory:",
+        Arc::new(UnknownArchitectureSelectedVersionRegistry),
+        Arc::new(FakeRunner),
+    )
+    .await;
+    let (_, service_id, _) = selected_version_seed_service(&state).await;
+    let app = api::router(state.clone());
+
+    let preview_response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri(format!("/api/services/{service_id}/version-update/preview"))
+                .header("content-type", "application/json")
+                .body(Body::from(r#"{"releaseTag":"v2.71.38"}"#))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(preview_response.status(), 409);
+
+    let submit_response = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri(format!("/api/services/{service_id}/version-update"))
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    serde_json::json!({
+                        "releaseTag": "v2.71.38",
+                        "classification": "forced",
+                        "targetDigest": selected_version_digest('8'),
+                        "currentDigest": selected_version_digest('4'),
+                        "currentVersion": "v2.71.34",
+                        "imageReference": "ghcr.io/acme/web:latest",
+                        "imageRepo": "ghcr.io/acme/web",
+                        "configuredTag": "latest",
+                        "forceConfirmed": true,
+                        "backupMode": "inherit",
+                    })
+                    .to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(submit_response.status(), 409);
+    assert!(state
+        .db
+        .list_jobs()
+        .await
+        .unwrap()
+        .iter()
+        .all(|job| job.r#type.as_str() != "update"));
+}
+
+#[tokio::test]
+async fn selected_version_preview_rejects_unresolvable_release_and_malformed_digest() {
+    let state = test_state_with(
+        ":memory:",
+        Arc::new(InvalidDigestSelectedVersionRegistry),
+        Arc::new(FakeRunner),
+    )
+    .await;
+    let (_, service_id, _) = selected_version_seed_service(&state).await;
+    let app = api::router(state.clone());
+
+    for release_tag in ["v2.71.38", "v2.71.39"] {
+        let response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri(format!("/api/services/{service_id}/version-update/preview"))
+                    .header("content-type", "application/json")
+                    .body(Body::from(
+                        serde_json::json!({ "releaseTag": release_tag }).to_string(),
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), 409, "release tag {release_tag}");
+    }
+    assert!(state
+        .db
+        .list_jobs()
+        .await
+        .unwrap()
+        .iter()
+        .all(|job| job.r#type.as_str() != "update"));
+}
+
+#[tokio::test]
+async fn startup_recovery_fails_selected_version_job_and_releases_its_service_lease() {
+    let state = test_state_with(
+        ":memory:",
+        Arc::new(SelectedVersionRegistry),
+        Arc::new(FakeRunner),
+    )
+    .await;
+    let (stack_id, service_id, _) = selected_version_seed_service(&state).await;
+    let now = test_now_rfc3339();
+    let job_id = ids::new_job_id();
+    let mut job = crate::api::types::JobRecord::new_running(
+        job_id.clone(),
+        crate::api::types::JobType::Update,
+        crate::api::types::JobScope::Service,
+        Some(stack_id.clone()),
+        Some(service_id.clone()),
+        &now,
+    )
+    .to_db();
+    job.reason = "selected-version".to_string();
+    let acquired = state
+        .db
+        .insert_service_operation_job_with_accepted_state_if_unblocked(
+            job,
+            vec![crate::db::ServiceOperationTarget {
+                service_id: service_id.clone(),
+                stack_id,
+            }],
+            None,
+        )
+        .await
+        .unwrap();
+    let crate::db::ServiceOperationAcquireOutcome::Acquired(leases) = acquired else {
+        panic!("selected-version operation lease should be acquired");
+    };
+    let opened_generation = leases[0].opened_generation;
+    assert_eq!(opened_generation % 2, 1);
+
+    let recovered = state
+        .db
+        .recover_incomplete_jobs(&now, "server_restart")
+        .await
+        .unwrap();
+    assert!(recovered.iter().any(|recovered_id| recovered_id == &job_id));
+    let recovered_job = state.db.get_job(&job_id).await.unwrap().unwrap();
+    assert_eq!(recovered_job.status, "failed");
+    let accepted_state = state
+        .db
+        .get_versioned_service_accepted_state(&service_id)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(accepted_state.generation, opened_generation + 1);
+    assert_eq!(accepted_state.generation % 2, 0);
 }
 
 #[tokio::test]

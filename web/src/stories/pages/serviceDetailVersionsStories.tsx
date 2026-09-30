@@ -657,9 +657,9 @@ export const VersionsSectionIntermediateWideActions: ServiceDetailStory = {
       );
       updateAction?.click();
       const doc = canvasElement.ownerDocument;
-      await waitForCondition(() => doc.body.textContent?.includes("确认更新服务 api？") ?? false);
+      await waitForCondition(() => Boolean(doc.querySelector('[role="alertdialog"], [role="dialog"]')));
       findButton(doc, "取消")?.click();
-      await waitForCondition(() => !(doc.body.textContent?.includes("确认更新服务 api？") ?? false));
+      await waitForCondition(() => !doc.querySelector('[role="alertdialog"], [role="dialog"]'));
       expectStory(
         (scrollViewport?.scrollWidth ?? 0) <= (scrollViewport?.clientWidth ?? 0) + 1,
         "unindexed wide cards should not introduce horizontal overflow",
@@ -690,8 +690,17 @@ export const VersionsSectionActionGuard: ServiceDetailStory = {
     findVersionAction(canvasElement, "update", "5.2.3")?.click();
 
     const doc = canvasElement.ownerDocument;
-    await waitForCondition(() => doc.body.textContent?.includes("确认更新服务 api？") ?? false);
-    findButton(doc, "更新")?.click();
+    await waitForCondition(() => Boolean(doc.querySelector('[role="alertdialog"], [role="dialog"]')));
+    let confirmation = doc.querySelector<HTMLElement>('[role="alertdialog"], [role="dialog"]');
+    const isForced = normalizeText(confirmation?.textContent).includes("确认强制更新服务");
+    findButton(confirmation ?? doc, isForced ? "继续强制更新" : "更新")?.click();
+    if (isForced) {
+      await waitForCondition(() => normalizeText(
+        doc.querySelector('[role="alertdialog"], [role="dialog"]')?.textContent,
+      ).includes("再次确认强制更新"));
+      confirmation = doc.querySelector<HTMLElement>('[role="alertdialog"], [role="dialog"]');
+      findButton(confirmation ?? doc, "确认强制更新")?.click();
+    }
 
     await waitForCondition(() => normalizeText(canvasElement.querySelector('[data-service-detail-context="status-summary"]')?.textContent).includes("更新任务提交中"));
     const submittingCandidateIndex = versionsIndexItem(canvasElement, "5.2.3");

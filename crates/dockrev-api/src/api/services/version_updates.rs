@@ -76,7 +76,7 @@ async fn build_service_version_update_preview(
         .image
         .digest
         .as_deref()
-        .and_then(snapshot_worker::normalize_digest)
+        .and_then(snapshot_worker::normalize_digest_identity)
         .ok_or_else(|| ApiError::conflict("current service digest is unavailable"))?;
     let observations = state
         .db
@@ -86,7 +86,7 @@ async fn build_service_version_update_preview(
     let observed_current_version = observations
         .iter()
         .find(|observation| {
-            snapshot_worker::normalize_digest(&observation.digest).as_deref()
+            snapshot_worker::normalize_digest_identity(&observation.digest).as_deref()
                 == Some(current_digest.as_str())
         })
         .and_then(|observation| observation.version.as_deref())
@@ -117,7 +117,8 @@ async fn build_service_version_update_preview(
         .unwrap_or_else(|| "linux/amd64".to_string());
 
     let (classification, target_digest, manifest) = if let Some(observation) = associated {
-        let target_digest = observation.digest.clone();
+        let target_digest = snapshot_worker::normalize_digest_identity(&observation.digest)
+            .ok_or_else(|| ApiError::conflict("observed release digest is invalid"))?;
         let manifest = state
             .registry
             .get_manifest(&image, &target_digest, &host_platform)
@@ -140,7 +141,7 @@ async fn build_service_version_update_preview(
             .digest
             .clone()
             .or(manifest.platform_digest.clone())
-            .and_then(|digest| snapshot_worker::normalize_digest(&digest))
+            .and_then(|digest| snapshot_worker::normalize_digest_identity(&digest))
             .ok_or_else(|| ApiError::conflict("release tag did not resolve to a valid digest"))?;
         (
             ServiceVersionUpdateClassification::Forced,
@@ -149,12 +150,20 @@ async fn build_service_version_update_preview(
         )
     };
 
-    if registry::compute_arch_match(&host_platform, &manifest.arch).as_str() == "mismatch" {
-        return Err(ApiError::conflict(
-            "selected release does not support the host architecture",
-        ));
+    match registry::compute_arch_match(&host_platform, &manifest.arch).as_str() {
+        "match" => {}
+        "mismatch" => {
+            return Err(ApiError::conflict(
+                "selected release does not support the host architecture",
+            ));
+        }
+        _ => {
+            return Err(ApiError::conflict(
+                "selected release architecture could not be verified for the host",
+            ));
+        }
     }
-    let target_digest = snapshot_worker::normalize_digest(&target_digest)
+    let target_digest = snapshot_worker::normalize_digest_identity(&target_digest)
         .ok_or_else(|| ApiError::conflict("selected release digest is invalid"))?;
 
     Ok(BuiltServiceVersionUpdatePreview {
@@ -231,9 +240,9 @@ pub(crate) async fn trigger_service_version_update(
         && req.classification == preview.classification
         && req.image_repo == preview.image_repo
         && req.configured_tag == preview.configured_tag
-        && snapshot_worker::normalize_digest(&req.target_digest).as_deref()
+        && snapshot_worker::normalize_digest_identity(&req.target_digest).as_deref()
             == Some(preview.target_digest.as_str())
-        && snapshot_worker::normalize_digest(&req.current_digest).as_deref()
+        && snapshot_worker::normalize_digest_identity(&req.current_digest).as_deref()
             == Some(preview.current_digest.as_str())
         && req.current_version.trim() == preview.current_version;
     if !same_baseline || req.image_reference != preview.image_reference {

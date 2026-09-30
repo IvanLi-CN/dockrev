@@ -647,11 +647,16 @@ impl CommandRunner for DigestPinnedRunner {
 struct ExplicitTargetDigestSyncRunner {
     step: Mutex<usize>,
     skip_target_tag_pull: bool,
+    calls: Mutex<Vec<(String, Vec<String>)>>,
 }
 
 #[async_trait::async_trait]
 impl CommandRunner for ExplicitTargetDigestSyncRunner {
     async fn run(&self, spec: CommandSpec, _timeout: Duration) -> anyhow::Result<CommandOutput> {
+        self.calls
+            .lock()
+            .unwrap()
+            .push((spec.program.clone(), spec.args.clone()));
         let mut step = self.step.lock().unwrap();
         let out = match *step {
             0 => CommandOutput {
@@ -871,14 +876,21 @@ async fn explicit_target_digest_still_syncs_tag_based_service() {
 #[tokio::test]
 async fn selected_version_skips_target_tag_pull_but_syncs_local_configured_tag() {
     let stack = single_service_stack("ghcr.io/org/web:1.0", None);
+    let override_root = std::env::temp_dir().join(format!(
+        "dockrev-selected-version-override-{}",
+        ulid::Ulid::new()
+    ));
+    std::fs::create_dir_all(&override_root).unwrap();
+    let _override_cleanup = TempDirCleanup(override_root.clone());
     let runner = ExplicitTargetDigestSyncRunner {
         skip_target_tag_pull: true,
         ..Default::default()
     };
-    let mut targets = explicit_targets("svc_1", "1.0", "sha256:explicit", &[]);
+    let target_digest = format!("sha256:{}", "e".repeat(64));
+    let mut targets = explicit_targets("svc_1", "1.0", &target_digest, &[]);
     targets[0].skip_target_tag_pull = true;
 
-    let outcome = run_update_job(
+    let outcome = run_update_job_with_gate_using_root(
         &runner,
         "docker-compose",
         None,
@@ -892,6 +904,10 @@ async fn selected_version_skips_target_tag_pull_but_syncs_local_configured_tag()
         "ui",
         None,
         None,
+        false,
+        &[],
+        None,
+        Some(&override_root),
     )
     .await
     .unwrap();
@@ -899,6 +915,17 @@ async fn selected_version_skips_target_tag_pull_but_syncs_local_configured_tag()
     assert_eq!(outcome.status, "success");
     assert_eq!(outcome.summary_json["targetTagsPulled"], json!([]));
     assert_eq!(*runner.step.lock().unwrap(), 8);
+
+    let override_path = crate::managed_override::managed_override_path(&override_root, &stack.id);
+    let override_path_str = override_path.to_string_lossy().to_string();
+    let override_contents = std::fs::read_to_string(&override_path).unwrap();
+    assert!(override_contents.contains(&format!("ghcr.io/org/web:1.0@{target_digest}")));
+    let commands = runner.calls.lock().unwrap();
+    assert!(commands.iter().any(|(program, args)| {
+        program == "docker-compose"
+            && args.iter().any(|arg| arg == "up")
+            && args.iter().any(|arg| arg == &override_path_str)
+    }));
 }
 
 #[tokio::test]

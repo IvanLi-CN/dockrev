@@ -66,7 +66,7 @@ pub(super) fn record_from_successful_check_summary_tx(
             .get("version")
             .and_then(serde_json::Value::as_str)
             .map(str::trim)
-            .filter(|value| !value.is_empty());
+            .filter(|value| crate::ignore::is_strict_semver(value));
 
         tx.execute(
             r#"
@@ -122,7 +122,7 @@ pub(super) fn bind_version_tx(
         return Ok(());
     };
     let version = version.trim();
-    if version.is_empty() {
+    if !crate::ignore::is_strict_semver(version) {
         return Ok(());
     }
     tx.execute(
@@ -165,6 +165,7 @@ WHERE image_repo = ?1 AND digest = ?2 AND version IS NULL
         let version = tags
             .iter()
             .filter(|tag| tag.trim() != configured_tag.trim())
+            .filter(|tag| crate::ignore::is_strict_semver(tag))
             .filter_map(|tag| crate::ignore::parse_version(tag).map(|parsed| (parsed, tag)))
             .max_by(|left, right| left.0.cmp(&right.0).then_with(|| left.1.cmp(right.1)))
             .map(|(_, tag)| tag.clone());

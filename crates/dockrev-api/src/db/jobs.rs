@@ -974,10 +974,10 @@ LIMIT 1
         let now = now.to_string();
         let reason = reason.to_string();
         self.call(move |conn| {
-            let items: Vec<(String, String, String)> = {
+            let items: Vec<(String, String, String, String)> = {
                 let mut stmt = conn.prepare(
                     r#"
-SELECT id, status, summary_json
+SELECT id, status, summary_json, reason
 FROM jobs
 WHERE finished_at IS NULL
   AND NOT EXISTS (
@@ -987,14 +987,17 @@ WHERE finished_at IS NULL
       AND controls.recovery_snapshot_json IS NOT NULL
       AND controls.recovery_attempted_at IS NULL
   )
-  AND NOT EXISTS (
-    SELECT 1
-    FROM job_service_targets target
-    JOIN services target_service ON target_service.id = target.service_id
-    WHERE target.job_id = jobs.id
-      AND target.opened_generation IS NOT NULL
-      AND target_service.accepted_state_generation = target.opened_generation
-      AND target_service.accepted_state_generation % 2 = 1
+  AND (
+    jobs.reason = 'selected-version'
+    OR NOT EXISTS (
+      SELECT 1
+      FROM job_service_targets target
+      JOIN services target_service ON target_service.id = target.service_id
+      WHERE target.job_id = jobs.id
+        AND target.opened_generation IS NOT NULL
+        AND target_service.accepted_state_generation = target.opened_generation
+        AND target_service.accepted_state_generation % 2 = 1
+    )
   )
 ORDER BY created_at DESC
 LIMIT 2000
@@ -1002,9 +1005,9 @@ LIMIT 2000
                 )?;
 
                 let mut rows = stmt.query([])?;
-                let mut items: Vec<(String, String, String)> = Vec::new();
+                let mut items: Vec<(String, String, String, String)> = Vec::new();
                 while let Some(row) = rows.next()? {
-                    items.push((row.get(0)?, row.get(1)?, row.get(2)?));
+                    items.push((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?));
                 }
                 items
             };
@@ -1016,7 +1019,7 @@ LIMIT 2000
             let tx = conn.transaction()?;
             let mut recovered: Vec<String> = Vec::new();
 
-            for (job_id, status, summary_raw) in items {
+            for (job_id, status, summary_raw, job_reason) in items {
                 if status == "queued" {
                     // queued jobs are not interrupted work; keep them pending for workers.
                     continue;
@@ -1046,6 +1049,9 @@ WHERE id = ?1
 "#,
                         params![job_id, now],
                     )?;
+                    if job_reason == "selected-version" {
+                        release_recovered_selected_version_lease_tx(&tx, &job_id)?;
+                    }
                     recovered.push(job_id);
                     continue;
                 }
@@ -1071,6 +1077,9 @@ WHERE id = ?1
 "#,
                     params![job_id, now, serde_json::to_string(&summary)?],
                 )?;
+                if job_reason == "selected-version" {
+                    release_recovered_selected_version_lease_tx(&tx, &job_id)?;
+                }
                 recovered.push(job_id);
             }
             tx.commit()?;
@@ -1283,6 +1292,38 @@ WHERE id = ?1
         .await
         .context("attach rollback evidence archive")
     }
+}
+
+fn release_recovered_selected_version_lease_tx(
+    tx: &rusqlite::Transaction<'_>,
+    job_id: &str,
+) -> anyhow::Result<()> {
+    tx.execute(
+        r#"
+UPDATE services
+SET accepted_state_generation = (
+  SELECT target.opened_generation + 1
+  FROM job_service_targets target
+  WHERE target.job_id = ?1
+    AND target.service_id = services.id
+)
+WHERE id IN (
+  SELECT target.service_id
+  FROM job_service_targets target
+  WHERE target.job_id = ?1
+    AND target.opened_generation IS NOT NULL
+)
+  AND accepted_state_generation % 2 = 1
+  AND accepted_state_generation = (
+    SELECT target.opened_generation
+    FROM job_service_targets target
+    WHERE target.job_id = ?1
+      AND target.service_id = services.id
+  )
+"#,
+        [job_id],
+    )?;
+    Ok(())
 }
 
 #[cfg(test)]
