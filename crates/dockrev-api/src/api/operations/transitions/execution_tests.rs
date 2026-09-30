@@ -127,9 +127,8 @@ async fn evidence_archive_persistence_failure_still_finishes_job_without_deletin
     let root =
         std::env::temp_dir().join(format!("dockrev-evidence-fallback-{}", ulid::Ulid::new()));
     tokio::fs::create_dir_all(&root).await.expect("test root");
-    let db = crate::db::Db::open(&root.join("dockrev.sqlite"))
-        .await
-        .expect("db");
+    let db_path = root.join("dockrev.sqlite");
+    let db = crate::db::Db::open(&db_path).await.expect("db");
     let job_id = "job-evidence-fallback";
     db.insert_job(
         crate::api::types::JobRecord::new_running(
@@ -176,6 +175,23 @@ async fn evidence_archive_persistence_failure_still_finishes_job_without_deletin
     )
     .await
     .expect("manifest");
+    let archive_path = evidence.archive_path();
+    tokio::fs::write(&archive_path, b"valid archive bytes")
+        .await
+        .expect("archive file");
+    let trigger_conn = rusqlite::Connection::open(&db_path).expect("trigger connection");
+    trigger_conn
+        .execute_batch(
+            r#"
+CREATE TRIGGER fail_evidence_summary_after_blob_write
+BEFORE UPDATE OF summary_json ON jobs
+WHEN NEW.rollback_evidence_tar_zstd IS NOT NULL
+BEGIN
+    SELECT RAISE(ABORT, 'injected summary update failure');
+END;
+"#,
+        )
+        .expect("install post-blob failure trigger");
     let mut summary = serde_json::json!({
         "rollbackEvidence": {
             "status": "available",
@@ -190,7 +206,7 @@ async fn evidence_archive_persistence_failure_still_finishes_job_without_deletin
         "rolled_back",
         "2026-08-28T00:05:00Z",
         &mut summary,
-        Some(evidence.archive_path()),
+        Some(archive_path),
         Some(&evidence),
         None,
         None,
@@ -216,14 +232,19 @@ async fn evidence_archive_persistence_failure_still_finishes_job_without_deletin
     );
     assert_eq!(notification_enabled, None);
     assert!(candidate_dir.join("container.log").exists());
+    assert!(evidence.job_spool_path().exists());
     assert!(
         db.get_rollback_evidence_archive(job_id)
             .await
             .expect("load archive")
             .is_none()
     );
+    trigger_conn
+        .execute_batch("DROP TRIGGER fail_evidence_summary_after_blob_write")
+        .expect("remove post-blob failure trigger");
+    drop(trigger_conn);
 
-    crate::rollback_evidence::recover_orphaned_evidence(&db, &root.join("dockrev.sqlite")).await;
+    crate::rollback_evidence::recover_orphaned_evidence(&db, &db_path).await;
     let recovered_job = db
         .get_job(job_id)
         .await

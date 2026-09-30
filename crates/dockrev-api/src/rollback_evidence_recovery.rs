@@ -196,14 +196,21 @@ pub(super) async fn recover_evidence(
         let manifest_bytes = match tokio::fs::read(&manifest).await {
             Ok(bytes) => bytes,
             Err(error) => {
-                record_recovery_failure(db, job_id, &[], "read manifest", error).await;
+                record_recovery_failure_without_candidate_count(db, job_id, "read manifest", error)
+                    .await;
                 continue;
             }
         };
         let mut records = match serde_json::from_slice::<Vec<EvidenceMetadata>>(&manifest_bytes) {
             Ok(records) => records,
             Err(error) => {
-                record_recovery_failure(db, job_id, &[], "parse manifest", error).await;
+                record_recovery_failure_without_candidate_count(
+                    db,
+                    job_id,
+                    "parse manifest",
+                    error,
+                )
+                .await;
                 continue;
             }
         };
@@ -218,9 +225,10 @@ pub(super) async fn recover_evidence(
             let expected = recorded_candidates
                 .map(|count| count.to_string())
                 .unwrap_or_else(|| "a recorded candidate count".to_string());
-            record_recovery_failure(
+            record_recovery_failure_with_candidate_count(
                 db,
                 job_id,
+                recorded_candidates,
                 &[],
                 "validate checkpoint",
                 format!(
@@ -433,6 +441,34 @@ async fn record_recovery_failure(
     stage: &str,
     error: impl std::fmt::Display,
 ) {
+    record_recovery_failure_with_candidate_count(
+        db,
+        job_id,
+        Some(records.len()),
+        records,
+        stage,
+        error,
+    )
+    .await;
+}
+
+async fn record_recovery_failure_without_candidate_count(
+    db: &crate::db::Db,
+    job_id: &str,
+    stage: &str,
+    error: impl std::fmt::Display,
+) {
+    record_recovery_failure_with_candidate_count(db, job_id, None, &[], stage, error).await;
+}
+
+async fn record_recovery_failure_with_candidate_count(
+    db: &crate::db::Db,
+    job_id: &str,
+    candidate_count: Option<usize>,
+    records: &[EvidenceMetadata],
+    stage: &str,
+    error: impl std::fmt::Display,
+) {
     let mut message = format!("{stage}: {error}");
     let mut metadata_truncated = truncate_summary_text(&mut message, MAX_SUMMARY_ERROR_CHARS);
     let (services, services_truncated) = bounded_summary_services(records);
@@ -442,7 +478,7 @@ async fn record_recovery_failure(
     let errors = bounded_summary_errors(errors, metadata_truncated);
     let summary = EvidenceSummary {
         status: "incomplete",
-        failed_candidates: records.len(),
+        failed_candidates: candidate_count.unwrap_or_default(),
         archive_format: "tar",
         compression: "zstd",
         archive_size_bytes: None,
@@ -452,7 +488,7 @@ async fn record_recovery_failure(
     let metadata = serde_json::to_value(summary).unwrap_or_else(|_| {
         serde_json::json!({
             "status": "incomplete",
-            "failedCandidates": records.len(),
+            "failedCandidates": candidate_count.unwrap_or_default(),
             "archiveFormat": "tar",
             "compression": "zstd",
             "archiveSizeBytes": null,
@@ -460,6 +496,12 @@ async fn record_recovery_failure(
             "errors": ["evidence recovery failed"]
         })
     });
+    let mut metadata = metadata;
+    if candidate_count.is_none()
+        && let Some(metadata) = metadata.as_object_mut()
+    {
+        metadata.remove("failedCandidates");
+    }
     if let Err(error) = db
         .mark_rollback_evidence_incomplete_if_archive_absent(job_id, &metadata)
         .await
@@ -564,13 +606,14 @@ mod tests {
         .expect("finish job");
 
         let long = "x".repeat(2_000);
+        let raw_state_error = "docker state error: credential=private-marker";
         let records = (0..96)
             .map(|_| EvidenceMetadata {
                 service_id: long.clone(),
                 candidate_id: long.clone(),
                 health_status: long.clone(),
                 state_status: Some(long.clone()),
-                state_error: Some(long.clone()),
+                state_error: Some(raw_state_error.to_string()),
                 capture_errors: vec![long.clone(); 12],
                 logs_truncated: true,
                 ..Default::default()
@@ -596,13 +639,8 @@ mod tests {
         let services = summary["services"].as_array().expect("services");
         assert_eq!(services.len(), MAX_SUMMARY_SERVICES);
         for service in services {
-            for field in [
-                "serviceId",
-                "candidateId",
-                "healthStatus",
-                "stateStatus",
-                "stateError",
-            ] {
+            assert!(service["stateError"].is_null());
+            for field in ["serviceId", "candidateId", "healthStatus", "stateStatus"] {
                 if let Some(value) = service[field].as_str() {
                     assert!(value.chars().count() <= MAX_SUMMARY_FIELD_CHARS);
                 }
@@ -619,6 +657,11 @@ mod tests {
                 .expect("serialized summary")
                 .len()
                 < 1024 * 1024
+        );
+        assert!(
+            !serde_json::to_string(summary)
+                .expect("serialized summary")
+                .contains(raw_state_error)
         );
         assert_eq!(
             summary["errors"][0]
@@ -954,6 +997,86 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn manifest_read_failure_without_candidate_count_can_recover_later() {
+        let root = std::env::temp_dir().join(format!(
+            "dockrev-manifest-retry-without-count-{}",
+            ulid::Ulid::new()
+        ));
+        tokio::fs::create_dir_all(&root).await.expect("test root");
+        let db_path = root.join("dockrev.sqlite");
+        let db = crate::db::Db::open(&db_path).await.expect("db");
+        let job_id = "job-manifest-retry-without-count";
+        insert_running_job(&db, job_id).await;
+        db.finish_job(
+            job_id,
+            "failed",
+            "2026-08-28T00:05:00Z",
+            &serde_json::json!({
+                "rollbackEvidence": {
+                    "status": "incomplete",
+                    "errors": ["archive persistence: injected failure"]
+                }
+            }),
+        )
+        .await
+        .expect("finish job");
+        let spool = spool_root(&db_path).join(job_id);
+        tokio::fs::create_dir_all(&spool).await.expect("spool");
+
+        recover_orphaned_evidence(&db, &db_path).await;
+
+        let first_job = db.get_job(job_id).await.expect("load first job").unwrap();
+        assert!(
+            first_job.summary_json["rollbackEvidence"]
+                .get("failedCandidates")
+                .is_none()
+        );
+        let records = [EvidenceMetadata {
+            service_id: "service-a".to_string(),
+            candidate_id: "candidate-a".to_string(),
+            health_status: "unhealthy".to_string(),
+            ..Default::default()
+        }];
+        let candidate_dir = spool.join("service-a").join("candidate-a");
+        tokio::fs::create_dir_all(&candidate_dir)
+            .await
+            .expect("candidate directory");
+        tokio::fs::write(
+            candidate_dir.join("container.log"),
+            b"recovered candidate logs",
+        )
+        .await
+        .expect("candidate log");
+        write_manifest(&spool, &records)
+            .await
+            .expect("recovered manifest");
+
+        recover_orphaned_evidence(&db, &db_path).await;
+
+        let recovered_job = db
+            .get_job(job_id)
+            .await
+            .expect("load recovered job")
+            .unwrap();
+        let archive_exists = db
+            .get_rollback_evidence_archive(job_id)
+            .await
+            .expect("read archive")
+            .is_some();
+        drop(db);
+        let _ = tokio::fs::remove_dir_all(root).await;
+        assert_eq!(
+            recovered_job.summary_json["rollbackEvidence"]["status"],
+            "available"
+        );
+        assert_eq!(
+            recovered_job.summary_json["rollbackEvidence"]["failedCandidates"],
+            1
+        );
+        assert!(archive_exists, "recovered manifest should attach evidence");
+    }
+
+    #[tokio::test]
     async fn archive_persistence_retry_preserves_complete_candidate_logs() {
         let root = std::env::temp_dir().join(format!(
             "dockrev-archive-retry-preserves-complete-logs-{}",
@@ -1102,13 +1225,8 @@ mod tests {
         let services = summary["services"].as_array().expect("services");
         assert_eq!(services.len(), 32);
         for service in services {
-            for field in [
-                "serviceId",
-                "candidateId",
-                "healthStatus",
-                "stateStatus",
-                "stateError",
-            ] {
+            assert!(service["stateError"].is_null());
+            for field in ["serviceId", "candidateId", "healthStatus", "stateStatus"] {
                 if let Some(value) = service[field].as_str() {
                     assert!(value.chars().count() <= 256);
                 }

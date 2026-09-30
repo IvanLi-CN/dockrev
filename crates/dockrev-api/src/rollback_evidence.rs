@@ -42,6 +42,9 @@ const SUMMARY_TRUNCATION_NOTE: &str =
     "rollback evidence summary metadata was truncated to remain bounded";
 
 #[cfg(test)]
+#[path = "rollback_evidence_privacy_tests.rs"]
+mod privacy_tests;
+#[cfg(test)]
 #[path = "rollback_evidence_test_support.rs"]
 mod test_support;
 
@@ -106,9 +109,8 @@ fn bounded_summary_services(records: &[EvidenceMetadata]) -> (Vec<EvidenceMetada
         if let Some(value) = service.state_status.as_mut() {
             truncated |= truncate_summary_text(value, MAX_SUMMARY_FIELD_CHARS);
         }
-        if let Some(value) = service.state_error.as_mut() {
-            truncated |= truncate_summary_text(value, MAX_SUMMARY_FIELD_CHARS);
-        }
+        // Docker state errors can contain runtime details; keep them in the private archive only.
+        service.state_error = None;
         if service.capture_errors.len() > MAX_SUMMARY_CAPTURE_ERRORS {
             service.capture_errors.truncate(MAX_SUMMARY_CAPTURE_ERRORS);
             truncated = true;
@@ -843,6 +845,7 @@ mod tests {
             RollbackEvidenceContext::new("job-summary-bounds", &root.join("dockrev.sqlite"))
                 .expect("evidence context");
         let long = "x".repeat(2_000);
+        let raw_state_error = "docker state error: credential=private-marker";
         let records = (0..34)
             .map(|index| {
                 let (service_id, candidate_id) = if index == 0 {
@@ -858,7 +861,11 @@ mod tests {
                     candidate_id,
                     health_status: long.clone(),
                     state_status: Some(long.clone()),
-                    state_error: Some(long.clone()),
+                    state_error: Some(if index == 0 {
+                        raw_state_error.to_string()
+                    } else {
+                        long.clone()
+                    }),
                     capture_errors: vec![long.clone(); 8],
                     logs_truncated: false,
                     ..Default::default()
@@ -892,7 +899,6 @@ mod tests {
                 Some(service.candidate_id.as_str()),
                 Some(service.health_status.as_str()),
                 service.state_status.as_deref(),
-                service.state_error.as_deref(),
             ]
             .into_iter()
             .flatten()
@@ -907,6 +913,17 @@ mod tests {
                     .all(|error| error.chars().count() <= 256)
             );
         }
+        assert!(
+            summary
+                .services
+                .iter()
+                .all(|service| service.state_error.is_none())
+        );
+        assert!(
+            !serde_json::to_string(&summary)
+                .expect("summary JSON")
+                .contains(raw_state_error)
+        );
         assert!(summary.errors.len() <= 16);
         assert!(
             summary
@@ -927,6 +944,7 @@ mod tests {
         .expect("full archive manifest");
         assert_eq!(manifest.len(), records.len());
         assert_eq!(manifest[0], serde_json::to_value(first).unwrap());
+        assert_eq!(manifest[0]["stateError"], raw_state_error);
         assert_eq!(
             test_support::archive_member(
                 &context.archive_path(),

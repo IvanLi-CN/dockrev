@@ -71,13 +71,14 @@ Docker 的 health policy 由镜像的 `HEALTHCHECK` 定义，也可由 Compose `
 ### REQ-ROLLBACK-011
 - 归档 BLOB 与 `rollbackEvidence` summary 必须在同一数据库事务提交；只有提交成功后才能删除对应 spool。若归档写入失败，DockRev 必须在不带新 archive 的事务中完成既有 job 终态提交，将 evidence summary 标记为 `incomplete` 并记录有界错误；spool 保留供后续恢复，不能静默删除。若 evidence spool 初始化失败且候选健康检查随后触发回滚，任务 summary 必须记录 `rollbackEvidence.status=incomplete` 和有界初始化错误，不得创建下载附件。启动时先运行既有通用 job 恢复，再尝试附加带中断检查点的部分证据；对于仍由既有延后 update-backup recovery 处理的任务，证据可能先于该延后恢复完成而附加。证据恢复本身不改变任务状态，后续状态仍由既有恢复流程决定，并将 `logsTruncated` 保持为 true。若恢复清单、partial log、归档重建、归档大小读取或归档附加失败，job summary 必须在 archive BLOB 不存在时记录 `rollbackEvidence.status=incomplete` 与有界原因，并保留 spool；若 archive BLOB 已存在，不得以恢复失败元数据覆盖现有归档状态。对于已有 archive BLOB 的终态 job，恢复必须在读取 manifest 前清理残余 spool、本地归档和 part 文件，避免损坏或缺失的 manifest 使原始日志副本滞留。
 - 启动恢复必须在 API listener 成功绑定后以后台任务执行；旧 job 的 evidence summary 可以先显示 `incomplete`，下载 endpoint 在 archive BLOB 提交前返回 `404`，归档成功附加后才转为 `available`。这项后台任务必须与其他证据恢复扫描使用同一串行化边界。
-- 终态恢复读取的 checkpoint 记录数必须与 incomplete summary 中已有的 `failedCandidates` 一致；数量不一致时不得将旧 checkpoint 附加为可下载归档，必须保留已有服务元数据、候选总数和 spool，并记录有界校验错误。若终态 summary 明确记录最终 manifest 写入失败，恢复只能依据可解析的 checkpoint 重试；该重试标记必须在有界摘要错误合并时保留，直到重试成功。此重试必须保守地将候选 `logsTruncated` 设为 `true`、记录完整性不确定原因并重写 manifest 后再建档。缺失、损坏或仍无法写入时，不得猜测候选记录或附加旧 manifest。
+- 终态恢复读取的 checkpoint 记录数在 incomplete summary 已有 `failedCandidates` 时必须与其一致；数量不一致时不得将旧 checkpoint 附加为可下载归档，必须保留已有服务元数据、候选总数和 spool，并记录有界校验错误。若此前因 manifest 不可读而没有已知计数，则使用当前可解析 checkpoint 的记录数，不得把未知计数伪造为 0。若终态 summary 明确记录最终 manifest 写入失败，恢复只能依据可解析的 checkpoint 重试；该重试标记必须在有界摘要错误合并时保留，直到重试成功。此重试必须保守地将候选 `logsTruncated` 设为 `true`、记录完整性不确定原因并重写 manifest 后再建档。缺失、损坏或仍无法写入时，不得猜测候选记录或附加旧 manifest。
 - 带有 update-stop 恢复快照的 job 必须在每次进程启动时重置上一进程留下的恢复领取标记，并且通用 incomplete-job recovery 不得终结仍持有该快照的 job。专用恢复流程随后重新领取并恢复服务；即使进程在领取快照后、恢复服务前再次退出，下一次启动仍必须重试。恢复成功后，job 终态与恢复快照清除必须在同一数据库事务提交，避免在终结与清除之间退出后再次执行服务恢复。
 ### REQ-ROLLBACK-012
 - 终态 job 的既有保留期清理必须同时删除与该 job 对应的遗留 spool；这属于 job 到期删除，不得产生无主原始日志文件。
 ### REQ-ROLLBACK-013
 - 对带有 archive BLOB 的终态 job，启动恢复必须在读取 manifest 前清理 spool、`.tar.zst` 和 `.tar.zst.part`，包括 spool 目录已缺失的 archive-only/part-only 文件。删除失败时必须记录告警并保留未删副本，不得覆盖已提交的归档状态。恢复附加必须只在 evidence BLOB 尚为空时执行；已有 BLOB 及其 summary 对恢复过程不可覆盖。
-- 每种 `rollbackEvidence` summary（包括常规终结与恢复失败）最多包含 32 条服务记录、每服务最多 4 条捕获错误、每个元数据文本字段最多 256 个字符、最多 16 条顶层错误且每条最多 512 个字符。发生截断时必须附带有界说明并保留失败候选总数。这些上限只适用于 summary；归档 manifest 和已采集日志必须保持原始内容。
+- 每种 `rollbackEvidence` summary（包括常规终结与恢复失败）最多包含 32 条服务记录、每服务最多 4 条捕获错误、每个元数据文本字段最多 256 个字符、最多 16 条顶层错误且每条最多 512 个字符。发生截断时必须附带有界说明并保留已知失败候选总数；若恢复清单无法读取且没有既有计数，不得将未知数写成 0，必须省略 `failedCandidates`，后续恢复不得因此拒绝有效 manifest。这些上限只适用于 summary；归档 manifest 和已采集日志必须保持原始内容。
+- `State.Error` 可能包含 Docker 运行时细节，只能保留在私有 spool/归档 manifest 中，不得进入普通 job summary、列表、详情正文、job log、SSE 或通知；授权下载的完整归档仍保留其原始值。
 - 恢复失败不得用空服务列表或空错误列表抹除先前已记录的有界服务诊断和错误。顶层错误达到限额时，应优先保留因 32 条服务摘要限制而不会显示在服务列表中的候选捕获错误；所有摘要仍遵守上述数量和文本长度限制。
 ### REQ-ROLLBACK-014
 - jobs 列表、通用 job log、SSE 和实时终端不得包含 archive 内容；完整 archive 仅可由现有 `require_user` 授权路径读取。
@@ -85,7 +86,7 @@ Docker 的 health policy 由镜像的 `HEALTHCHECK` 定义，也可由 Compose `
 ### SHOULD
 
 ### REQ-ROLLBACK-015
-- summary 必须包含 `rollbackEvidence` 元数据：状态、已采集并纳入证据的失败候选数、archive format、compression、每服务日志完整性、归档大小和采集/归档错误。它不得包含原始日志正文。
+- summary 必须包含 `rollbackEvidence` 元数据：状态、可确定时的已采集失败候选数、archive format、compression、每服务日志完整性、归档大小和采集/归档错误。它不得包含原始日志正文或 Docker `State.Error`；无法确定失败候选数时省略该字段，不得用 0 代替未知数。
 ### REQ-ROLLBACK-016
 - 状态采集与日志流采集应并行执行；日志采集不得使用固定字节上限，300 秒 watchdog 只用于终止阻塞的日志命令并保护回滚时序。无法完成流式采集时必须独立记录不完整原因，且不阻止既有自动回滚。
 ### REQ-ROLLBACK-017
