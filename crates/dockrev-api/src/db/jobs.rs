@@ -1310,8 +1310,10 @@ WHERE id = ?1
             let recorded_candidate_total = summary["rollbackEvidence"]["failedCandidates"]
                 .as_u64()
                 .unwrap_or_default();
-            if metadata["failedCandidates"].as_u64().unwrap_or_default() == 0
-                && recorded_candidate_total > 0
+            let incoming_candidate_total = metadata["failedCandidates"]
+                .as_u64()
+                .unwrap_or_default();
+            if recorded_candidate_total > incoming_candidate_total
                 && let Some(metadata) = metadata.as_object_mut()
             {
                 metadata.insert(
@@ -1324,21 +1326,39 @@ WHERE id = ?1
             {
                 metadata["services"] = serde_json::json!(previous_services);
             }
-            let mut errors = metadata["errors"]
+            let incoming_errors = metadata["errors"]
                 .as_array()
                 .into_iter()
                 .flatten()
                 .filter_map(serde_json::Value::as_str)
                 .map(str::to_owned)
                 .collect::<Vec<_>>();
-            for error in previous_evidence["errors"]
+            let previous_errors = previous_evidence["errors"]
                 .as_array()
                 .into_iter()
                 .flatten()
                 .filter_map(serde_json::Value::as_str)
+                .map(str::to_owned)
+                .collect::<Vec<_>>();
+            let mut errors = Vec::new();
+            if let Some(primary_error) = incoming_errors.first() {
+                errors.push(primary_error.clone());
+            }
+            for error in previous_errors
+                .iter()
+                .filter(|error| error.starts_with("manifest:"))
             {
-                if !errors.iter().any(|existing| existing == error) {
-                    errors.push(error.to_owned());
+                if !errors.contains(error) {
+                    errors.push(error.clone());
+                }
+            }
+            for error in incoming_errors.iter().skip(1).chain(
+                previous_errors
+                    .iter()
+                    .filter(|error| !error.starts_with("manifest:")),
+            ) {
+                if !errors.contains(error) {
+                    errors.push(error.clone());
                 }
             }
             metadata["errors"] = serde_json::json!(

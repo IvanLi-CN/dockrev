@@ -295,7 +295,7 @@ async fn failed_apply_recovery_restores_managed_override_before_up() {
         assert!(up_call.args.iter().any(|arg| arg == "--pull"));
         assert!(up_call.args.iter().any(|arg| arg == "never"));
         assert!(up_call.args.iter().any(|arg| arg == "--no-deps"));
-        assert!(!up_call.args.iter().any(|arg| arg == "--force-recreate"));
+        assert!(up_call.args.iter().any(|arg| arg == "--force-recreate"));
     }
     std::fs::remove_dir_all(root_with_applied_services).unwrap();
 
@@ -327,42 +327,6 @@ async fn failed_apply_recovery_restores_managed_override_before_up() {
     ));
     assert!(missing_applied_runner.calls.lock().unwrap().is_empty());
     std::fs::remove_dir_all(root_with_missing_applied).unwrap();
-}
-
-#[tokio::test]
-async fn backup_recovery_replay_does_not_force_recreate_restored_services() {
-    let root = std::env::temp_dir().join(format!(
-        "dockrev-backup-recovery-replay-{}",
-        ulid::Ulid::new()
-    ));
-    std::fs::create_dir_all(&root).expect("test root");
-    let runner = FakeRunner::default();
-    let stack = test_stack(Vec::new());
-    let snapshot = BackupRecoverySnapshot {
-        stack_id: stack.id.clone(),
-        services: vec!["web".to_string()],
-    };
-
-    for _ in 0..2 {
-        restore_backup_recovery_snapshot(&runner, "docker-compose", None, &stack, &root, &snapshot)
-            .await
-            .expect("recover prior service state");
-    }
-
-    let calls = runner.calls.lock().unwrap();
-    let up_calls = calls
-        .iter()
-        .filter(|spec| spec.args.iter().any(|arg| arg == "up"))
-        .collect::<Vec<_>>();
-    assert_eq!(up_calls.len(), 2);
-    for call in up_calls {
-        assert!(call.args.windows(2).any(|pair| pair == ["--pull", "never"]));
-        assert!(call.args.iter().any(|arg| arg == "--no-deps"));
-        assert!(!call.args.iter().any(|arg| arg == "--force-recreate"));
-        assert!(call.args.ends_with(&["web".to_string()]));
-    }
-
-    std::fs::remove_dir_all(root).unwrap();
 }
 
 #[tokio::test]

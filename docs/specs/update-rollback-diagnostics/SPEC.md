@@ -71,8 +71,8 @@ Docker 的 health policy 由镜像的 `HEALTHCHECK` 定义，也可由 Compose `
 ### REQ-ROLLBACK-011
 - 归档 BLOB 与 `rollbackEvidence` summary 必须在同一数据库事务提交；只有提交成功后才能删除对应 spool。若归档写入失败，DockRev 必须在不带新 archive 的事务中完成既有 job 终态提交，将 evidence summary 标记为 `incomplete` 并记录有界错误；spool 保留供后续恢复，不能静默删除。若 evidence spool 初始化失败且候选健康检查随后触发回滚，任务 summary 必须记录 `rollbackEvidence.status=incomplete` 和有界初始化错误，不得创建下载附件。启动时先运行既有通用 job 恢复，再尝试附加带中断检查点的部分证据；对于仍由既有延后 update-backup recovery 处理的任务，证据可能先于该延后恢复完成而附加。证据恢复本身不改变任务状态，后续状态仍由既有恢复流程决定，并将 `logsTruncated` 保持为 true。若恢复清单、partial log、归档重建、归档大小读取或归档附加失败，job summary 必须在 archive BLOB 不存在时记录 `rollbackEvidence.status=incomplete` 与有界原因，并保留 spool；若 archive BLOB 已存在，不得以恢复失败元数据覆盖现有归档状态。对于已有 archive BLOB 的终态 job，恢复必须在读取 manifest 前清理残余 spool、本地归档和 part 文件，避免损坏或缺失的 manifest 使原始日志副本滞留。
 - 启动恢复必须在 API listener 成功绑定后以后台任务执行；旧 job 的 evidence summary 可以先显示 `incomplete`，下载 endpoint 在 archive BLOB 提交前返回 `404`，归档成功附加后才转为 `available`。这项后台任务必须与其他证据恢复扫描使用同一串行化边界。
-- 若终态 summary 明确记录最终 manifest 写入失败，恢复只能依据可解析的 checkpoint 重试；重试必须保守地将候选 `logsTruncated` 设为 `true`、记录完整性不确定原因并重写 manifest 后再建档。checkpoint 缺失、损坏或仍无法写入时，不得猜测候选记录或附加旧 manifest，必须保留已有服务元数据、spool 与重试错误。
-- 带有 update-stop 恢复快照的 job 必须在每次进程启动时重置上一进程留下的恢复领取标记，并且通用 incomplete-job recovery 不得终结仍持有该快照的 job。专用恢复流程随后重新领取并恢复服务；即使进程在领取快照后、恢复服务前再次退出，下一次启动仍必须重试。服务恢复使用不带 `--force-recreate` 的 `up --pull never --no-deps`，使已成功但尚未提交 job 终态的重放收敛为无操作。恢复失败不得清除快照；只有恢复成功后才可清除，并且恢复成功时 job 终态与快照清除必须在同一数据库事务提交。
+- 若终态 summary 明确记录最终 manifest 写入失败，恢复只能依据可解析的 checkpoint 重试；该重试标记必须在有界摘要错误合并时保留，直到重试成功。重试必须保守地将候选 `logsTruncated` 设为 `true`、记录完整性不确定原因并重写 manifest 后再建档。checkpoint 记录数必须与 `failedCandidates` 一致；缺失、损坏、数量不一致或仍无法写入时，不得猜测候选记录或附加旧 manifest，必须保留已有服务元数据、候选总数、spool 与重试错误。
+- 带有 update-stop 恢复快照的 job 必须在每次进程启动时重置上一进程留下的恢复领取标记，并且通用 incomplete-job recovery 不得终结仍持有该快照的 job。专用恢复流程随后重新领取并恢复服务；即使进程在领取快照后、恢复服务前再次退出，下一次启动仍必须重试。恢复成功后，job 终态与恢复快照清除必须在同一数据库事务提交，避免在终结与清除之间退出后再次执行服务恢复。
 ### REQ-ROLLBACK-012
 - 终态 job 的既有保留期清理必须同时删除与该 job 对应的遗留 spool；这属于 job 到期删除，不得产生无主原始日志文件。
 ### REQ-ROLLBACK-013
@@ -113,7 +113,6 @@ Docker 的 health policy 由镜像的 `HEALTHCHECK` 定义，也可由 Compose `
 - 日志命令超过 300 秒 watchdog、候选在采集时消失或磁盘写入失败时，既有 rollback 继续执行。若 rollback 成功，job status 为 `rolled_back`。其后的 archive 持久化失败不得阻止该终态提交；summary 使用 `incomplete` 并记录有界错误，spool 保留供启动恢复。`rollbackEvidence.status` 使用 `available`、`incomplete` 或 `absent` 说明归档状态，服务级 `logsTruncated` 标记日志是否未完整捕获。
 - 若进程在 spool 成功、archive 完成前退出，启动恢复依据 job ID 和 spool 状态尝试归档。恢复不得把未成功归档的 spool 当作可删除文件。
 - 若最终 manifest 写入失败，后续恢复必须基于有效 checkpoint 重建 manifest 和归档，并保守标记日志完整性不确定；恢复再次失败时保留 spool，不能把旧 manifest 标记为可用归档。
-- update-stop 服务恢复可能在 Compose 已成功而 job 数据库事务尚未提交时被进程中断；重试必须使用 Compose 期望态协调而不强制重建。若服务恢复本身失败，快照必须保留以供之后重试。
 - 一个批量 update job 可以包含多份失败证据。每个服务的 archive 大小随 Docker 可用日志量增长，并随 job 的既有保留期删除；不存在 Dockrev 侧的日志大小上限。
 
 ## Interfaces and Contracts

@@ -1,37 +1,6 @@
 use super::*;
 use crate::rollback_evidence::RollbackEvidenceContext;
 
-#[derive(Default)]
-struct CountingRecoveryStore(AtomicU32);
-
-#[async_trait::async_trait]
-impl crate::backup::BackupRecoveryStore for CountingRecoveryStore {
-    async fn save(&self, _snapshot: &crate::backup::BackupRecoverySnapshot) -> anyhow::Result<()> {
-        Ok(())
-    }
-
-    async fn clear(&self) -> anyhow::Result<()> {
-        self.0.fetch_add(1, Ordering::Relaxed);
-        Ok(())
-    }
-}
-
-#[tokio::test]
-async fn failed_service_restore_keeps_its_recovery_snapshot() {
-    let store = CountingRecoveryStore::default();
-    let restore_result = Err(anyhow::anyhow!("compose up failed"));
-
-    clear_recovery_snapshot_after_restore(&store, &restore_result)
-        .await
-        .expect("a failed restore should leave recovery pending");
-    assert_eq!(store.0.load(Ordering::Relaxed), 0);
-
-    clear_recovery_snapshot_after_restore(&store, &Ok(()))
-        .await
-        .expect("a successful restore should clear recovery");
-    assert_eq!(store.0.load(Ordering::Relaxed), 1);
-}
-
 fn update_req(mode: UpdateMode) -> TriggerUpdateRequest {
     TriggerUpdateRequest {
         scope: JobScope::Service,

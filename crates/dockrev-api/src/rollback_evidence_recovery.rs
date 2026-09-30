@@ -208,6 +208,26 @@ pub(super) async fn recover_evidence(
             }
         };
         if retry_final_manifest {
+            let recorded_candidates = job.summary_json["rollbackEvidence"]["failedCandidates"]
+                .as_u64()
+                .and_then(|count| usize::try_from(count).ok());
+            if recorded_candidates != Some(records.len()) {
+                let expected = recorded_candidates
+                    .map(|count| count.to_string())
+                    .unwrap_or_else(|| "a recorded candidate count".to_string());
+                record_recovery_failure(
+                    db,
+                    job_id,
+                    &[],
+                    "validate checkpoint",
+                    format!(
+                        "checkpoint contains {} candidate records; expected {expected}",
+                        records.len()
+                    ),
+                )
+                .await;
+                continue;
+            }
             if records.is_empty() {
                 record_recovery_failure(
                     db,
@@ -680,6 +700,178 @@ mod tests {
 
         drop(db);
         let _ = tokio::fs::remove_dir_all(root).await;
+    }
+
+    #[tokio::test]
+    async fn final_manifest_retry_marker_survives_summary_error_limit() {
+        let root = std::env::temp_dir().join(format!(
+            "dockrev-final-manifest-retry-marker-{}",
+            ulid::Ulid::new()
+        ));
+        tokio::fs::create_dir_all(&root).await.expect("test root");
+        let db_path = root.join("dockrev.sqlite");
+        let db = crate::db::Db::open(&db_path).await.expect("db");
+        let job_id = "job-final-manifest-retry-marker";
+        insert_running_job(&db, job_id).await;
+        db.finish_job(
+            job_id,
+            "failed",
+            "2026-08-28T00:05:00Z",
+            &serde_json::json!({
+                "rollbackEvidence": {
+                    "status": "incomplete",
+                    "failedCandidates": 1,
+                    "errors": ["manifest: final manifest write failed"]
+                }
+            }),
+        )
+        .await
+        .expect("finish job");
+        let spool = spool_root(&db_path).join(job_id);
+        tokio::fs::create_dir_all(&spool).await.expect("spool");
+        let record = EvidenceMetadata {
+            service_id: "service-a".to_string(),
+            candidate_id: "candidate-a".to_string(),
+            health_status: "unhealthy".to_string(),
+            capture_errors: (0..24)
+                .map(|index| format!("capture failure {index}"))
+                .collect(),
+            ..Default::default()
+        };
+        write_manifest(&spool, &[record]).await.expect("checkpoint");
+        tokio::fs::create_dir(spool.join("manifest.tmp"))
+            .await
+            .expect("block manifest replacement");
+
+        recover_orphaned_evidence(&db, &db_path).await;
+        let first_job = db
+            .get_job(job_id)
+            .await
+            .expect("load first job")
+            .expect("job");
+        let marker_survived = first_job.summary_json["rollbackEvidence"]["errors"]
+            .as_array()
+            .is_some_and(|errors| {
+                errors.iter().any(|error| {
+                    error
+                        .as_str()
+                        .is_some_and(|error| error.starts_with("manifest:"))
+                })
+            });
+
+        tokio::fs::remove_dir(spool.join("manifest.tmp"))
+            .await
+            .expect("remove manifest failure trigger");
+        recover_orphaned_evidence(&db, &db_path).await;
+        let recovered_job = db
+            .get_job(job_id)
+            .await
+            .expect("load recovered job")
+            .expect("job");
+        let recovered_truncated =
+            recovered_job.summary_json["rollbackEvidence"]["services"][0]["logsTruncated"] == true;
+        let archive_exists = db
+            .get_rollback_evidence_archive(job_id)
+            .await
+            .expect("read archive")
+            .is_some();
+
+        drop(db);
+        let _ = tokio::fs::remove_dir_all(root).await;
+        assert!(
+            marker_survived,
+            "manifest retry marker must not be truncated"
+        );
+        assert!(
+            archive_exists,
+            "recovery should attach the archive after retry"
+        );
+        assert!(
+            recovered_truncated,
+            "recovered logs must remain marked incomplete after a manifest retry"
+        );
+    }
+
+    #[tokio::test]
+    async fn final_manifest_retry_rejects_checkpoint_with_missing_candidates() {
+        let root = std::env::temp_dir().join(format!(
+            "dockrev-final-manifest-count-mismatch-{}",
+            ulid::Ulid::new()
+        ));
+        tokio::fs::create_dir_all(&root).await.expect("test root");
+        let db_path = root.join("dockrev.sqlite");
+        let db = crate::db::Db::open(&db_path).await.expect("db");
+        let job_id = "job-final-manifest-count-mismatch";
+        insert_running_job(&db, job_id).await;
+        db.finish_job(
+            job_id,
+            "failed",
+            "2026-08-28T00:05:00Z",
+            &serde_json::json!({
+                "rollbackEvidence": {
+                    "status": "incomplete",
+                    "failedCandidates": 2,
+                    "services": [{
+                        "serviceId": "service-retained",
+                        "candidateId": "candidate-retained",
+                        "healthStatus": "unhealthy",
+                        "logsTruncated": true,
+                        "captureErrors": ["retained candidate error"]
+                    }],
+                    "errors": ["manifest: final manifest write failed"]
+                }
+            }),
+        )
+        .await
+        .expect("finish job");
+        let spool = spool_root(&db_path).join(job_id);
+        tokio::fs::create_dir_all(&spool).await.expect("spool");
+        write_manifest(
+            &spool,
+            &[EvidenceMetadata {
+                service_id: "service-a".to_string(),
+                candidate_id: "candidate-a".to_string(),
+                health_status: "unhealthy".to_string(),
+                logs_truncated: false,
+                ..Default::default()
+            }],
+        )
+        .await
+        .expect("short checkpoint");
+
+        recover_orphaned_evidence(&db, &db_path).await;
+        let job = db.get_job(job_id).await.expect("load job").expect("job");
+        let summary = &job.summary_json["rollbackEvidence"];
+        let archive_exists = db
+            .get_rollback_evidence_archive(job_id)
+            .await
+            .expect("read archive")
+            .is_some();
+        let spool_exists = spool.exists();
+
+        drop(db);
+        let _ = tokio::fs::remove_dir_all(root).await;
+        assert!(
+            !archive_exists,
+            "mismatched checkpoint must not be downloadable"
+        );
+        assert!(
+            spool_exists,
+            "mismatched checkpoint must remain available for recovery"
+        );
+        assert_eq!(summary["status"], "incomplete");
+        assert_eq!(summary["failedCandidates"], 2);
+        assert_eq!(summary["services"][0]["serviceId"], "service-retained");
+        assert!(
+            summary["errors"].as_array().is_some_and(|errors| {
+                errors.iter().any(|error| {
+                    error
+                        .as_str()
+                        .is_some_and(|error| error.starts_with("validate checkpoint:"))
+                })
+            }),
+            "the mismatch must be reported in bounded evidence errors"
+        );
     }
 
     #[tokio::test]
