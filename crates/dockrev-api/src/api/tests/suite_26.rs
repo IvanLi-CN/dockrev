@@ -268,6 +268,71 @@ async fn rollback_evidence_api_download_preserves_raw_candidate_logs_end_to_end(
     let _ = tokio::fs::remove_dir(evidence_spool_root).await;
 }
 
+#[tokio::test]
+async fn interrupted_backup_recovery_remains_retryable_when_job_finalization_fails() {
+    let root = std::env::temp_dir().join(format!("dockrev-finish-retry-{}", ulid::Ulid::new()));
+    std::fs::create_dir_all(&root).expect("test root");
+    let db_path = root.join("dockrev.sqlite");
+    let state = test_state(db_path.to_str().expect("database path")).await;
+    let job_id = ids::new_job_id();
+    let now = "2026-09-30T00:00:00Z";
+    state
+        .db
+        .insert_job(
+            crate::api::types::JobRecord::new_running(
+                job_id.clone(),
+                crate::api::types::JobType::Update,
+                crate::api::types::JobScope::Service,
+                None,
+                None,
+                now,
+            )
+            .to_db(),
+        )
+        .await
+        .expect("insert update job");
+    state
+        .db
+        .create_update_stop_control(&job_id, now)
+        .await
+        .expect("create update stop control");
+    state
+        .db
+        .save_update_stop_recovery_snapshot(
+            &job_id,
+            &crate::backup::BackupRecoverySnapshot {
+                stack_id: "missing-stack".to_string(),
+                services: Vec::new(),
+            },
+            now,
+        )
+        .await
+        .expect("save recovery snapshot");
+
+    let connection = rusqlite::Connection::open(&db_path).expect("open test database");
+    connection
+        .execute_batch(&format!(
+            "CREATE TRIGGER fail_recovery_finish BEFORE UPDATE OF status ON jobs WHEN NEW.id = '{job_id}' BEGIN SELECT RAISE(ABORT, 'injected finish failure'); END;"
+        ))
+        .expect("install finish failure trigger");
+    drop(connection);
+
+    crate::api::recover_interrupted_update_backups(state.clone()).await;
+
+    let job = state.db.get_job(&job_id).await.unwrap().expect("update job");
+    assert_eq!(job.status, "running");
+    let retry = state
+        .db
+        .claim_pending_update_stop_recoveries("2026-09-30T00:01:00Z")
+        .await
+        .expect("claim retryable recovery");
+    assert_eq!(retry.len(), 1);
+    assert_eq!(retry[0].job_id, job_id);
+
+    drop(state);
+    let _ = std::fs::remove_dir_all(root);
+}
+
 struct CandidateLogEvidenceRunner {
     log_bytes: Vec<u8>,
 }

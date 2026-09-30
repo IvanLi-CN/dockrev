@@ -161,8 +161,8 @@ pub(super) async fn recover_interrupted_capture(
         if tokio::fs::metadata(&log_path).await.is_err()
             && tokio::fs::metadata(&partial_path).await.is_err()
         {
-            tokio::fs::write(&log_path, b"").await?;
-            set_owner_only(&log_path)?;
+            let log = create_private_log(&log_path).await?;
+            log.sync_all().await?;
         }
         let stored_metadata = match tokio::fs::metadata(&log_path).await {
             Ok(metadata) => metadata,
@@ -175,6 +175,16 @@ pub(super) async fn recover_interrupted_capture(
         record.logs_truncated = true;
     }
     write_manifest(spool, records).await
+}
+
+pub(super) async fn create_private_log(path: &Path) -> std::io::Result<tokio::fs::File> {
+    let mut options = tokio::fs::OpenOptions::new();
+    options.write(true).create_new(true);
+    #[cfg(unix)]
+    {
+        options.mode(0o600);
+    }
+    options.open(path).await
 }
 
 pub(super) async fn prepare_capture_archive(
@@ -340,7 +350,8 @@ pub(super) fn path_component(value: &str) -> String {
             }
         })
         .collect::<String>();
-    if result.is_empty() {
+    if result.is_empty() || matches!(result.as_str(), "." | "..") {
+        result.clear();
         result.push('_');
     }
     result
@@ -355,4 +366,51 @@ pub(super) fn set_owner_only(path: &Path) -> anyhow::Result<()> {
         fs::set_permissions(path, permissions)?;
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn recovered_log_file_is_owner_only_when_created() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let root = std::env::temp_dir().join(format!("dockrev-private-log-{}", ulid::Ulid::new()));
+        tokio::fs::create_dir_all(&root).await.expect("test root");
+        let spool = root.join("job");
+        let candidate_dir = spool.join("service").join("candidate");
+        tokio::fs::create_dir_all(&candidate_dir)
+            .await
+            .expect("candidate directory");
+        let log_path = candidate_dir.join("container.log");
+        let mut records = [EvidenceMetadata {
+            service_id: "service".to_string(),
+            candidate_id: "candidate".to_string(),
+            capture_errors: vec![CAPTURE_INTERRUPTED_REASON.to_string()],
+            ..Default::default()
+        }];
+        recover_interrupted_capture(&spool, &mut records)
+            .await
+            .expect("recover interrupted capture");
+        let file = tokio::fs::File::open(&log_path)
+            .await
+            .expect("recovered log");
+
+        assert_eq!(
+            file.metadata()
+                .await
+                .expect("file metadata")
+                .permissions()
+                .mode()
+                & 0o777,
+            0o600
+        );
+
+        drop(file);
+        tokio::fs::remove_dir_all(root)
+            .await
+            .expect("remove test root");
+    }
 }

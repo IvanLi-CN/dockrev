@@ -167,7 +167,7 @@ impl RollbackEvidenceContext {
     }
 
     pub fn job_spool_path(&self) -> PathBuf {
-        self.root.join(&self.job_id)
+        self.root.join(path_component(&self.job_id))
     }
 
     pub fn metadata(&self) -> Vec<EvidenceMetadata> {
@@ -581,6 +581,27 @@ mod tests {
         let mut bytes = (0..=250).cycle().take(1_048_593).collect::<Vec<_>>();
         bytes.push(0xff);
         bytes
+    }
+
+    #[test]
+    fn job_spool_path_stays_beneath_private_root_for_parent_component() {
+        assert_eq!(path_component("."), "_");
+        assert_eq!(path_component(".."), "_");
+        let parent =
+            std::env::temp_dir().join(format!("dockrev-path-safety-{}", ulid::Ulid::new()));
+        fs::create_dir_all(&parent).expect("create test root");
+        let context = RollbackEvidenceContext::new("..", &parent.join("dockrev.sqlite"))
+            .expect("create evidence context");
+        fs::create_dir_all(context.job_spool_path()).expect("create job spool");
+
+        let private_root = context.root.canonicalize().expect("canonical private root");
+        let spool_path = context
+            .job_spool_path()
+            .canonicalize()
+            .expect("canonical spool path");
+        assert!(spool_path.starts_with(private_root));
+
+        let _ = fs::remove_dir_all(parent);
     }
 
     #[test]

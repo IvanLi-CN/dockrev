@@ -26,10 +26,10 @@
 
 ## Validation Evidence
 
-- Shared Linux `cargo test --workspace --locked`: 1,004 API tests passed, 1 ignored; 1 common test passed; 58 supervisor tests passed. The spool setup error-bound regression and existing setup-failure tests also passed in a focused run.
+- The shared Linux testbox was unavailable for this repair: SSH to `192.168.31.15:22` timed out during banner exchange. This section does not claim a Linux workspace pass; full workspace status is established from PR CI runs bound to the exact head SHA.
 - Added an updater-level file-write failure regression: the fake runner writes only a 21-byte candidate-log prefix before returning an injected error, then the test verifies that exact partial log, incomplete metadata, recorded error, and service rollback ordering. The process-group watchdog test confirms the background child started before a 2-second deadline, then triggers it after timeout and verifies it cannot write a marker; a separate watchdog test verifies preserved partial output.
-- Shared Linux `cargo clippy --workspace --all-targets --all-features -- -D warnings` and `cargo check --workspace --locked --all-targets --all-features` passed.
-- Review-repair focused tests passed: 28 rollback-evidence tests, one separate committed-BLOB attachment race test, and the archive-metadata read-error summary-bound test. These include normal/recovered/incomplete summary bounds, unchanged archive manifest/log contents, cleanup-error reporting, and preservation of an existing BLOB and summary. The final candidate's shared Linux workspace tests, Clippy, and all-target/all-feature check passed; current PR gates remain the final delivery gate.
+- On the current working tree, `cargo test -p dockrev-api rollback_evidence` passed 33 tests, `interrupted_backup_recovery_remains_retryable_when_job_finalization_fails` passed, and `raw_file_watchdog_terminates_background_process_group_members` passed on Darwin. These cover stale-manifest non-attachment, cleanup error reporting, owner-only recovery-file creation, path containment, retryable backup recovery, and process-group termination.
+- On the current working tree, `cargo fmt --all -- --check`, `git diff --check`, `cargo clippy --workspace --all-targets --all-features -- -D warnings`, and `cargo check --workspace --locked --all-targets --all-features` passed on Darwin.
 - Existing frontend lint/build and Storybook build passed. The 419-story smoke mode and focused global interaction mode passed independently; the combined Storybook command timed out on late global menu/version-navigation assertions after the stories passed. This repair changes no UI files; current PR CI remains the final delivery gate.
 
 ## Remaining Gaps

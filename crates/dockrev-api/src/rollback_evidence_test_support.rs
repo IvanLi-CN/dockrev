@@ -20,7 +20,8 @@ async fn cleanup_preserves_evidence_when_job_lookup_fails() {
         false,
         Err(anyhow::anyhow!("temporary database read failure")),
     )
-    .await;
+    .await
+    .expect("preserve archive after lookup error");
 
     assert_eq!(
         tokio::fs::read(&archive).await.expect("preserved archive"),
@@ -42,7 +43,8 @@ async fn cleanup_preserves_evidence_when_job_lookup_fails() {
         true,
         Err(anyhow::anyhow!("temporary database read failure")),
     )
-    .await;
+    .await
+    .expect("preserve spool after lookup error");
 
     assert_eq!(
         tokio::fs::read(&marker).await.expect("preserved spool"),

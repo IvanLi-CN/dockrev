@@ -207,6 +207,25 @@ impl Db {
         })
         .await
     }
+
+    pub async fn rearm_update_stop_recovery(
+        &self,
+        job_id: &str,
+        error: &str,
+        now: &str,
+    ) -> anyhow::Result<()> {
+        let job_id = job_id.to_string();
+        let error = error.to_string();
+        let now = now.to_string();
+        self.call(move |conn| {
+            conn.execute(
+                "UPDATE update_job_stop_controls SET recovery_attempted_at = NULL, recovery_error = ?2, updated_at = ?3 WHERE job_id = ?1 AND recovery_snapshot_json IS NOT NULL",
+                params![job_id, error, now],
+            )?;
+            Ok(())
+        })
+        .await
+    }
 }
 
 #[cfg(test)]

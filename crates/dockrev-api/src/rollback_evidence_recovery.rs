@@ -4,15 +4,38 @@ static EVIDENCE_RECOVERY_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::cons
 
 pub(crate) async fn cleanup_orphaned_spools(db: &crate::db::Db, db_path: &Path) {
     let root = spool_root(db_path);
-    let _ = set_owner_only(&root);
+    if let Err(error) = set_owner_only(&root)
+        && error
+            .downcast_ref::<std::io::Error>()
+            .is_none_or(|error| error.kind() != std::io::ErrorKind::NotFound)
+    {
+        tracing::warn!(path = %root.display(), error = %error, "could not protect rollback evidence spool root");
+    }
     cleanup_committed_archive_only_files(db, &root).await;
-    let Ok(mut entries) = tokio::fs::read_dir(&root).await else {
-        return;
+    let mut entries = match tokio::fs::read_dir(&root).await {
+        Ok(entries) => entries,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return,
+        Err(error) => {
+            tracing::warn!(path = %root.display(), error = %error, "could not scan rollback evidence spools");
+            return;
+        }
     };
-    while let Ok(Some(entry)) = entries.next_entry().await {
+    loop {
+        let entry = match entries.next_entry().await {
+            Ok(Some(entry)) => entry,
+            Ok(None) => break,
+            Err(error) => {
+                tracing::warn!(path = %root.display(), error = %error, "could not continue scanning rollback evidence spools");
+                break;
+            }
+        };
         let path = entry.path();
-        let Ok(file_type) = entry.file_type().await else {
-            continue;
+        let file_type = match entry.file_type().await {
+            Ok(file_type) => file_type,
+            Err(error) => {
+                tracing::warn!(path = %path.display(), error = %error, "could not inspect rollback evidence entry");
+                continue;
+            }
         };
         if file_type.is_file() {
             let Some(name) = path.file_name().and_then(|name| name.to_str()) else {
@@ -23,7 +46,9 @@ pub(crate) async fn cleanup_orphaned_spools(db: &crate::db::Db, db_path: &Path) 
                 .or_else(|| name.strip_suffix(".tar.zst.part"));
             if let Some(job_id) = job_id {
                 let lookup = db.get_job(job_id).await.map(|job| job.map(|_| ()));
-                cleanup_orphaned_entry(&path, false, lookup).await;
+                if let Err(error) = cleanup_orphaned_entry(&path, false, lookup).await {
+                    tracing::warn!(path = %path.display(), error = %error, "could not remove orphaned rollback evidence file");
+                }
             }
             continue;
         }
@@ -34,7 +59,9 @@ pub(crate) async fn cleanup_orphaned_spools(db: &crate::db::Db, db_path: &Path) 
             continue;
         };
         let lookup = db.get_job(job_id).await.map(|job| job.map(|_| ()));
-        cleanup_orphaned_entry(&path, true, lookup).await;
+        if let Err(error) = cleanup_orphaned_entry(&path, true, lookup).await {
+            tracing::warn!(path = %path.display(), error = %error, "could not remove orphaned rollback evidence spool");
+        }
     }
 }
 
@@ -42,27 +69,48 @@ pub(crate) async fn cleanup_orphaned_entry(
     path: &Path,
     is_directory: bool,
     job_lookup: anyhow::Result<Option<()>>,
-) {
+) -> anyhow::Result<()> {
     match job_lookup {
         Ok(None) if is_directory => {
-            let _ = tokio::fs::remove_dir_all(path).await;
-            let _ = tokio::fs::remove_file(path.with_extension("tar.zst")).await;
+            let mut errors = Vec::new();
+            if let Err(error) = tokio::fs::remove_dir_all(path).await
+                && error.kind() != std::io::ErrorKind::NotFound
+            {
+                errors.push(format!("remove spool {}: {error}", path.display()));
+            }
+            let archive = path.with_extension("tar.zst");
+            if let Err(error) = tokio::fs::remove_file(&archive).await
+                && error.kind() != std::io::ErrorKind::NotFound
+            {
+                errors.push(format!("remove archive {}: {error}", archive.display()));
+            }
+            if !errors.is_empty() {
+                return Err(anyhow::anyhow!(errors.join("; ")));
+            }
         }
         Ok(None) => {
-            let _ = tokio::fs::remove_file(path).await;
+            if let Err(error) = tokio::fs::remove_file(path).await
+                && error.kind() != std::io::ErrorKind::NotFound
+            {
+                return Err(anyhow::anyhow!(
+                    "remove evidence file {}: {error}",
+                    path.display()
+                ));
+            }
         }
         Ok(Some(())) => {
             if is_directory {
-                let _ = set_owner_only(path);
+                set_owner_only(path)?;
             }
         }
         Err(error) => {
             tracing::warn!(error = %error, "preserving rollback evidence after job lookup failure");
             if is_directory {
-                let _ = set_owner_only(path);
+                set_owner_only(path)?;
             }
         }
     }
+    Ok(())
 }
 
 pub(super) async fn recover_evidence(
@@ -72,15 +120,47 @@ pub(super) async fn recover_evidence(
 ) {
     let _guard = EVIDENCE_RECOVERY_LOCK.lock().await;
     let root = spool_root(db_path);
-    cleanup_committed_archive_only_files(db, &root).await;
-    let Ok(mut entries) = tokio::fs::read_dir(&root).await else {
+    match tokio::fs::metadata(&root).await {
+        Ok(metadata) if metadata.is_dir() => {}
+        Ok(_) => {
+            tracing::warn!(path = %root.display(), "rollback evidence recovery root is not a directory");
+            return;
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return,
+        Err(error) => {
+            tracing::warn!(path = %root.display(), error = %error, "could not inspect rollback evidence recovery root");
+            return;
+        }
+    }
+    if let Err(error) = set_owner_only(&root) {
+        tracing::warn!(path = %root.display(), error = %error, "could not protect rollback evidence recovery root");
         return;
+    }
+    cleanup_committed_archive_only_files(db, &root).await;
+    let mut entries = match tokio::fs::read_dir(&root).await {
+        Ok(entries) => entries,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return,
+        Err(error) => {
+            tracing::warn!(path = %root.display(), error = %error, "could not scan rollback evidence for recovery");
+            return;
+        }
     };
-    let _ = set_owner_only(&root);
-    while let Ok(Some(entry)) = entries.next_entry().await {
+    loop {
+        let entry = match entries.next_entry().await {
+            Ok(Some(entry)) => entry,
+            Ok(None) => break,
+            Err(error) => {
+                tracing::warn!(path = %root.display(), error = %error, "could not continue scanning rollback evidence for recovery");
+                break;
+            }
+        };
         let spool = entry.path();
-        let Ok(file_type) = entry.file_type().await else {
-            continue;
+        let file_type = match entry.file_type().await {
+            Ok(file_type) => file_type,
+            Err(error) => {
+                tracing::warn!(path = %spool.display(), error = %error, "could not inspect rollback evidence recovery entry");
+                continue;
+            }
         };
         if !file_type.is_dir() {
             continue;
@@ -88,7 +168,10 @@ pub(super) async fn recover_evidence(
         let Some(job_id) = spool.file_name().and_then(|name| name.to_str()) else {
             continue;
         };
-        let _ = set_owner_only(&spool);
+        if let Err(error) = set_owner_only(&spool) {
+            tracing::warn!(path = %spool.display(), error = %error, "could not protect rollback evidence recovery spool");
+            continue;
+        }
         let job = match db.get_job(job_id).await {
             Ok(Some(job)) => job,
             Ok(None) => continue,
@@ -238,12 +321,29 @@ async fn cleanup_spool_for_committed_archive(
 }
 
 async fn cleanup_committed_archive_only_files(db: &crate::db::Db, root: &Path) {
-    let Ok(mut entries) = tokio::fs::read_dir(root).await else {
-        return;
+    let mut entries = match tokio::fs::read_dir(root).await {
+        Ok(entries) => entries,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return,
+        Err(error) => {
+            tracing::warn!(path = %root.display(), error = %error, "could not scan committed rollback archives");
+            return;
+        }
     };
-    while let Ok(Some(entry)) = entries.next_entry().await {
-        let Ok(file_type) = entry.file_type().await else {
-            continue;
+    loop {
+        let entry = match entries.next_entry().await {
+            Ok(Some(entry)) => entry,
+            Ok(None) => break,
+            Err(error) => {
+                tracing::warn!(path = %root.display(), error = %error, "could not continue scanning committed rollback archives");
+                break;
+            }
+        };
+        let file_type = match entry.file_type().await {
+            Ok(file_type) => file_type,
+            Err(error) => {
+                tracing::warn!(path = %entry.path().display(), error = %error, "could not inspect committed rollback archive entry");
+                continue;
+            }
         };
         if !file_type.is_file() {
             continue;
@@ -379,6 +479,23 @@ mod tests {
         assert!(spool.is_file());
         assert!(!archive_path.exists());
         assert!(!part_path.exists());
+        let _ = tokio::fs::remove_dir_all(root).await;
+    }
+
+    #[tokio::test]
+    async fn orphan_spool_cleanup_surfaces_removal_failure() {
+        let root =
+            std::env::temp_dir().join(format!("dockrev-orphan-cleanup-{}", ulid::Ulid::new()));
+        tokio::fs::create_dir_all(&root).await.expect("test root");
+        let spool = root.join("orphan");
+        tokio::fs::write(&spool, b"not a directory")
+            .await
+            .expect("spool blocker");
+
+        let result = cleanup_orphaned_entry(&spool, true, Ok(None)).await;
+
+        assert!(result.is_err());
+        assert!(spool.is_file());
         let _ = tokio::fs::remove_dir_all(root).await;
     }
 
