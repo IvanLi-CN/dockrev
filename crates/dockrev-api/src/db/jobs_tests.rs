@@ -117,6 +117,179 @@ async fn claim_next_queued_job_filters_and_claims_in_fifo_order() {
 }
 
 #[tokio::test]
+async fn recovery_incomplete_metadata_never_replaces_a_committed_archive_summary() {
+    let db = Db::open(Path::new(":memory:")).await.unwrap();
+    db.insert_job(job(
+        "job-evidence-already-committed",
+        JobType::Update,
+        "running",
+        "2026-01-01T00:00:00Z",
+    ))
+    .await
+    .unwrap();
+    let committed_summary = serde_json::json!({
+        "rollbackEvidence": {"status": "available", "archiveSizeBytes": 7}
+    });
+    db.finish_job_with_archive(
+        "job-evidence-already-committed",
+        "rolled_back",
+        "2026-01-01T00:01:00Z",
+        &committed_summary,
+        Some(b"archive".to_vec()),
+    )
+    .await
+    .unwrap();
+
+    let updated = db
+        .mark_rollback_evidence_incomplete_if_archive_absent(
+            "job-evidence-already-committed",
+            &serde_json::json!({"status": "incomplete", "errors": ["recovery failed"]}),
+        )
+        .await
+        .unwrap();
+
+    assert!(!updated);
+    assert_eq!(
+        db.get_job("job-evidence-already-committed")
+            .await
+            .unwrap()
+            .unwrap()
+            .summary_json["rollbackEvidence"]["status"],
+        "available"
+    );
+    assert_eq!(
+        db.get_rollback_evidence_archive("job-evidence-already-committed")
+            .await
+            .unwrap()
+            .unwrap(),
+        b"archive"
+    );
+}
+
+#[tokio::test]
+async fn recovery_does_not_copy_legacy_state_error_or_unbounded_services() {
+    let db = Db::open(Path::new(":memory:")).await.unwrap();
+    let mut legacy_job = job(
+        "job-legacy-evidence-summary",
+        JobType::Update,
+        "running",
+        "2026-01-01T00:00:00Z",
+    );
+    legacy_job.summary_json = serde_json::json!({
+        "rollbackEvidence": {
+            "status": "incomplete",
+            "failedCandidates": 1,
+            "services": [{
+                "serviceId": "s".repeat(300),
+                "candidateId": "candidate-a",
+                "healthStatus": "unhealthy",
+                "stateError": "legacy docker state error private marker",
+                "logsTruncated": true,
+                "captureErrors": vec!["capture error"; 5]
+            }],
+            "errors": []
+        }
+    });
+    db.insert_job(legacy_job).await.unwrap();
+
+    let updated = db
+        .mark_rollback_evidence_incomplete_if_archive_absent(
+            "job-legacy-evidence-summary",
+            &serde_json::json!({
+                "status": "incomplete",
+                "failedCandidates": 1,
+                "services": [],
+                "errors": ["manifest: unreadable"]
+            }),
+        )
+        .await
+        .unwrap();
+
+    assert!(updated);
+    let summary = db
+        .get_job("job-legacy-evidence-summary")
+        .await
+        .unwrap()
+        .unwrap()
+        .summary_json;
+    let services = summary["rollbackEvidence"]["services"].as_array().unwrap();
+    assert_eq!(services.len(), 1);
+    assert!(services[0].get("stateError").is_none());
+    assert_eq!(
+        services[0]["serviceId"].as_str().unwrap().chars().count(),
+        256
+    );
+    assert_eq!(services[0]["captureErrors"].as_array().unwrap().len(), 4);
+}
+
+#[tokio::test]
+async fn recovery_archive_attach_never_replaces_a_committed_archive_or_summary() {
+    let root = std::env::temp_dir().join(format!(
+        "dockrev-job-evidence-attach-race-{}",
+        ulid::Ulid::new()
+    ));
+    std::fs::create_dir_all(&root).unwrap();
+    let db = Db::open(&root.join("dockrev.sqlite")).await.unwrap();
+    let job_id = "job-evidence-attach-race";
+    db.insert_job(job(
+        job_id,
+        JobType::Update,
+        "running",
+        "2026-01-01T00:00:00Z",
+    ))
+    .await
+    .unwrap();
+
+    let committed_summary = serde_json::json!({
+        "result": "original",
+        "rollbackEvidence": {
+            "status": "available",
+            "archiveSizeBytes": 7,
+            "origin": "finalizer"
+        }
+    });
+    db.finish_job_with_archive(
+        job_id,
+        "rolled_back",
+        "2026-01-01T00:01:00Z",
+        &committed_summary,
+        Some(b"archive".to_vec()),
+    )
+    .await
+    .unwrap();
+
+    let replacement = root.join("replacement.tar.zst");
+    tokio::fs::write(&replacement, b"replacement archive")
+        .await
+        .unwrap();
+    let attached = db
+        .attach_rollback_evidence_archive_from_file(
+            job_id,
+            &replacement,
+            &serde_json::json!({
+                "status": "available",
+                "archiveSizeBytes": 19,
+                "origin": "recovery"
+            }),
+        )
+        .await
+        .unwrap();
+
+    assert!(!attached);
+    let job = db.get_job(job_id).await.unwrap().unwrap();
+    assert_eq!(job.summary_json, committed_summary);
+    assert_eq!(
+        db.get_rollback_evidence_archive(job_id)
+            .await
+            .unwrap()
+            .unwrap(),
+        b"archive"
+    );
+
+    let _ = tokio::fs::remove_dir_all(root).await;
+}
+
+#[tokio::test]
 async fn rollback_evidence_migration_and_recovery() {
     let root = std::env::temp_dir().join(format!("dockrev-job-evidence-{}", ulid::Ulid::new()));
     std::fs::create_dir_all(&root).unwrap();

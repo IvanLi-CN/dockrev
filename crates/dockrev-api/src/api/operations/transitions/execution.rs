@@ -1,7 +1,6 @@
 use super::*;
 use crate::backup::BackupRecoveryStore;
 use crate::managed_override;
-use crate::rollback_evidence::RollbackEvidenceContext;
 use std::sync::atomic::{AtomicU32, Ordering};
 
 pub(crate) type UpdateStackSummaries = Vec<serde_json::Value>;
@@ -12,7 +11,20 @@ pub(crate) type UpdateJobOutcome = (
     UpdateBackupsToCleanup,
     JobProgress,
     Vec<crate::db::ServiceAcceptedStateSettlement>,
+    usize,
 );
+
+fn mark_archive_metadata_unavailable(
+    summary: &mut crate::rollback_evidence::EvidenceSummary,
+    error: impl std::fmt::Display,
+) {
+    summary.status = "incomplete";
+    summary.archive_size_bytes = None;
+    let mut errors = Vec::with_capacity(summary.errors.len() + 1);
+    errors.push(format!("archive read: {error}"));
+    errors.extend(std::mem::take(&mut summary.errors));
+    summary.errors = crate::rollback_evidence::bounded_summary_errors(errors, false);
+}
 
 pub(crate) fn extract_changed_service_ids(update: &serde_json::Value) -> Option<Vec<String>> {
     let ids = update
@@ -20,84 +32,6 @@ pub(crate) fn extract_changed_service_ids(update: &serde_json::Value) -> Option<
         .and_then(|v| v.as_object())
         .map(|m| m.keys().cloned().collect::<Vec<_>>())?;
     if ids.is_empty() { None } else { Some(ids) }
-}
-
-pub(crate) fn extract_stack_transition_summary(
-    stack: &serde_json::Value,
-    kind: TransitionJobKind,
-) -> Option<&serde_json::Value> {
-    stack.get(kind.summary_key())
-}
-
-pub(crate) fn transition_failure_step(
-    kind: TransitionJobKind,
-    stack_summaries: &[serde_json::Value],
-) -> Option<&str> {
-    stack_summaries.iter().find_map(|stack| {
-        extract_stack_transition_summary(stack, kind)
-            .and_then(|summary| summary.get("failureStep"))
-            .and_then(|value| value.as_str())
-    })
-}
-
-pub(crate) fn transition_terminal_message(
-    kind: TransitionJobKind,
-    final_status: &str,
-    stack_summaries: &[serde_json::Value],
-) -> String {
-    match kind {
-        TransitionJobKind::Update => {
-            if final_status == "success" {
-                return "update finished".to_string();
-            }
-            if final_status == "cancelled" {
-                return "update cancelled".to_string();
-            }
-            if final_status == "rolled_back" {
-                return match transition_failure_step(kind, stack_summaries) {
-                    Some("healthcheck") => {
-                        "update rolled back after healthcheck failure".to_string()
-                    }
-                    Some("pull_target_tag") => {
-                        "update rolled back after target tag pull failure".to_string()
-                    }
-                    Some("sync_configured_tag") => {
-                        "update rolled back after compose tag sync failure".to_string()
-                    }
-                    _ => "update rolled back".to_string(),
-                };
-            }
-            "update finished with failures".to_string()
-        }
-        TransitionJobKind::Rollback => {
-            if final_status == "rolled_back" {
-                return "rollback finished".to_string();
-            }
-            match transition_failure_step(kind, stack_summaries) {
-                Some("healthcheck") => "rollback failed after healthcheck failure".to_string(),
-                Some("pull_target_tag") => {
-                    "rollback failed after target tag pull failure".to_string()
-                }
-                Some("sync_configured_tag") => {
-                    "rollback failed after compose tag sync failure".to_string()
-                }
-                _ => "rollback failed".to_string(),
-            }
-        }
-    }
-}
-
-pub(crate) fn normalize_transition_outcome_status(
-    kind: TransitionJobKind,
-    outcome_status: &str,
-) -> String {
-    match kind {
-        TransitionJobKind::Update => outcome_status.to_string(),
-        TransitionJobKind::Rollback => match outcome_status {
-            "success" => "rolled_back".to_string(),
-            _ => "failed".to_string(),
-        },
-    }
 }
 
 pub(crate) async fn run_update_job(
@@ -117,17 +51,13 @@ pub(crate) async fn run_update_job(
         .unwrap_or(TransitionJobKind::Update);
     let stop_signal = (job_kind == TransitionJobKind::Update && req.mode.as_str() == "apply")
         .then(|| state.update_stop_hub.subscribe(&job_id));
-    let evidence = if job_kind == TransitionJobKind::Update && req.mode.as_str() == "apply" {
-        match RollbackEvidenceContext::new(&job_id, &state.config.db_path) {
-            Ok(context) => Some(context),
-            Err(error) => {
-                tracing::warn!(job_id = %job_id, error = %error, "rollback evidence spool unavailable");
-                None
-            }
-        }
-    } else {
-        None
-    };
+    let (evidence, evidence_setup_error) =
+        crate::rollback_evidence_finalize::initialize_evidence_context(
+            job_kind == TransitionJobKind::Update && req.mode.as_str() == "apply",
+            &job_id,
+            &state.config.db_path,
+        );
+    let healthcheck_failure_count = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
     let outcome: anyhow::Result<UpdateJobOutcome> = async {
         if matches!(job_kind, TransitionJobKind::Rollback)
             || matches!(&req.mode, UpdateMode::Apply)
@@ -144,6 +74,7 @@ pub(crate) async fn run_update_job(
 
         let mut final_status = "success".to_string();
         let mut stack_summaries = Vec::new();
+        let mut observed_healthcheck_failures = 0usize;
         let mut backups_to_cleanup: Vec<(String, u32)> = Vec::new();
         let mut pending_settlements = Vec::<(
             crate::db::ServiceAcceptedStateSettlement,
@@ -891,8 +822,11 @@ pub(crate) async fn run_update_job(
                     .then_some(&apply_gate as &dyn updater::UpdateApplyGate),
                 Some(&state.config.managed_override_dir),
                 evidence.clone(),
+                Some(healthcheck_failure_count.clone()),
             )
             .await;
+            observed_healthcheck_failures =
+                healthcheck_failure_count.load(std::sync::atomic::Ordering::Relaxed);
             let lifecycle_success = update_outcome.as_ref().map(|outcome| outcome.status == "success").unwrap_or(false);
             state.lifecycle_observer.record_operation(
                 lifecycle_observation,
@@ -1200,6 +1134,7 @@ pub(crate) async fn run_update_job(
                 .into_iter()
                 .map(|(settlement, _, _, _)| settlement)
                 .collect(),
+            observed_healthcheck_failures,
         ))
     }
     .await;
@@ -1211,8 +1146,16 @@ pub(crate) async fn run_update_job(
         mut final_summary,
         finished_at,
         settlements,
+        observed_healthcheck_failures,
     ) = match outcome {
-        Ok((final_status, stack_summaries, backups_to_cleanup, progress, settlements)) => {
+        Ok((
+            final_status,
+            stack_summaries,
+            backups_to_cleanup,
+            progress,
+            settlements,
+            observed_healthcheck_failures,
+        )) => {
             let progress_json = serde_json::to_value(&progress)?;
             let final_summary = json!({
                 "mode": job_kind.summary_mode(&req.mode),
@@ -1228,6 +1171,7 @@ pub(crate) async fn run_update_job(
                 final_summary,
                 finished_at,
                 settlements,
+                observed_healthcheck_failures,
             )
         }
         Err(err) => {
@@ -1280,6 +1224,7 @@ pub(crate) async fn run_update_job(
                 final_summary,
                 finished_at,
                 Vec::new(),
+                healthcheck_failure_count.load(std::sync::atomic::Ordering::Relaxed),
             )
         }
     };
@@ -1393,18 +1338,14 @@ pub(crate) async fn run_update_job(
             )
             .await;
     }
-    let archive = if let Some(evidence) = evidence.as_ref() {
+    let archive_path = if let Some(evidence) = evidence.as_ref() {
         let mut evidence_summary = evidence.finalize().await;
-        let mut archive = None;
+        let mut archive_path = None;
         if evidence_summary.status == "available" {
-            match tokio::fs::read(evidence.archive_path()).await {
-                Ok(bytes) => archive = Some(bytes),
+            match tokio::fs::metadata(evidence.archive_path()).await {
+                Ok(_) => archive_path = Some(evidence.archive_path()),
                 Err(error) => {
-                    evidence_summary.status = "incomplete";
-                    evidence_summary.archive_size_bytes = None;
-                    evidence_summary
-                        .errors
-                        .push(format!("archive read: {error}"));
+                    mark_archive_metadata_unavailable(&mut evidence_summary, error);
                 }
             }
         }
@@ -1416,8 +1357,19 @@ pub(crate) async fn run_update_job(
                 serde_json::to_value(&evidence_summary)?,
             );
         }
-        archive
+        archive_path
     } else {
+        let failed_candidates = transition_failed_candidate_count(
+            job_kind,
+            req.mode.as_str(),
+            &stack_summaries,
+            observed_healthcheck_failures,
+        );
+        crate::rollback_evidence_finalize::record_spool_setup_failure(
+            &mut final_summary,
+            evidence_setup_error.as_deref(),
+            failed_candidates,
+        );
         None
     };
     let notification = notify::prepare_job_notification_item_for_finish(
@@ -1428,23 +1380,19 @@ pub(crate) async fn run_update_job(
         &notify_summary,
     )
     .await?;
-    let notification_event_enabled = state
-        .db
-        .finish_job_with_archive_and_settlement_and_notification(
+    let notification_event_enabled =
+        crate::rollback_evidence_finalize::finish_job_with_evidence_archive(
+            &state.db,
             &job_id,
             &final_status,
             &finished_at,
-            &final_summary,
-            archive.clone(),
+            &mut final_summary,
+            archive_path,
+            evidence.as_ref(),
             (!settlements.is_empty()).then_some(settlements.as_slice()),
             notification.as_ref(),
         )
         .await?;
-    if archive.is_some()
-        && let Some(evidence) = evidence.as_ref()
-    {
-        evidence.cleanup_after_commit().await;
-    }
     if should_record_update_tag_history(&req, &final_status) {
         record_update_tag_history(state.as_ref(), &req, &finished_at).await;
     }
@@ -1492,6 +1440,7 @@ pub(crate) async fn run_update_job(
     state.update_stop_hub.remove(&job_id);
     Ok(())
 }
+
 fn should_record_update_tag_history(req: &TriggerUpdateRequest, final_status: &str) -> bool {
     final_status == "success" && matches!(&req.mode, UpdateMode::Apply)
 }

@@ -135,7 +135,11 @@ async fn run_inner(
     let output_counter = compressed_bytes.clone();
     let output_path = output_part.clone();
     let output_task = tokio::spawn(async move {
-        let mut file = tokio::fs::File::create(output_path).await?;
+        let mut options = tokio::fs::OpenOptions::new();
+        options.write(true).create_new(true);
+        #[cfg(unix)]
+        options.mode(0o600);
+        let mut file = options.open(output_path).await?;
         let mut buffer = [0_u8; 128 * 1024];
         loop {
             let read = zstd_stdout.read(&mut buffer).await?;

@@ -38,6 +38,7 @@ mod registry;
 mod repo_link_backfill;
 mod resource_usage;
 mod rollback_evidence;
+mod rollback_evidence_finalize;
 mod runner;
 mod runtime_scan;
 mod schedules;
@@ -290,6 +291,11 @@ async fn main() -> anyhow::Result<()> {
     // Recover orphaned/incomplete jobs created by a previous process instance.
     // This covers cases where the container was killed or the process panicked mid-job.
     let now = now_rfc3339()?;
+    // A prior process can exit after claiming a backup snapshot but before restoring services.
+    state
+        .db
+        .reset_update_stop_recovery_claims_for_startup(&now)
+        .await?;
     let recovered = state
         .db
         .recover_incomplete_jobs(&now, "server_restart")
@@ -353,11 +359,6 @@ async fn main() -> anyhow::Result<()> {
             }
         }
     });
-    let evidence_db = state.db.clone();
-    let evidence_db_path = state.config.db_path.clone();
-    tokio::spawn(async move {
-        rollback_evidence::recover_orphaned_evidence(&evidence_db, &evidence_db_path).await;
-    });
     let host_platform = registry::host_platform_override(state.config.host_platform.as_deref())
         .unwrap_or_else(|| "linux/amd64".to_string());
     state.snapshot_worker.spawn_startup_warmup(&host_platform);
@@ -394,6 +395,10 @@ async fn main() -> anyhow::Result<()> {
     // Recovery owns only the services recorded before a pre-apply backup stopped them. It is
     // deliberately detached from startup so a failed restore cannot prevent Dockrev serving.
     tokio::spawn(api::recover_interrupted_update_backups(state.clone()));
+    rollback_evidence::spawn_startup_interrupted_evidence_recovery(
+        state.db.clone(),
+        state.config.db_path.clone(),
+    );
     spawn_managed_override_recovery(state.clone());
 
     axum::serve(listener, app)

@@ -139,6 +139,7 @@ def validate_nonrelease_completion(payload: dict[str, Any]) -> dict[str, Any]:
         "pull_request": payload["pull_request"],
         "head_sha": payload["head_sha"],
         "changed_files": payload["changed_files"],
+        "status": "not-applicable",
         "release_enabled": False,
         "reason": "no-release-identity",
     }

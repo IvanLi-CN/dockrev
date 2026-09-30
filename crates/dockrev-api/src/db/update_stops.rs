@@ -158,6 +158,21 @@ impl Db {
         .await
     }
 
+    pub async fn reset_update_stop_recovery_claims_for_startup(
+        &self,
+        now: &str,
+    ) -> anyhow::Result<()> {
+        let now = now.to_string();
+        self.call(move |conn| {
+            conn.execute(
+                "UPDATE update_job_stop_controls SET recovery_attempted_at = NULL, updated_at = ?1 WHERE recovery_snapshot_json IS NOT NULL AND recovery_attempted_at IS NOT NULL",
+                params![now],
+            )?;
+            Ok(())
+        })
+        .await
+    }
+
     pub async fn claim_pending_update_stop_recoveries(
         &self,
         now: &str,
@@ -204,6 +219,24 @@ impl Db {
                 params![job_id, error, now],
             )?;
             Ok(())
+        })
+        .await
+    }
+
+    pub async fn rearm_update_stop_recovery(
+        &self,
+        job_id: &str,
+        error: &str,
+        now: &str,
+    ) -> anyhow::Result<bool> {
+        let job_id = job_id.to_string();
+        let error = error.to_string();
+        let now = now.to_string();
+        self.call(move |conn| {
+            Ok(conn.execute(
+                "UPDATE update_job_stop_controls SET recovery_attempted_at = NULL, recovery_error = ?2, updated_at = ?3 WHERE job_id = ?1 AND recovery_snapshot_json IS NOT NULL AND EXISTS (SELECT 1 FROM jobs WHERE jobs.id = ?1 AND jobs.status IN ('queued', 'running'))",
+                params![job_id, error, now],
+            )? == 1)
         })
         .await
     }
@@ -302,5 +335,259 @@ mod tests {
                 .unwrap()
                 .is_empty()
         );
+    }
+
+    #[tokio::test]
+    async fn terminal_update_with_unattempted_snapshot_is_claimed_for_startup_recovery() {
+        let db = Db::open(Path::new(":memory:")).await.unwrap();
+        db.insert_job(update_job("job-terminal-pending-recovery"))
+            .await
+            .unwrap();
+        db.create_update_stop_control("job-terminal-pending-recovery", "2026-08-16T00:00:00Z")
+            .await
+            .unwrap();
+        db.save_update_stop_recovery_snapshot(
+            "job-terminal-pending-recovery",
+            &crate::backup::BackupRecoverySnapshot {
+                stack_id: "stack-1".to_string(),
+                services: vec!["web".to_string()],
+            },
+            "2026-08-16T00:01:00Z",
+        )
+        .await
+        .unwrap();
+        db.finish_job(
+            "job-terminal-pending-recovery",
+            "failed",
+            "2026-08-16T00:02:00Z",
+            &serde_json::json!({}),
+        )
+        .await
+        .unwrap();
+
+        let pending = db
+            .claim_pending_update_stop_recoveries("2026-08-16T00:03:00Z")
+            .await
+            .unwrap();
+
+        assert_eq!(pending.len(), 1);
+        assert_eq!(pending[0].job_id, "job-terminal-pending-recovery");
+    }
+
+    #[tokio::test]
+    async fn startup_reclaims_recovery_snapshot_after_crash_between_claim_and_restore() {
+        let root = std::env::temp_dir().join(format!(
+            "dockrev-update-stop-restart-recovery-{}",
+            ulid::Ulid::new()
+        ));
+        std::fs::create_dir_all(&root).unwrap();
+        let db_path = root.join("dockrev.sqlite");
+        let db = Db::open(&db_path).await.unwrap();
+        let job_id = "job-recovery-crash-window";
+        db.insert_job(update_job(job_id)).await.unwrap();
+        db.create_update_stop_control(job_id, "2026-08-16T00:00:00Z")
+            .await
+            .unwrap();
+        db.save_update_stop_recovery_snapshot(
+            job_id,
+            &crate::backup::BackupRecoverySnapshot {
+                stack_id: "stack-1".to_string(),
+                services: vec!["web".to_string()],
+            },
+            "2026-08-16T00:01:00Z",
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(
+            db.claim_pending_update_stop_recoveries("2026-08-16T00:02:00Z")
+                .await
+                .unwrap()
+                .len(),
+            1
+        );
+        drop(db);
+
+        let db = Db::open(&db_path).await.unwrap();
+        db.reset_update_stop_recovery_claims_for_startup("2026-08-16T00:03:00Z")
+            .await
+            .unwrap();
+        let recovered = db
+            .recover_incomplete_jobs("2026-08-16T00:03:00Z", "server_restart")
+            .await
+            .unwrap();
+        assert!(!recovered.iter().any(|recovered_id| recovered_id == job_id));
+        let job = db.get_job(job_id).await.unwrap().unwrap();
+        assert_eq!(job.status, "running");
+        assert!(job.finished_at.is_none());
+
+        let retry = db
+            .claim_pending_update_stop_recoveries("2026-08-16T00:04:00Z")
+            .await
+            .unwrap();
+        assert_eq!(retry.len(), 1);
+        assert_eq!(retry[0].job_id, job_id);
+
+        drop(db);
+        let _ = tokio::fs::remove_dir_all(root).await;
+    }
+
+    #[tokio::test]
+    async fn successful_update_stop_recovery_clears_previous_recovery_error() {
+        let db = Db::open(Path::new(":memory:")).await.unwrap();
+        let job_id = "job-recovery-clears-old-error";
+        let mut job = update_job(job_id);
+        job.summary_json["recoveryError"] = serde_json::json!("temporary restore failure");
+        job.summary_json["rollbackEvidence"] = serde_json::json!({
+            "status": "incomplete",
+            "failedCandidates": 1
+        });
+        db.insert_job(job).await.unwrap();
+        db.create_update_stop_control(job_id, "2026-08-16T00:00:00Z")
+            .await
+            .unwrap();
+        db.save_update_stop_recovery_snapshot(
+            job_id,
+            &crate::backup::BackupRecoverySnapshot {
+                stack_id: "stack-1".to_string(),
+                services: vec!["web".to_string()],
+            },
+            "2026-08-16T00:01:00Z",
+        )
+        .await
+        .unwrap();
+
+        db.finish_update_stop_recovery_job(
+            job_id,
+            "cancelled",
+            "2026-08-16T00:03:00Z",
+            &serde_json::json!({"mode": "apply", "recoveredOnStartup": true}),
+        )
+        .await
+        .unwrap();
+
+        let job = db.get_job(job_id).await.unwrap().unwrap();
+        assert_eq!(job.status, "cancelled");
+        assert!(job.summary_json.get("recoveryError").is_none());
+        assert_eq!(job.summary_json["rollbackEvidence"]["status"], "incomplete");
+    }
+
+    #[tokio::test]
+    async fn completed_update_stop_recovery_is_not_reclaimed_after_restart() {
+        let root = std::env::temp_dir().join(format!(
+            "dockrev-update-stop-complete-recovery-{}",
+            ulid::Ulid::new()
+        ));
+        std::fs::create_dir_all(&root).unwrap();
+        let db_path = root.join("dockrev.sqlite");
+        let db = Db::open(&db_path).await.unwrap();
+        let job_id = "job-recovery-complete-window";
+        let mut job = update_job(job_id);
+        job.summary_json["rollbackEvidence"] = serde_json::json!({
+            "status": "available",
+            "failedCandidates": 1
+        });
+        db.insert_job(job).await.unwrap();
+        db.create_update_stop_control(job_id, "2026-08-16T00:00:00Z")
+            .await
+            .unwrap();
+        db.save_update_stop_recovery_snapshot(
+            job_id,
+            &crate::backup::BackupRecoverySnapshot {
+                stack_id: "stack-1".to_string(),
+                services: vec!["web".to_string()],
+            },
+            "2026-08-16T00:01:00Z",
+        )
+        .await
+        .unwrap();
+        assert_eq!(
+            db.claim_pending_update_stop_recoveries("2026-08-16T00:02:00Z")
+                .await
+                .unwrap()
+                .len(),
+            1
+        );
+
+        db.finish_update_stop_recovery_job(
+            job_id,
+            "failed",
+            "2026-08-16T00:03:00Z",
+            &serde_json::json!({"mode": "apply", "recoveredOnStartup": true}),
+        )
+        .await
+        .unwrap();
+        drop(db);
+
+        let db = Db::open(&db_path).await.unwrap();
+        db.reset_update_stop_recovery_claims_for_startup("2026-08-16T00:04:00Z")
+            .await
+            .unwrap();
+        db.recover_incomplete_jobs("2026-08-16T00:04:00Z", "server_restart")
+            .await
+            .unwrap();
+        let job = db.get_job(job_id).await.unwrap().unwrap();
+        assert_eq!(job.summary_json["rollbackEvidence"]["status"], "available");
+        assert!(
+            db.claim_pending_update_stop_recoveries("2026-08-16T00:05:00Z")
+                .await
+                .unwrap()
+                .is_empty()
+        );
+
+        drop(db);
+        let _ = tokio::fs::remove_dir_all(root).await;
+    }
+
+    #[tokio::test]
+    async fn terminal_update_recovery_is_not_rearmed() {
+        let db = Db::open(Path::new(":memory:")).await.unwrap();
+        db.insert_job(update_job("job-terminal-rearm"))
+            .await
+            .unwrap();
+        db.create_update_stop_control("job-terminal-rearm", "2026-08-16T00:00:00Z")
+            .await
+            .unwrap();
+        db.save_update_stop_recovery_snapshot(
+            "job-terminal-rearm",
+            &crate::backup::BackupRecoverySnapshot {
+                stack_id: "stack-1".to_string(),
+                services: vec!["web".to_string()],
+            },
+            "2026-08-16T00:01:00Z",
+        )
+        .await
+        .unwrap();
+        assert_eq!(
+            db.claim_pending_update_stop_recoveries("2026-08-16T00:02:00Z")
+                .await
+                .unwrap()
+                .len(),
+            1
+        );
+        db.finish_job(
+            "job-terminal-rearm",
+            "failed",
+            "2026-08-16T00:03:00Z",
+            &serde_json::json!({}),
+        )
+        .await
+        .unwrap();
+        assert!(
+            !db.rearm_update_stop_recovery(
+                "job-terminal-rearm",
+                "projection failed after finish",
+                "2026-08-16T00:04:00Z",
+            )
+            .await
+            .unwrap()
+        );
+
+        let pending = db
+            .claim_pending_update_stop_recoveries("2026-08-16T00:05:00Z")
+            .await
+            .unwrap();
+
+        assert!(pending.is_empty());
     }
 }

@@ -269,7 +269,7 @@ pub(super) async fn get_job(
             finished_at: job.finished_at,
             allow_arch_mismatch: job.allow_arch_mismatch,
             backup_mode: job.backup_mode,
-            summary: job.summary_json,
+            summary: crate::rollback_evidence::sanitize_summary_for_api(&job.summary_json),
             progress,
             result_reason,
             stop,
@@ -285,13 +285,41 @@ pub(super) async fn download_rollback_evidence(
     Path(job_id): Path<String>,
 ) -> Result<Response, ApiError> {
     let _user = require_user(&state, &headers).await?;
-    let archive = state
+    let archive_size = state
         .db
-        .get_rollback_evidence_archive(&job_id)
+        .rollback_evidence_archive_size(&job_id)
         .await
         .map_err(map_internal)?
         .ok_or_else(|| ApiError::not_found("rollback evidence not found"))?;
-    let mut response = Bytes::from(archive).into_response();
+    let content_length = HeaderValue::from_str(&archive_size.to_string())
+        .map_err(|error| map_internal(error.into()))?;
+    let db = state.db.clone();
+    let stream = async_stream::stream! {
+        let mut offset = 0_u64;
+        while offset < archive_size {
+            match db.read_rollback_evidence_archive_chunk(&job_id, offset).await {
+                Ok(Some(chunk)) if !chunk.is_empty() => {
+                    offset += chunk.len() as u64;
+                    yield Ok::<Bytes, std::io::Error>(Bytes::from(chunk));
+                }
+                Ok(_) => {
+                    yield Err(std::io::Error::new(
+                        std::io::ErrorKind::UnexpectedEof,
+                        "rollback evidence archive changed during download",
+                    ));
+                    break;
+                }
+                Err(error) => {
+                    yield Err(std::io::Error::other(error));
+                    break;
+                }
+            }
+        }
+    };
+    let mut response = axum::body::Body::from_stream(stream).into_response();
+    response
+        .headers_mut()
+        .insert(header::CONTENT_LENGTH, content_length);
     response.headers_mut().insert(
         header::CONTENT_TYPE,
         HeaderValue::from_static("application/zstd"),

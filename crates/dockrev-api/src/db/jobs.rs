@@ -6,6 +6,8 @@ include!("jobs_stale.rs");
 #[path = "jobs_finish.rs"]
 mod jobs_finish;
 
+include!("jobs_rollback_evidence.rs");
+
 const SLOW_JOB_CLAIM_WARN_THRESHOLD: Duration = Duration::from_millis(25);
 const SLOW_JOB_CLAIM_WARN_INTERVAL: Duration = Duration::from_secs(60);
 
@@ -985,7 +987,6 @@ WHERE finished_at IS NULL
     FROM update_job_stop_controls controls
     WHERE controls.job_id = jobs.id
       AND controls.recovery_snapshot_json IS NOT NULL
-      AND controls.recovery_attempted_at IS NULL
   )
   AND (
     jobs.reason = 'selected-version'
@@ -1232,65 +1233,6 @@ WHERE id = ?1
         })
         .await
         .context("get job")
-    }
-
-    pub async fn get_rollback_evidence_archive(
-        &self,
-        job_id: &str,
-    ) -> anyhow::Result<Option<Vec<u8>>> {
-        let job_id = job_id.to_string();
-        self.call(move |conn| {
-            Ok(conn
-                .query_row(
-                    "SELECT rollback_evidence_tar_zstd FROM jobs WHERE id = ?1",
-                    params![job_id],
-                    |row| row.get::<_, Option<Vec<u8>>>(0),
-                )
-                .optional()?
-                .flatten())
-        })
-        .await
-        .context("get rollback evidence archive")
-    }
-
-    pub async fn attach_rollback_evidence_archive(
-        &self,
-        job_id: &str,
-        archive: Vec<u8>,
-        metadata: &serde_json::Value,
-    ) -> anyhow::Result<bool> {
-        let job_id = job_id.to_string();
-        let metadata = metadata.clone();
-        self.call(move |conn| {
-            let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
-            let Some(summary_raw) = tx
-                .query_row(
-                    "SELECT summary_json FROM jobs WHERE id = ?1",
-                    params![&job_id],
-                    |row| row.get::<_, String>(0),
-                )
-                .optional()?
-            else {
-                tx.commit()?;
-                return Ok(false);
-            };
-            let mut summary: serde_json::Value =
-                serde_json::from_str(&summary_raw).unwrap_or_else(|_| serde_json::json!({}));
-            if !summary.is_object() {
-                summary = serde_json::json!({ "result": summary });
-            }
-            if let Some(object) = summary.as_object_mut() {
-                object.insert("rollbackEvidence".to_string(), metadata);
-            }
-            let changed = tx.execute(
-                "UPDATE jobs SET rollback_evidence_tar_zstd = ?2, summary_json = ?3 WHERE id = ?1",
-                params![job_id, archive, serde_json::to_string(&summary)?],
-            )?;
-            tx.commit()?;
-            Ok(changed > 0)
-        })
-        .await
-        .context("attach rollback evidence archive")
     }
 }
 

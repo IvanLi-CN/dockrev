@@ -117,6 +117,10 @@ fn managed_override_keeps_candidate_tag_with_its_digest() {
 #[derive(Default)]
 struct HealthRollbackRunner {
     step: Mutex<usize>,
+    events: Mutex<Vec<&'static str>>,
+    timed_out: bool,
+    fail_log_write: bool,
+    fail_rollback_image_inspect: bool,
     expected_managed_override: Option<String>,
 }
 
@@ -264,6 +268,7 @@ impl CommandRunner for HealthRollbackRunner {
                 }
             }
             9 => {
+                self.events.lock().unwrap().push("rollback");
                 assert_eq!(spec.program, "docker");
                 assert_eq!(
                     spec.args,
@@ -282,7 +287,7 @@ impl CommandRunner for HealthRollbackRunner {
                 assert_eq!(spec.program, "docker-compose");
                 assert!(args_end_with(
                     &spec.args,
-                    &["up", "-d", "--pull", "never", "web"]
+                    &["up", "-d", "--pull", "never", "--no-deps", "web"]
                 ));
                 CommandOutput {
                     status: 0,
@@ -328,6 +333,10 @@ impl CommandRunner for HealthRollbackRunner {
                         .map(|s| s.to_string())
                         .collect::<Vec<_>>()
                 );
+                if self.fail_rollback_image_inspect {
+                    *step += 1;
+                    return Err(anyhow::anyhow!("injected post-healthcheck inspect failure"));
+                }
                 CommandOutput {
                     status: 0,
                     stdout: "sha256:old\n".to_string(),
@@ -342,15 +351,101 @@ impl CommandRunner for HealthRollbackRunner {
         *step += 1;
         Ok(out)
     }
+
+    async fn run_raw(
+        &self,
+        _spec: CommandSpec,
+        _timeout: Duration,
+    ) -> anyhow::Result<crate::runner::RawCommandOutput> {
+        Ok(crate::runner::RawCommandOutput {
+            status: 0,
+            stdout: br#"{"Status":"running","Error":"","ExitCode":0,"RestartCount":0,"Health":{"Status":"unhealthy","Log":[]}}"#.to_vec(),
+            stderr: Vec::new(),
+        })
+    }
+
+    async fn run_raw_to_file(
+        &self,
+        _spec: CommandSpec,
+        _timeout: Duration,
+        output_path: &std::path::Path,
+    ) -> anyhow::Result<crate::runner::RawFileCommandOutput> {
+        let bytes = b"candidate logs before rollback";
+        if self.fail_log_write {
+            tokio::fs::write(output_path, b"candidate logs before").await?;
+            self.events.lock().unwrap().push("logs-write-failed");
+            return Err(anyhow::anyhow!("injected file write failure"));
+        }
+        tokio::fs::write(output_path, bytes).await?;
+        self.events.lock().unwrap().push("logs-captured");
+        Ok(crate::runner::RawFileCommandOutput {
+            status: if self.timed_out { -1 } else { 0 },
+            bytes_written: bytes.len() as u64,
+            stderr: Vec::new(),
+            eof_reached: !self.timed_out,
+            timed_out: self.timed_out,
+        })
+    }
+}
+
+#[tokio::test]
+async fn healthcheck_failure_count_survives_a_later_update_error() {
+    let stack = single_service_stack("ghcr.io/org/web:1.0", None);
+    let runner = HealthRollbackRunner {
+        fail_rollback_image_inspect: true,
+        ..Default::default()
+    };
+    let failure_count = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let result = run_update_job_with_gate_using_root_unlocked(
+        &runner,
+        "docker-compose",
+        None,
+        IdempotentRetryPolicy {
+            max_attempts: 1,
+            base_ms: 1,
+            max_ms: 2,
+        },
+        &stack,
+        &JobScope::Service,
+        Some("svc_1"),
+        "live",
+        None,
+        false,
+        "ui",
+        None,
+        None,
+        false,
+        &[],
+        None,
+        None,
+        None,
+        Some(failure_count.clone()),
+    )
+    .await;
+
+    assert!(result.is_err());
+    assert_eq!(failure_count.load(std::sync::atomic::Ordering::Relaxed), 1);
+    assert_eq!(*runner.events.lock().unwrap(), vec!["rollback"]);
 }
 
 #[tokio::test]
 async fn healthcheck_failure_rolls_back_with_attempted_and_final_digests() {
     let stack = single_service_stack("ghcr.io/org/web:1.0", None);
-    let runner = HealthRollbackRunner::default();
+    let runner = HealthRollbackRunner {
+        timed_out: true,
+        ..Default::default()
+    };
     let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<UpdateProgressEvent>();
+    let root = std::env::temp_dir().join(format!("dockrev-health-evidence-{}", ulid::Ulid::new()));
+    std::fs::create_dir_all(&root).unwrap();
+    let healthcheck_failure_count = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let evidence = crate::rollback_evidence::RollbackEvidenceContext::new(
+        "job-health-failure",
+        &root.join("dockrev.sqlite"),
+    )
+    .unwrap();
 
-    let outcome = run_update_job(
+    let outcome = run_update_job_with_gate_using_root_unlocked(
         &runner,
         "docker-compose",
         None,
@@ -368,11 +463,21 @@ async fn healthcheck_failure_rolls_back_with_attempted_and_final_digests() {
         "ui",
         None,
         Some(tx),
+        false,
+        &[],
+        None,
+        None,
+        Some(evidence.clone()),
+        Some(healthcheck_failure_count.clone()),
     )
     .await
     .unwrap();
 
     assert_eq!(outcome.status, "rolled_back");
+    assert_eq!(
+        healthcheck_failure_count.load(std::sync::atomic::Ordering::Relaxed),
+        1
+    );
     assert_eq!(
         outcome.summary_json["newDigests"]["svc_1"],
         json!("sha256:new")
@@ -414,6 +519,99 @@ async fn healthcheck_failure_rolls_back_with_attempted_and_final_digests() {
             .any(|msg| msg.contains("rolled back after healthcheck failure"))
     );
     assert_eq!(*runner.step.lock().unwrap(), 14);
+    assert_eq!(
+        *runner.events.lock().unwrap(),
+        vec!["logs-captured", "rollback"]
+    );
+    assert!(evidence.metadata()[0].logs_truncated);
+    assert!(
+        evidence.metadata()[0]
+            .capture_errors
+            .iter()
+            .any(|error| error.contains("timed out"))
+    );
+    assert_eq!(
+        tokio::fs::read(
+            evidence
+                .job_spool_path()
+                .join("svc_1/new_container/container.log")
+        )
+        .await
+        .unwrap(),
+        b"candidate logs before rollback"
+    );
+    std::fs::remove_dir_all(root).unwrap();
+}
+
+#[tokio::test]
+async fn log_file_write_failure_preserves_partial_evidence_and_rolls_back() {
+    let stack = single_service_stack("ghcr.io/org/web:1.0", None);
+    let runner = HealthRollbackRunner {
+        fail_log_write: true,
+        ..Default::default()
+    };
+    let root =
+        std::env::temp_dir().join(format!("dockrev-health-write-error-{}", ulid::Ulid::new()));
+    std::fs::create_dir_all(&root).unwrap();
+    let evidence = crate::rollback_evidence::RollbackEvidenceContext::new(
+        "job-health-write-error",
+        &root.join("dockrev.sqlite"),
+    )
+    .unwrap();
+
+    let outcome = run_update_job_with_gate_using_root_unlocked(
+        &runner,
+        "docker-compose",
+        None,
+        IdempotentRetryPolicy {
+            max_attempts: 1,
+            base_ms: 1,
+            max_ms: 2,
+        },
+        &stack,
+        &JobScope::Service,
+        Some("svc_1"),
+        "live",
+        None,
+        false,
+        "ui",
+        None,
+        None,
+        false,
+        &[],
+        None,
+        None,
+        Some(evidence.clone()),
+        None,
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(outcome.status, "rolled_back");
+    assert_eq!(
+        *runner.events.lock().unwrap(),
+        vec!["logs-write-failed", "rollback"]
+    );
+    let metadata = &evidence.metadata()[0];
+    assert!(metadata.logs_truncated);
+    assert!(
+        metadata
+            .capture_errors
+            .iter()
+            .any(|error| error.contains("injected file write failure"))
+    );
+    assert_eq!(metadata.logs_bytes, b"candidate logs before".len() as u64);
+    assert_eq!(
+        tokio::fs::read(
+            evidence
+                .job_spool_path()
+                .join("svc_1/new_container/container.log")
+        )
+        .await
+        .unwrap(),
+        b"candidate logs before"
+    );
+    std::fs::remove_dir_all(root).unwrap();
 }
 
 #[tokio::test]
@@ -550,7 +748,7 @@ impl CommandRunner for SyncTagRollbackRunner {
                 assert_eq!(spec.program, "docker-compose");
                 assert!(args_end_with(
                     &spec.args,
-                    &["up", "-d", "--pull", "never", "web"]
+                    &["up", "-d", "--pull", "never", "--no-deps", "web"]
                 ));
                 CommandOutput {
                     status: 0,

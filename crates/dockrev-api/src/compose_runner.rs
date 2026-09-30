@@ -133,6 +133,7 @@ impl ComposeStack {
             "-d".to_string(),
             "--pull".to_string(),
             "never".to_string(),
+            "--no-deps".to_string(),
             service.to_string(),
         ]);
         cmd
@@ -345,6 +346,10 @@ mod tests {
         assert!(cmd.args.windows(2).any(|pair| pair == ["--pull", "never"]));
         assert!(cmd.args.iter().any(|arg| arg == "--no-deps"));
         assert!(cmd.args.iter().any(|arg| arg == "--force-recreate"));
+
+        let rollback = stack.up_service_no_pull(&cfg, "web");
+        assert!(rollback.args.iter().any(|arg| arg == "--no-deps"));
+        assert!(rollback.args.ends_with(&["web".to_string()]));
     }
 
     #[test]

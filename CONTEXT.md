@@ -170,12 +170,20 @@ The post-apply container that runs an update candidate before Dockrev accepts it
 _Avoid_: new container, updated container
 
 **rollback evidence**:
-A bounded diagnosis artifact captured from a candidate container before automatic rollback begins. It preserves captured output verbatim, belongs to the update record, and is distinct from normal service logs.
+A raw diagnosis artifact captured from a candidate container before automatic rollback begins. It preserves captured output verbatim, without Dockrev parsing, redaction, or size-based truncation; per-service metadata states whether the command exited successfully, reached EOF, and wrote all received bytes before the watchdog. It belongs to the update record and is distinct from normal service logs.
 _Avoid_: rollback logs, service logs
+
+**container runtime log**:
+The raw `docker logs --timestamps` byte stream available for a candidate container at evidence-capture time. It covers the container's Docker-managed stdout/stderr history, not logs already removed by Docker rotation or application files that are not connected to the Docker logging source.
+_Avoid_: application log directory, task log, parsed log
+
+**update task log**:
+Dockrev's structured lifecycle, progress, and failure record for an update job. It may reference rollback evidence, but must not copy raw candidate container logs or health-check output into job logs, SSE, notifications, or list responses.
+_Avoid_: container runtime log, rollback evidence
 
 **health status**:
 Docker's candidate-specific health evaluation: `starting`, `healthy`, or `unhealthy`. It does not by itself describe the container process state, restart count, exit error, or health-check output.
-_Avoid_: container status, readiness result
+_Avoid_: container status, service availability claim
 
 **health-policy deadline**:
 The time boundary after which a continuously `starting` candidate is treated as a health failure. It is derived solely from the candidate's effective health policy.

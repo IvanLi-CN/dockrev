@@ -56,10 +56,12 @@ pub fn inspect_candidate_state(cfg: &DockerRunnerConfig, container_id: &str) -> 
 
 pub fn logs_with_timestamps(cfg: &DockerRunnerConfig, container_id: &str) -> CommandSpec {
     CommandSpec {
-        program: cfg.docker_bin.clone(),
+        program: "sh".to_string(),
         args: vec![
-            "logs".to_string(),
-            "--timestamps".to_string(),
+            "-c".to_string(),
+            "exec \"$1\" logs --timestamps \"$2\" 2>&1".to_string(),
+            "dockrev-docker-logs".to_string(),
+            cfg.docker_bin.clone(),
             container_id.to_string(),
         ],
         env: cfg.env.clone(),
@@ -138,5 +140,59 @@ pub fn pull_image(cfg: &DockerRunnerConfig, image_ref: &str) -> CommandSpec {
         program: cfg.docker_bin.clone(),
         args: vec!["pull".to_string(), image_ref.to_string()],
         env: cfg.env.clone(),
+    }
+}
+
+#[cfg(all(test, unix))]
+mod tests {
+    use std::os::unix::fs::PermissionsExt;
+    use std::time::Duration;
+
+    use super::*;
+    use crate::runner::{CommandRunner, TokioCommandRunner};
+
+    #[tokio::test]
+    async fn logs_with_timestamps_captures_both_cli_streams_in_order() {
+        let root = std::env::temp_dir().join(format!(
+            "dockrev-docker-logs-{}-{}",
+            std::process::id(),
+            ulid::Ulid::new()
+        ));
+        tokio::fs::create_dir_all(&root).await.unwrap();
+        let docker_bin = root.join("docker");
+        tokio::fs::write(
+            &docker_bin,
+            "#!/bin/sh\nprintf 'container stdout\\n'\nprintf 'container stderr\\n' >&2\n",
+        )
+        .await
+        .unwrap();
+        let mut permissions = std::fs::metadata(&docker_bin).unwrap().permissions();
+        permissions.set_mode(0o700);
+        std::fs::set_permissions(&docker_bin, permissions).unwrap();
+
+        let output_path = root.join("container.log");
+        let output = TokioCommandRunner
+            .run_raw_to_file(
+                logs_with_timestamps(
+                    &DockerRunnerConfig {
+                        docker_bin: docker_bin.to_string_lossy().into_owned(),
+                        env: Vec::new(),
+                    },
+                    "candidate-id",
+                ),
+                Duration::from_secs(2),
+                &output_path,
+            )
+            .await
+            .unwrap();
+
+        let expected = b"container stdout\ncontainer stderr\n";
+        assert_eq!(output.status, 0);
+        assert_eq!(output.bytes_written, expected.len() as u64);
+        assert!(output.eof_reached);
+        assert!(!output.timed_out);
+        assert!(output.stderr.is_empty());
+        assert_eq!(tokio::fs::read(&output_path).await.unwrap(), expected);
+        tokio::fs::remove_dir_all(root).await.unwrap();
     }
 }

@@ -1,8 +1,10 @@
+#[cfg(unix)]
+use std::os::unix::fs::PermissionsExt as _;
 use std::time::Duration;
+use std::{path::Path, process::Stdio};
 
 use async_trait::async_trait;
-use std::process::Stdio;
-use tokio::io::AsyncReadExt;
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::process::Command;
 
 pub const STREAM_PTY_ENV: &str = "DOCKREV_STREAM_PTY";
@@ -79,6 +81,17 @@ pub struct RawCommandOutput {
     pub stderr: Vec<u8>,
 }
 
+/// Status for a raw command whose output streams are written directly to a file.
+#[derive(Clone, Debug)]
+pub struct RawFileCommandOutput {
+    pub status: i32,
+    pub bytes_written: u64,
+    #[allow(dead_code)]
+    pub stderr: Vec<u8>,
+    pub eof_reached: bool,
+    pub timed_out: bool,
+}
+
 #[async_trait]
 pub trait CommandRunner: Send + Sync {
     async fn run(&self, spec: CommandSpec, timeout: Duration) -> anyhow::Result<CommandOutput>;
@@ -105,6 +118,29 @@ pub trait CommandRunner: Send + Sync {
         let mut output = self.run_raw(spec, timeout).await?;
         output.stdout.truncate(max_stdout_bytes.saturating_add(1));
         Ok(output)
+    }
+
+    async fn run_raw_to_file(
+        &self,
+        spec: CommandSpec,
+        timeout: Duration,
+        output_path: &Path,
+    ) -> anyhow::Result<RawFileCommandOutput> {
+        let mut output = self.run_raw(spec, timeout).await?;
+        let bytes_written = (output.stdout.len() as u64).saturating_add(output.stderr.len() as u64);
+        let mut file = tokio::fs::File::create(output_path).await?;
+        file.write_all(&output.stdout).await?;
+        file.write_all(&output.stderr).await?;
+        file.flush().await?;
+        file.sync_all().await?;
+        output.stderr.truncate(64 * 1024);
+        Ok(RawFileCommandOutput {
+            status: output.status,
+            bytes_written,
+            stderr: output.stderr,
+            eof_reached: true,
+            timed_out: false,
+        })
     }
 
     async fn run_stream(
@@ -243,6 +279,125 @@ impl CommandRunner for TokioCommandRunner {
         })
     }
 
+    async fn run_raw_to_file(
+        &self,
+        spec: CommandSpec,
+        timeout: Duration,
+        output_path: &Path,
+    ) -> anyhow::Result<RawFileCommandOutput> {
+        let deadline = tokio::time::Instant::now() + timeout;
+        let mut cmd = Command::new(&spec.program);
+        cmd.args(&spec.args);
+        apply_command_env(&mut cmd, &spec.env);
+        cmd.stdout(Stdio::piped());
+        cmd.stderr(Stdio::piped());
+        cmd.kill_on_drop(true);
+        configure_process_group(&mut cmd);
+
+        let (mut file, mut child) = match tokio::time::timeout_at(deadline, async {
+            let mut options = tokio::fs::OpenOptions::new();
+            options.write(true).create(true).truncate(true);
+            #[cfg(unix)]
+            options.mode(0o600);
+            let file = options.open(output_path).await?;
+            #[cfg(unix)]
+            tokio::fs::set_permissions(output_path, std::fs::Permissions::from_mode(0o600)).await?;
+            let child = cmd.spawn()?;
+            anyhow::Ok((file, child))
+        })
+        .await
+        {
+            Ok(result) => result?,
+            Err(_) => {
+                return Ok(RawFileCommandOutput {
+                    status: -1,
+                    bytes_written: 0,
+                    stderr: Vec::new(),
+                    eof_reached: false,
+                    timed_out: true,
+                });
+            }
+        };
+        let mut process_group = ProcessGroupGuard::new(child.id());
+        let mut stdout = child
+            .stdout
+            .take()
+            .ok_or_else(|| anyhow::anyhow!("failed to capture stdout"))?;
+        let mut stderr = child
+            .stderr
+            .take()
+            .ok_or_else(|| anyhow::anyhow!("failed to capture stderr"))?;
+
+        let mut bytes_written = 0_u64;
+        let mut eof_reached = false;
+        let mut stdout_done = false;
+        let mut stderr_done = false;
+        let mut retained_stderr = Vec::new();
+        let mut stdout_buffer = [0_u8; 8192];
+        let mut stderr_buffer = [0_u8; 8192];
+        let result = tokio::time::timeout_at(deadline, async {
+            while !stdout_done || !stderr_done {
+                tokio::select! {
+                    read = stdout.read(&mut stdout_buffer), if !stdout_done => {
+                        let read = read?;
+                        if read == 0 {
+                            stdout_done = true;
+                            eof_reached = true;
+                        } else {
+                            file.write_all(&stdout_buffer[..read]).await?;
+                            bytes_written = bytes_written.saturating_add(read as u64);
+                        }
+                    }
+                    read = stderr.read(&mut stderr_buffer), if !stderr_done => {
+                        let read = read?;
+                        if read == 0 {
+                            stderr_done = true;
+                        } else {
+                            file.write_all(&stderr_buffer[..read]).await?;
+                            bytes_written = bytes_written.saturating_add(read as u64);
+                            let remaining = 64 * 1024 - retained_stderr.len();
+                            retained_stderr.extend_from_slice(&stderr_buffer[..read.min(remaining)]);
+                        }
+                    }
+                }
+            }
+            eof_reached = true;
+            file.flush().await?;
+            file.sync_all().await?;
+            anyhow::Ok(child.wait().await?.code().unwrap_or(-1))
+        })
+        .await;
+
+        match result {
+            Ok(Ok(status)) => {
+                process_group.disarm();
+                Ok(RawFileCommandOutput {
+                    status,
+                    bytes_written,
+                    stderr: retained_stderr,
+                    eof_reached,
+                    timed_out: false,
+                })
+            }
+            Ok(Err(error)) => {
+                let _ = finish_raw_file_cleanup(&mut child, &mut file).await;
+                Err(error)
+            }
+            Err(_) => {
+                if let Some(file_bytes) = finish_raw_file_cleanup(&mut child, &mut file).await {
+                    bytes_written = file_bytes;
+                }
+                Ok(RawFileCommandOutput {
+                    status: -1,
+                    bytes_written,
+                    stderr: retained_stderr,
+                    eof_reached,
+                    timed_out: true,
+                })
+            }
+        }
+    }
+
     async fn run_stream(
         &self,
         spec: CommandSpec,
@@ -356,6 +511,22 @@ impl CommandRunner for TokioCommandRunner {
     }
 }
 
+async fn finish_raw_file_cleanup(
+    child: &mut tokio::process::Child,
+    file: &mut tokio::fs::File,
+) -> Option<u64> {
+    tokio::time::timeout(Duration::from_secs(1), async {
+        let _ = child.kill().await;
+        let _ = child.wait().await;
+        let _ = file.flush().await;
+        let _ = file.sync_all().await;
+        file.metadata().await.ok().map(|metadata| metadata.len())
+    })
+    .await
+    .ok()
+    .flatten()
+}
+
 fn configure_process_group(cmd: &mut Command) {
     #[cfg(unix)]
     {
@@ -432,6 +603,186 @@ fn shell_quote(value: &str) -> String {
 #[cfg(all(test, unix))]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn raw_file_command_preserves_output_larger_than_one_megabyte() {
+        let path = std::env::temp_dir().join(format!(
+            "dockrev-runner-raw-file-{}-{}.log",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let output = TokioCommandRunner
+            .run_raw_to_file(
+                CommandSpec {
+                    program: "sh".to_string(),
+                    args: vec![
+                        "-c".to_string(),
+                        "head -c 1048593 /dev/zero; printf '\\377'".to_string(),
+                    ],
+                    env: Vec::new(),
+                },
+                Duration::from_secs(2),
+                &path,
+            )
+            .await
+            .expect("raw file command should complete");
+
+        let actual = tokio::fs::read(&path).await.expect("captured file");
+        let mut expected = vec![0; 1_048_593];
+        expected.push(0xff);
+        assert_eq!(output.status, 0);
+        assert_eq!(output.bytes_written, expected.len() as u64);
+        assert!(output.eof_reached);
+        assert!(!output.timed_out);
+        assert_eq!(actual, expected);
+        assert_eq!(
+            std::fs::metadata(&path)
+                .expect("captured file metadata")
+                .permissions()
+                .mode()
+                & 0o777,
+            0o600
+        );
+        tokio::fs::remove_file(path).await.expect("remove capture");
+    }
+
+    #[tokio::test]
+    async fn raw_file_command_keeps_partial_output_when_watchdog_expires() {
+        let path = std::env::temp_dir().join(format!(
+            "dockrev-runner-raw-timeout-{}-{}.log",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let output = TokioCommandRunner
+            .run_raw_to_file(
+                CommandSpec {
+                    program: "sh".to_string(),
+                    args: vec![
+                        "-c".to_string(),
+                        "printf partial; sleep 2; printf late".to_string(),
+                    ],
+                    env: Vec::new(),
+                },
+                Duration::from_secs(1),
+                &path,
+            )
+            .await
+            .expect("watchdog expiry is reported as a partial result");
+
+        assert_eq!(output.status, -1);
+        assert_eq!(output.bytes_written, 7);
+        assert!(!output.eof_reached);
+        assert!(output.timed_out);
+        assert_eq!(
+            tokio::fs::read(&path).await.expect("partial file"),
+            b"partial"
+        );
+        tokio::fs::remove_file(path).await.expect("remove capture");
+    }
+
+    #[tokio::test]
+    async fn raw_file_watchdog_terminates_background_process_group_members() {
+        let test_dir = std::env::temp_dir().join(format!(
+            "dockrev-raw-file-process-group-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir(&test_dir).expect("create process-group test directory");
+        let child_started = test_dir.join("child-started.marker");
+        let trigger = test_dir.join("trigger.marker");
+        let marker = test_dir.join("late.marker");
+        let path = test_dir.join("capture.log");
+        let command = format!(
+            "(touch {}; while [ ! -e {} ]; do sleep 0.01; done; touch {}) & wait",
+            shell_quote(&child_started.display().to_string()),
+            shell_quote(&trigger.display().to_string()),
+            shell_quote(&marker.display().to_string())
+        );
+        let watchdog = tokio::spawn(async move {
+            TokioCommandRunner
+                .run_raw_to_file(
+                    CommandSpec {
+                        program: "sh".to_string(),
+                        args: vec!["-c".to_string(), command],
+                        env: Vec::new(),
+                    },
+                    Duration::from_secs(2),
+                    &path,
+                )
+                .await
+                .expect("watchdog expiry is reported as a partial result")
+        });
+
+        while !child_started.exists() && !watchdog.is_finished() {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+        assert!(
+            child_started.exists(),
+            "background process did not start before watchdog expiry"
+        );
+
+        let output = watchdog
+            .await
+            .expect("watchdog task should complete without panicking");
+
+        assert!(output.timed_out);
+        std::fs::write(&trigger, []).expect("trigger surviving process");
+        let marker_written = tokio::time::timeout(Duration::from_secs(2), async {
+            while !marker.exists() {
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .is_ok();
+        assert!(!marker_written, "timed-out process group kept running");
+        std::fs::remove_dir_all(test_dir).expect("remove process-group test directory");
+    }
+
+    #[tokio::test]
+    async fn raw_file_command_bounds_stderr_while_draining_it() {
+        let path = std::env::temp_dir().join(format!(
+            "dockrev-runner-raw-stderr-{}-{}.log",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let output = TokioCommandRunner
+            .run_raw_to_file(
+                CommandSpec {
+                    program: "sh".to_string(),
+                    args: vec![
+                        "-c".to_string(),
+                        "printf output; sleep 0.05; head -c 70000 /dev/zero >&2".to_string(),
+                    ],
+                    env: Vec::new(),
+                },
+                Duration::from_secs(2),
+                &path,
+            )
+            .await
+            .expect("command should complete");
+
+        assert_eq!(output.status, 0);
+        assert!(output.eof_reached);
+        assert!(!output.timed_out);
+        assert_eq!(output.stderr.len(), 64 * 1024);
+        let captured = tokio::fs::read(&path).await.unwrap();
+        assert_eq!(captured.len(), 70_006);
+        assert_eq!(&captured[..6], b"output");
+        assert!(captured[6..].iter().all(|byte| *byte == 0));
+        tokio::fs::remove_file(path).await.expect("remove capture");
+    }
 
     #[tokio::test]
     async fn bounded_raw_command_stops_after_prefix_limit() {

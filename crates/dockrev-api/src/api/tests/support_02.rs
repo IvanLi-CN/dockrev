@@ -798,6 +798,7 @@ impl CommandRunner for HealthRollbackUpdateRunner {
                 "-d".to_string(),
                 "--pull".to_string(),
                 "never".to_string(),
+                "--no-deps".to_string(),
                 "web".to_string(),
             ]) =>
             {
@@ -866,7 +867,11 @@ impl CommandRunner for HealthRollbackUpdateRunner {
         spec: CommandSpec,
         _timeout: Duration,
     ) -> anyhow::Result<crate::runner::RawCommandOutput> {
-        let stdout = if spec.args.iter().any(|arg| arg == "--timestamps") {
+        let stdout = if spec
+            .args
+            .iter()
+            .any(|arg| arg == "--timestamps" || arg.contains("logs --timestamps"))
+        {
             b"candidate log line\n".to_vec()
         } else if spec
             .args
