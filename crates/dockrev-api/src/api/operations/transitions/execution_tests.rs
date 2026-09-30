@@ -70,7 +70,7 @@ fn evidence_setup_failure_checks_healthchecks_across_all_stack_summaries() {
         failed_candidates,
     );
     assert_eq!(summary["rollbackEvidence"]["status"], "incomplete");
-    assert_eq!(summary["rollbackEvidence"]["failedCandidates"], 1);
+    assert_eq!(summary["rollbackEvidence"]["failedCandidates"], 0);
 }
 
 #[test]

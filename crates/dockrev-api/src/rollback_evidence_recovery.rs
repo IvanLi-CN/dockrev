@@ -589,6 +589,60 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn unreadable_manifest_preserves_previously_recorded_candidate_total() {
+        let root = std::env::temp_dir().join(format!(
+            "dockrev-recovery-manifest-count-{}",
+            ulid::Ulid::new()
+        ));
+        tokio::fs::create_dir_all(&root).await.expect("test root");
+        let db_path = root.join("dockrev.sqlite");
+        let db = crate::db::Db::open(&db_path).await.expect("db");
+        let job_id = "job-manifest-count";
+        insert_running_job(&db, job_id).await;
+        db.finish_job(
+            job_id,
+            "failed",
+            "2026-08-28T00:05:00Z",
+            &serde_json::json!({
+                "rollbackEvidence": {
+                    "status": "incomplete",
+                    "failedCandidates": 3,
+                    "errors": ["archive persistence: injected failure"]
+                }
+            }),
+        )
+        .await
+        .expect("finish job");
+        let spool = spool_root(&db_path).join(job_id);
+        tokio::fs::create_dir_all(&spool).await.expect("spool");
+        tokio::fs::write(spool.join("manifest.json"), b"not valid json")
+            .await
+            .expect("invalid manifest fixture");
+
+        recover_orphaned_evidence(&db, &db_path).await;
+
+        let job = db.get_job(job_id).await.expect("load job").expect("job");
+        let summary = &job.summary_json["rollbackEvidence"];
+        assert_eq!(summary["status"], "incomplete");
+        assert_eq!(summary["failedCandidates"], 3);
+        assert!(
+            summary["errors"][0]
+                .as_str()
+                .unwrap_or_default()
+                .starts_with("parse manifest:")
+        );
+        assert!(
+            db.get_rollback_evidence_archive(job_id)
+                .await
+                .expect("read archive")
+                .is_none()
+        );
+
+        drop(db);
+        let _ = tokio::fs::remove_dir_all(root).await;
+    }
+
+    #[tokio::test]
     async fn recovered_archive_summary_bounds_metadata_and_preserves_archive_contents() {
         let root = std::env::temp_dir().join(format!(
             "dockrev-recovered-summary-bounds-{}",

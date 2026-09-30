@@ -156,19 +156,19 @@ pub(crate) fn initialize_evidence_context(
 pub(crate) fn record_spool_setup_failure(
     summary_json: &mut serde_json::Value,
     error: Option<&str>,
-    failed_candidates: usize,
+    failed_update_candidates: usize,
 ) {
     let (Some(error), Some(summary)) = (error, summary_json.as_object_mut()) else {
         return;
     };
-    if failed_candidates == 0 {
+    if failed_update_candidates == 0 {
         return;
     }
     summary.insert(
         "rollbackEvidence".to_string(),
         serde_json::json!({
             "status": "incomplete",
-            "failedCandidates": failed_candidates,
+            "failedCandidates": 0,
             "archiveFormat": "tar",
             "compression": "zstd",
             "archiveSizeBytes": null,

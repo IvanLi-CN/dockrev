@@ -1178,7 +1178,7 @@ services:
     assert_eq!(state.db.list_jobs().await.unwrap().len(), 1);
 }
 #[tokio::test]
-async fn spool_initialization_failure_records_healthcheck_candidate_in_terminal_summary() {
+async fn spool_initialization_failure_records_terminal_healthcheck_error_without_archive() {
     let root = std::env::temp_dir().join(format!(
         "dockrev-spool-init-healthcheck-{}",
         ulid::Ulid::new()
@@ -1267,7 +1267,7 @@ async fn spool_initialization_failure_records_healthcheck_candidate_in_terminal_
     );
     assert_eq!(
         job.summary_json["rollbackEvidence"]["failedCandidates"],
-        1
+        0
     );
     assert!(job.summary_json["rollbackEvidence"]["errors"]
         .as_array()

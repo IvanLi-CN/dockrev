@@ -944,6 +944,19 @@ mod tests {
 
         assert_eq!(tokio::fs::read(&committed).await.unwrap(), expected);
         assert!(!partial.exists());
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+
+            assert_eq!(
+                std::fs::metadata(&committed)
+                    .expect("promoted log metadata")
+                    .permissions()
+                    .mode()
+                    & 0o777,
+                0o600
+            );
+        }
         let _ = tokio::fs::remove_dir_all(root).await;
     }
 

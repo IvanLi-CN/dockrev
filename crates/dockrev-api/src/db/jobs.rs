@@ -1284,7 +1284,7 @@ WHERE id = ?1
         metadata: &serde_json::Value,
     ) -> anyhow::Result<bool> {
         let job_id = job_id.to_string();
-        let metadata = metadata.clone();
+        let mut metadata = metadata.clone();
         self.call(move |conn| {
             let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
             let Some((summary_raw, has_archive)) = tx
@@ -1306,6 +1306,18 @@ WHERE id = ?1
                 serde_json::from_str(&summary_raw).unwrap_or_else(|_| serde_json::json!({}));
             if !summary.is_object() {
                 summary = serde_json::json!({ "result": summary });
+            }
+            let recorded_candidate_total = summary["rollbackEvidence"]["failedCandidates"]
+                .as_u64()
+                .unwrap_or_default();
+            if metadata["failedCandidates"].as_u64().unwrap_or_default() == 0
+                && recorded_candidate_total > 0
+                && let Some(metadata) = metadata.as_object_mut()
+            {
+                metadata.insert(
+                    "failedCandidates".to_string(),
+                    serde_json::json!(recorded_candidate_total),
+                );
             }
             summary
                 .as_object_mut()

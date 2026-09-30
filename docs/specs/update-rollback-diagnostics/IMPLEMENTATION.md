@@ -23,14 +23,16 @@
 6. Completed the Job Detail download affordance; focused and environment-dependent validation is tracked by the delivery gate.
 
 - Spool initialization failures now use the same bounded top-level error projection as archive persistence failures, including the truncation note for overlong messages.
+- Evidence summaries count only candidates whose evidence capture was actually established; recovery preserves a previously recorded candidate total when a manifest cannot be read.
+- Interrupted update-backup recovery remains claimable for an unattempted snapshot after job finalization, but a failed post-finalization projection cannot rearm a terminal job for another recovery attempt.
+- Evidence files and archive parts are created owner-only before candidate bytes are written, including atomic promotion and recovery-created files.
 
 ## Validation Evidence
 
-- The shared Linux testbox was unavailable for this repair: SSH to `192.168.31.15:22` timed out during banner exchange. This section does not claim a Linux workspace pass; full workspace status is established from PR CI runs bound to the exact head SHA.
-- Added an updater-level file-write failure regression: the fake runner writes only a 21-byte candidate-log prefix before returning an injected error, then the test verifies that exact partial log, incomplete metadata, recorded error, and service rollback ordering. The process-group watchdog test confirms the background child started before a 2-second deadline, then triggers it after timeout and verifies it cannot write a marker; a separate watchdog test verifies preserved partial output.
-- On the current working tree, `cargo test -p dockrev-api rollback_evidence` passed 33 tests, `interrupted_backup_recovery_remains_retryable_when_job_finalization_fails` passed, and `raw_file_watchdog_terminates_background_process_group_members` passed on Darwin. These cover stale-manifest non-attachment, cleanup error reporting, owner-only recovery-file creation, path containment, retryable backup recovery, and process-group termination.
-- On the current working tree, `cargo fmt --all -- --check`, `git diff --check`, `cargo clippy --workspace --all-targets --all-features -- -D warnings`, and `cargo check --workspace --locked --all-targets --all-features` passed on Darwin.
-- Existing frontend lint/build and Storybook build passed. The 419-story smoke mode and focused global interaction mode passed independently; the combined Storybook command timed out on late global menu/version-navigation assertions after the stories passed. This repair changes no UI files; current PR CI remains the final delivery gate.
+- The latest implementation source tree passed `cargo test --workspace --locked` on the shared Linux testbox: `dockrev-api` 1014 passed and 1 ignored, `dockrev-common` 1 passed, and `dockrev-supervisor` 58 passed; doctests completed with no tests.
+- The same Linux source tree passed `cargo fmt --all -- --check`, `cargo clippy --workspace --all-targets --all-features -- -D warnings`, and `cargo check --workspace --locked --all-targets --all-features`.
+- Focused Darwin regressions passed for exact watchdog partial-output retention, owner-only archive and recovered-log creation, private permissions after atomic log promotion, spool-initialization failure metadata, and preserving candidate totals when a manifest is unreadable. The Linux workspace run also covers terminal recovery rearming and startup claims for unattempted snapshots.
+- The repair batch changes no frontend files. Frontend build and Storybook validation are not claimed for this repair batch.
 
 ## Remaining Gaps
 

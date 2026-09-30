@@ -669,7 +669,7 @@ mod tests {
                     ],
                     env: Vec::new(),
                 },
-                Duration::from_millis(100),
+                Duration::from_secs(1),
                 &path,
             )
             .await

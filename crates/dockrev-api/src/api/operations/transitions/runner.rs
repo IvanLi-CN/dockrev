@@ -151,14 +151,27 @@ async fn finish_recovered_update_job(
 
     let error = last_error.expect("at least one finish attempt ran");
     let retry_at = now_rfc3339().unwrap_or_else(|_| finished_at.to_string());
-    if let Err(rearm_error) = db
+    match db
         .rearm_update_stop_recovery(job_id, &error.to_string(), &retry_at)
         .await
     {
-        tracing::error!(job_id = %job_id, finish_error = %error, rearm_error = %rearm_error, "could not finish or rearm interrupted update recovery");
-        return;
+        Ok(true) => {
+            tracing::error!(job_id = %job_id, error = %error, "could not finish interrupted update recovery; retry is pending for the next startup");
+        }
+        Ok(false) => {
+            if clear_snapshot_on_success
+                && let Err(clear_error) = db
+                    .clear_update_stop_recovery_snapshot(job_id, &retry_at)
+                    .await
+            {
+                tracing::warn!(job_id = %job_id, error = %clear_error, "could not clear completed update recovery snapshot");
+            }
+            tracing::error!(job_id = %job_id, error = %error, "could not finish interrupted update recovery; retry is no longer eligible");
+        }
+        Err(rearm_error) => {
+            tracing::error!(job_id = %job_id, finish_error = %error, rearm_error = %rearm_error, "could not finish or rearm interrupted update recovery");
+        }
     }
-    tracing::error!(job_id = %job_id, error = %error, "could not finish interrupted update recovery; retry is pending for the next startup");
 }
 
 #[async_trait::async_trait]

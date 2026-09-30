@@ -161,7 +161,7 @@ pub(super) async fn recover_interrupted_capture(
         if tokio::fs::metadata(&log_path).await.is_err()
             && tokio::fs::metadata(&partial_path).await.is_err()
         {
-            let log = create_private_log(&log_path).await?;
+            let log = create_private_file(&log_path).await?;
             log.sync_all().await?;
         }
         let stored_metadata = match tokio::fs::metadata(&log_path).await {
@@ -177,7 +177,7 @@ pub(super) async fn recover_interrupted_capture(
     write_manifest(spool, records).await
 }
 
-pub(super) async fn create_private_log(path: &Path) -> std::io::Result<tokio::fs::File> {
+pub(super) async fn create_private_file(path: &Path) -> std::io::Result<tokio::fs::File> {
     let mut options = tokio::fs::OpenOptions::new();
     options.write(true).create_new(true);
     #[cfg(unix)]
@@ -245,11 +245,7 @@ async fn copy_log_file_atomically(partial_path: &Path, log_path: &Path) -> anyho
     }
     let result = async {
         let mut source = tokio::fs::File::open(partial_path).await?;
-        let mut destination = tokio::fs::OpenOptions::new()
-            .create_new(true)
-            .write(true)
-            .open(&promotion_path)
-            .await?;
+        let mut destination = create_private_file(&promotion_path).await?;
         tokio::io::copy(&mut source, &mut destination).await?;
         destination.flush().await?;
         destination.sync_all().await?;
@@ -301,8 +297,19 @@ pub(super) async fn write_manifest(dir: &Path, records: &[EvidenceMetadata]) -> 
 }
 
 async fn atomic_write(path: PathBuf, bytes: Vec<u8>) -> anyhow::Result<()> {
+    use tokio::io::AsyncWriteExt as _;
+
     let tmp = path.with_extension("tmp");
-    tokio::fs::write(&tmp, bytes).await?;
+    match tokio::fs::remove_file(&tmp).await {
+        Ok(()) => {}
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+        Err(error) => return Err(error.into()),
+    }
+    let mut file = create_private_file(&tmp).await?;
+    file.write_all(&bytes).await?;
+    file.flush().await?;
+    file.sync_all().await?;
+    drop(file);
     set_owner_only(&tmp)?;
     tokio::fs::rename(tmp, path).await?;
     Ok(())
@@ -409,6 +416,39 @@ mod tests {
         );
 
         drop(file);
+        tokio::fs::remove_dir_all(root)
+            .await
+            .expect("remove test root");
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn evidence_archive_is_owner_only_after_creation() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let root =
+            std::env::temp_dir().join(format!("dockrev-private-archive-{}", ulid::Ulid::new()));
+        let spool = root.join("job");
+        tokio::fs::create_dir_all(&spool).await.expect("spool");
+        tokio::fs::write(spool.join("container.log"), b"private candidate output")
+            .await
+            .expect("candidate log");
+        let part = root.join("job.tar.zst.part");
+        let archive = root.join("job.tar.zst");
+
+        archive_dir(&spool, &part, &archive)
+            .await
+            .expect("build archive");
+
+        assert_eq!(
+            tokio::fs::metadata(&archive)
+                .await
+                .expect("archive metadata")
+                .permissions()
+                .mode()
+                & 0o777,
+            0o600
+        );
         tokio::fs::remove_dir_all(root)
             .await
             .expect("remove test root");
