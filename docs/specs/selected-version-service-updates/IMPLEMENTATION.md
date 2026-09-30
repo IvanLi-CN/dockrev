@@ -17,20 +17,20 @@
 - Automatic updates: 成功的计划或匹配 GHCR Webhook 检查可重验已存在候选，但只有观测服务、镜像仓库、当前配置标签和候选摘要全部一致，且候选摘要仍不同于当前部署时才重新进入自动策略。严格 SemVer 仅从该条摘要绑定观测传入结算；普通展示字符串仍不能跳过候选推断。策略变化等原因取消尚未启动的 auto-policy 更新时，同一事务会释放其服务接受状态代次；启动迁移也会恢复仍匹配已取消任务租约的旧代次，避免取消任务永久阻塞后续操作。
 - UI: 普通/强制更新按钮和一层/两层确认已接入版本列表，其他更新入口沿用原行为。
 - Verification commands:
-- `cargo fmt --all -- --check`
-- `cargo clippy --workspace --all-targets --all-features -- -D warnings`
-- `cargo test --all-features`（982 passed、1 ignored）
-- Automatic-policy recheck tests: 11 passed; digest-bound settlement regression test: 1 passed; cancelled auto-policy service-lease release, startup recovery, and stale update-guard enqueue tests passed.
-  - In `web/`: `bun run build`（258 tests passed、815 assertions）、`bun run lint`（0 errors；3 existing hook warnings）、`bun run build:demo:pages`
+  - `cargo fmt --all -- --check`
+  - `cargo clippy --workspace --all-targets --all-features --locked -- -D warnings`
+  - `cargo test --workspace --locked --all-features -- --test-threads=2`（983 passed、1 ignored）
+  - Automatic-policy recheck tests: 11 passed; digest-bound settlement regression test: 1 passed; cancelled auto-policy service-lease release, startup recovery, and stale update-guard enqueue tests passed.
+  - In `web/`: `bun run build`（264 tests passed、830 assertions）、`bun run lint`（0 errors；3 existing hook warnings）、`bun run build:demo:pages`
   - TypeScript build, selected-version Spec contract check, and visual-evidence document check passed; the related legacy service-detail Spec retains its historical format and does not pass the current canonical-format checker.
   - In `web/`: `node ./scripts/storybook-build.mjs` and `DOCKREV_TEST_STORYBOOK_SMOKE_ONLY=1 bun run test-storybook` (421 stories passed, including both selected-version submission flows).
 - Rollout facts: 新安装和升级数据库均从空的历史归属表开始，只积累今后成功检查产生的观察。
 
 ## Empirical Acceptance
 
-- Scenario: 在隔离 Compose 服务上确认 D34 基线，将 Registry 的 `latest` 指向 D37 并完成一次成功检查；D37 预检分类为普通更新，指定版本任务部署其摘要。随后将 Registry `latest` 指向新的 D38 测试摘要，通过真正的计划检查与自动策略任务推进到 D38。
-- Result: D34、D37、D38 摘要分别为 `sha256:b0d712eccfb116298225e4d51c03aee625d16a00d1ab9c9868dcdcfecfc4d`、`sha256:81cfed97581757e1d0ac95be6fd7e81845a7015a9d761f9739ed29ea1beb482d`、`sha256:da8102b0715d575674b86f64cb15a61d6f46b610a79a25262d787fcd776e3b90`。D37 普通指定更新任务 `job_01M3PYJGQENNN3K22EYPHA3JVW` 成功；计划检查 `chk_01M3PZ5BXXQ52JMJNQX04B7Z71` 成功观察 D38；自动策略任务 `job_01M3PZ5KGVMSBJ3X5RGP1GXMQF` 成功将服务从 D37 推进至 D38。运行镜像和本地 `latest` 均为 D38；Compose 文件 SHA-256 在指定版本更新前后均为 `f81eaa19847b54e8d23f123cd65454eca29c10165ec3317c32d329aeabc0a73c`。
-- Evidence: 本轮检查、预检、指定更新、计划检查、自动策略任务、最终运行摘要和 Compose 文件摘要保存在 `/srv/codex/agents/01a0d6f3-3124-7432-9daa-99fd4bfb3755/validation-08a2c8e7/replay/evidence`。
+- Scenario: 在隔离 Compose 服务上以 D34 为当前摘要，将 Registry 的 `latest` 指向 D37 并完成成功检查；D37 预检分类为普通更新，指定版本任务按其观测摘要部署。随后将 `latest` 指向新的 D38 测试摘要，通过真实的计划检查和自动策略任务推进到 D38。
+- Result: D34、D37、D38 摘要分别为 `sha256:b0d712eccfb116298225e4d51c03aee625d16a00d1ab9c9868dcdcfecfc4d`、`sha256:81cfed97581757e1d0ac95be6fd7e81845a7015a9d761f9739ed29ea1beb482d`、`sha256:691df418ed6f4c1986bdc4afdc52904d9f896a0b7b83fe9dc68dc5f60ce8c8b1`。D37 普通指定更新任务 `job_01M3RA2B9863Q87RYFJ8V8Y61H` 成功从 D34 更新至 D37，未拉取目标标签；计划检查 `chk_01M3RA9ZK1ZKAPC0EV3AS31G1B` 于 `2026-09-30T04:49:00Z` 成功观察 D38；自动策略任务 `job_01M3RAA8FZ3M0M2B5EAK60Z68X` 成功将服务从 D37 推进至 D38。最终运行镜像和本地 `latest` 均指向 D38；Compose 文件 SHA-256 为 `f81eaa19847b54e8d23f123cd65454eca29c10165ec3317c32d329aeabc0a73c`，更新前后相同。
+- Evidence: 本次检查、预检、指定更新、计划检查、自动策略任务、最终运行摘要及 Compose 文件摘要保存在 `/srv/codex/agents/01a0d6f3-3124-7432-9daa-99fd4bfb3755/validation-e3173183/a4/evidence`。
 - Test transport: 测试 Registry 使用任务自有 TLS CA。为让隔离应用访问该 CA，验证构建临时启用了 Reqwest native-root feature；仓库依赖配置和正式运行时 TLS 配置未改变。D38 是在隔离测试 Registry 内从 D37 容器创建的带任务标签镜像，用于产生独立的后续摘要，不代表公开 Registry 镜像。
 - Candidate binding: 最终候选 SHA、验收合同摘要、必需场景摘要和最终运行日志位置保存在当前交付流的 Candidate evidence card 中。
 
