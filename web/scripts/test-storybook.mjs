@@ -9,6 +9,12 @@ const SCRIPT_DIR = path.dirname(fileURLToPath(import.meta.url));
 const DEFAULT_OUTDIR = path.resolve(SCRIPT_DIR, "../storybook-static");
 const DEFAULT_PORT = 50887;
 const STORIES_REQUIRING_PLAY_SUCCESS = [
+  "components-notificationcenter--desktop",
+  "components-notificationcenter--mark-all-read",
+  "components-notificationcenter--read-before-navigation",
+  "components-notificationcenter--service-read-before-navigation",
+  "components-notificationcenter--aggregate-read-before-navigation",
+  "components-notificationcenter--ghcr-read-before-navigation",
   "pages-servicedetailpage--versions-section",
   "pages-servicedetailpage--mobile-versions-section",
   "pages-servicedetailpage--versions-section-normal-update-submission",
@@ -3330,11 +3336,17 @@ async function main() {
   const lightLogsOnly = process.env.DOCKREV_TEST_STORYBOOK_LIGHT_LOGS_ONLY === "1";
   const smokeOnly = process.env.DOCKREV_TEST_STORYBOOK_SMOKE_ONLY === "1";
   const interactiveOnly = process.env.DOCKREV_TEST_STORYBOOK_INTERACTIVE_ONLY === "1";
+  const notificationOnly = process.env.DOCKREV_TEST_STORYBOOK_NOTIFICATION_ONLY === "1";
   const rollbackRaceOnly = process.env.DOCKREV_TEST_STORYBOOK_ROLLBACK_RACE_ONLY === "1";
   const splitActionHoverOnly = process.env.DOCKREV_TEST_STORYBOOK_SPLIT_ACTION_HOVER_ONLY === "1";
-  if (smokeOnly && (interactiveOnly || rollbackRaceOnly || splitActionHoverOnly)) {
+  if (smokeOnly && (interactiveOnly || notificationOnly || rollbackRaceOnly || splitActionHoverOnly)) {
     throw new Error(
       "DOCKREV_TEST_STORYBOOK_SMOKE_ONLY cannot be combined with another focused Storybook test mode.",
+    );
+  }
+  if (notificationOnly && (interactiveOnly || rollbackRaceOnly || splitActionHoverOnly)) {
+    throw new Error(
+      "DOCKREV_TEST_STORYBOOK_NOTIFICATION_ONLY cannot be combined with another focused Storybook test mode.",
     );
   }
   if (splitActionHoverOnly && (interactiveOnly || rollbackRaceOnly)) {
@@ -3356,6 +3368,12 @@ async function main() {
     try {
       if (lightLogsOnly) {
         await assertServiceLogsLightContrast({ baseUrl: targetUrl, browser });
+      } else if (notificationOnly) {
+        await runSmoke({
+          baseUrl: targetUrl,
+          storyIds: storyIds.filter((id) => id.startsWith("components-notificationcenter--")),
+          browser,
+        });
       } else {
         if (!splitActionHoverOnly && (smokeOnly || (!interactiveOnly && !rollbackRaceOnly))) {
           const selectedStoryIds = smokeOnly ? selectSmokeShard(storyIds) : storyIds;
@@ -3413,6 +3431,12 @@ async function main() {
     try {
       if (lightLogsOnly) {
         await assertServiceLogsLightContrast({ baseUrl: localUrl, browser });
+      } else if (notificationOnly) {
+        await runSmoke({
+          baseUrl: localUrl,
+          storyIds: storyIds.filter((id) => id.startsWith("components-notificationcenter--")),
+          browser,
+        });
       } else {
         if (!splitActionHoverOnly && (smokeOnly || (!interactiveOnly && !rollbackRaceOnly))) {
           const selectedStoryIds = smokeOnly ? selectSmokeShard(storyIds) : storyIds;

@@ -119,6 +119,21 @@
 - A failed Push attempt, expired subscription, missing Push permission, or external channel failure MUST preserve the unread item and its count.
 - Concurrent clients MUST converge on the server response after read actions, including when one client marks an item read while another is polling.
 
+### REQ-NPB-013
+
+- Inbox notification titles and bodies MUST use concise, human-readable summaries that identify the event type, affected object when available, and outcome or change.
+- Job-finished summaries MUST identify the job type and terminal result when those facts are available. Missing or unsuitable summaries MUST use a fixed human-readable fallback and MUST NOT serialize raw JSON, internal IDs, digests, or long error details into the inbox.
+- New-version summaries MUST show the total number of affected services in the title and MUST show at most the first two service names with readable current-to-candidate version changes in the body. The existing notification target MUST remain the entry point to the complete check result.
+- GHCR anomaly summaries MUST translate missing, conflicting and failed states into human-readable descriptions and MUST NOT expose raw state keys or long error details.
+- The inbox MUST continue to use the existing `title`, `body`, and `url` fields. External notification channel templates and payloads MUST remain unchanged.
+
+### REQ-NPB-014
+
+- The notification inbox MUST best-effort update the title and body of existing unread notification items only when retained source records reliably reconstruct the summary. Items without sufficient source data MUST keep their existing title and body.
+- Summary backfill MUST preserve notification ID, kind, identity, target URL, source job ID, creation time, read state, and unread count. It MUST be registered as a versioned, one-time migration and MUST be safe on repeated startup.
+- Notification item body text MUST wrap naturally without line-count truncation, and each row MUST expose a visible task or service detail action consistent with its existing target.
+- Clicking a notification row MUST continue to acknowledge it before navigating to its existing target.
+
 ## Verification
 
 ### VER-NPB-001
@@ -169,14 +184,38 @@
 - covers: `REQ-NPB-005`, `REQ-NPB-012`
 - Pass condition: One client acknowledging an item is reflected by the other after broadcast or the next authoritative sync, without negative counts or resurrection.
 
+### VER-NPB-009
+
+- Method: `cargo test -p dockrev-api notification_summary`, covering representative job, aggregated new-version, and GHCR anomaly notification inputs.
+- covers: `REQ-NPB-013`
+- Pass condition: Titles and bodies are readable and contain no machine payload; job text identifies type and result; version text has an accurate total and no more than two named changes; each GHCR anomaly state has a human-readable description; missing summaries use a fixed readable fallback without JSON, internal IDs, digests, or long errors.
+
+### VER-NPB-010
+
+- Method: `cargo test -p dockrev-api notification_summary`, covering unread items with complete and missing source records, including a repeated migration run.
+- covers: `REQ-NPB-014`
+- Pass condition: Only reconstructable unread items have title/body updated; all other fields and unread count are unchanged; items without reliable sources retain their original text; the migration registry prevents a second backfill.
+
+### VER-NPB-011
+
+- Method: `bun run test:notification-center-summary-interactions` after `bun run build-storybook`, covering task, service, aggregated, and GHCR notification actions.
+- covers: `REQ-NPB-013`, `REQ-NPB-014`
+- Pass condition: Full body text wraps without line truncation, a visible detail action is present, row clicks mark the item read before navigating to the existing target, and aggregated notifications still open the complete list.
+
+### VER-NPB-012
+
+- Method: `visual:notification-center-desktop-mobile` using a deterministic mock-only drawer at desktop and 393x852 CSS-pixel viewports.
+- covers: `REQ-NPB-013`, `REQ-NPB-014`
+- Pass condition: Task and version summaries and their detail actions are fully readable without overflow, clipping, or occlusion.
+
 ## Related ADRs
 
 - [ADR 0014：通知收件箱与 PWA Badge 的一致性边界](../../adr/0014-notification-inbox-pwa-badge.md)
 
 ## Visual Evidence
 
-- ![Desktop notification drawer](./assets/notification-center-desktop.png)
-- ![393x852 mobile notification drawer](./assets/notification-center-mobile-393.png)
+- ![Desktop notification drawer with readable summaries and detail actions](./assets/notification-center-desktop.png)
+- ![393x852 mobile notification drawer with readable summaries and detail actions](./assets/notification-center-mobile-393.png)
 - ![Desktop AppShell notification drawer](./assets/notification-center-appshell-desktop.png)
 - ![393x852 mobile AppShell notification drawer](./assets/notification-center-appshell-mobile-393.png)
 

@@ -1373,6 +1373,7 @@ pub(crate) async fn run_update_job(
         None
     };
     let notification = notify::prepare_job_notification_item_for_finish(
+        state.as_ref(),
         should_notify,
         &job_id,
         &final_status,

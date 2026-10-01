@@ -23,6 +23,7 @@ mod new_version_notifications;
 mod notification_anomalies;
 mod notification_items;
 mod notification_outbox;
+mod notification_summaries;
 mod repo_links;
 mod resource_usage;
 mod schema;
@@ -178,6 +179,12 @@ pub(crate) use notification_anomalies::NotificationAnomalyOccurrence;
 pub(crate) use notification_items::{
     NOTIFICATION_KIND_GHCR_ANOMALY, NOTIFICATION_KIND_JOB_FINISHED, NOTIFICATION_KIND_NEW_VERSION,
     NotificationInboxPage, NotificationItemDraft, NotificationItemRow,
+};
+pub(crate) use notification_summaries::{
+    NotificationGhcrSummaryEntry, NotificationVersionSummaryEntry,
+    format_ghcr_anomaly_notification_body, format_ghcr_anomaly_notification_title,
+    format_job_notification_summary, format_new_version_notification_body,
+    format_new_version_notification_title, notification_version_tag_is_readable,
 };
 
 use crate::{

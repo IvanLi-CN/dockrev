@@ -131,6 +131,14 @@ _Avoid_: channel delivery, push receipt, message count
 One user-facing aggregate representation of a notification event and the unit counted by the PWA badge. Multiple services or repositories included in the same event remain one notification item.
 _Avoid_: service notification, repository notification, delivery record
 
+**notification summary**:
+A concise, human-facing description of what happened, which object it affected, and the outcome. It supports recognition of the event without exposing machine-oriented payload data.
+_Avoid_: raw notification body, progress payload
+
+**notification diagnostic detail**:
+Supplemental operational evidence used to investigate a notification, such as raw progress or error output. It is distinct from the event's summary.
+_Avoid_: notification summary, notification headline
+
 **unread notification**:
 A notification item that the operator has not explicitly acknowledged. Opening Dockrev, displaying a notification, or reading the same event in an external channel does not acknowledge it.
 _Avoid_: pending event, undelivered notification

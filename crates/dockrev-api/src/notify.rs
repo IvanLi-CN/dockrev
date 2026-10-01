@@ -15,6 +15,7 @@ use web_push::{
 };
 
 mod delivery;
+mod summary;
 
 #[cfg(test)]
 use delivery::*;
@@ -91,7 +92,7 @@ pub async fn prepare_job_notification_item_with_event_enabled(
     job_id: &str,
     status: &str,
     now_rfc3339: &str,
-    summary: &Value,
+    _summary: &Value,
     event_enabled_override: Option<bool>,
 ) -> anyhow::Result<Option<crate::db::NotificationItemDraft>> {
     let event_enabled = match event_enabled_override {
@@ -105,12 +106,21 @@ pub async fn prepare_job_notification_item_with_event_enabled(
         return Ok(None);
     }
     let target_url = notification_target_url(state, &format!("queue/{job_id}")).await?;
+    let context = state.db.get_notification_job_context(job_id).await?;
+    let (title, body) = crate::db::format_job_notification_summary(
+        context.as_ref().map(|value| value.job_type.as_str()),
+        context.as_ref().map(|value| value.scope.as_str()),
+        context
+            .as_ref()
+            .and_then(|value| value.target_name.as_deref()),
+        status,
+    );
     Ok(Some(crate::db::NotificationItemDraft {
         id: crate::ids::new_notification_id(),
         kind: crate::db::NOTIFICATION_KIND_JOB_FINISHED.to_string(),
         identity_key: format!("job_finished:{job_id}"),
-        title: format!("任务已{}", status_label(status)),
-        body: job_notification_body(status, summary),
+        title,
+        body,
         target_url,
         source_job_id: Some(job_id.to_string()),
         created_at: now_rfc3339.to_string(),
@@ -118,22 +128,32 @@ pub async fn prepare_job_notification_item_with_event_enabled(
 }
 
 pub async fn prepare_job_notification_item_for_finish(
+    state: &AppState,
     should_notify: bool,
     job_id: &str,
     status: &str,
     now_rfc3339: &str,
-    summary: &Value,
+    _summary: &Value,
 ) -> anyhow::Result<Option<crate::db::NotificationItemDraft>> {
     if !should_notify {
         return Ok(None);
     }
     let target_url = best_effort_url(None, &format!("queue/{job_id}"));
+    let context = state.db.get_notification_job_context(job_id).await?;
+    let (title, body) = crate::db::format_job_notification_summary(
+        context.as_ref().map(|value| value.job_type.as_str()),
+        context.as_ref().map(|value| value.scope.as_str()),
+        context
+            .as_ref()
+            .and_then(|value| value.target_name.as_deref()),
+        status,
+    );
     Ok(Some(crate::db::NotificationItemDraft {
         id: crate::ids::new_notification_id(),
         kind: crate::db::NOTIFICATION_KIND_JOB_FINISHED.to_string(),
         identity_key: format!("job_finished:{job_id}"),
-        title: format!("任务已{}", status_label(status)),
-        body: job_notification_body(status, summary),
+        title,
+        body,
         target_url,
         source_job_id: Some(job_id.to_string()),
         created_at: now_rfc3339.to_string(),
@@ -269,6 +289,14 @@ async fn notify_new_versions_discovered_inner(
         format!("queue/{check_job_id}")
     };
     let target_url = notification_target_url(state, &target_path).await?;
+    let service_ids = discovered_services
+        .iter()
+        .map(|service| service.service_id.clone())
+        .collect::<Vec<_>>();
+    let service_names = state
+        .db
+        .get_service_names_for_notifications(&service_ids)
+        .await?;
     let Some((reservations, notification_item_id, notification_unread_count)) = state
         .db
         .reserve_new_version_notifications_with_item(
@@ -277,8 +305,16 @@ async fn notify_new_versions_discovered_inner(
                 id: crate::ids::new_notification_id(),
                 kind: crate::db::NOTIFICATION_KIND_NEW_VERSION.to_string(),
                 identity_key,
-                title: format!("发现 {} 个新版本", discovered_services.len()),
-                body: new_version_notification_body(&discovered_services),
+                title: crate::db::format_new_version_notification_title(
+                    discovered_services
+                        .iter()
+                        .map(|service| service.service_id.as_str())
+                        .collect::<std::collections::BTreeSet<_>>()
+                        .len(),
+                ),
+                body: crate::db::format_new_version_notification_body(
+                    &summary::notification_version_entries(&discovered_services, &service_names),
+                ),
                 target_url,
                 source_job_id: Some(check_job_id.to_string()),
                 created_at: dispatch_now_rfc3339.clone(),
@@ -581,8 +617,17 @@ pub async fn notify_ghcr_webhook_anomaly(
                     id: crate::ids::new_notification_id(),
                     kind: crate::db::NOTIFICATION_KIND_GHCR_ANOMALY.to_string(),
                     identity_key: format!("ghcr_webhook_anomaly:{batch_id}"),
-                    title: format!("GHCR Webhook 发现 {} 个异常", anomaly_repos.len()),
-                    body: ghcr_anomaly_notification_body(&anomaly_repos),
+                    title: crate::db::format_ghcr_anomaly_notification_title(anomaly_repos.len()),
+                    body: crate::db::format_ghcr_anomaly_notification_body(
+                        &anomaly_repos
+                            .iter()
+                            .map(|item| crate::db::NotificationGhcrSummaryEntry {
+                                owner: item.owner.clone(),
+                                repo: item.repo.clone(),
+                                state: item.state.clone(),
+                            })
+                            .collect::<Vec<_>>(),
+                    ),
                     target_url: target_url.clone(),
                     source_job_id: has_source_job.then_some(source_job_id.clone()),
                     created_at: now_rfc3339.to_string(),
@@ -658,57 +703,6 @@ async fn notification_target_url(
         public_base_url.as_deref(),
         path_no_leading_slash,
     ))
-}
-
-fn status_label(status: &str) -> &str {
-    match status {
-        "success" | "succeeded" => "成功",
-        "failed" | "error" => "失败",
-        "cancelled" | "canceled" => "取消",
-        "stopped" => "停止",
-        _ => "完成",
-    }
-}
-
-fn job_notification_body(status: &str, summary: &Value) -> String {
-    let detail = summary
-        .get("message")
-        .or_else(|| summary.get("summary"))
-        .and_then(Value::as_str)
-        .map(str::to_string)
-        .unwrap_or_else(|| summary.to_string());
-    format!("任务{}：{}", status_label(status), detail)
-}
-
-fn new_version_notification_body(items: &[NewVersionDiscoveredService]) -> String {
-    let names = items
-        .iter()
-        .take(5)
-        .map(|item| {
-            format!(
-                "{}: {} -> {}",
-                item.service_id, item.current_display_tag, item.candidate_display_tag
-            )
-        })
-        .collect::<Vec<_>>();
-    if names.len() < items.len() {
-        format!(
-            "{}；另有 {} 项",
-            names.join("；"),
-            items.len() - names.len()
-        )
-    } else {
-        names.join("；")
-    }
-}
-
-fn ghcr_anomaly_notification_body(items: &[GhcrWebhookAnomalyRepo]) -> String {
-    items
-        .iter()
-        .take(8)
-        .map(|item| format!("{}/{} [{}]", item.owner, item.repo, item.state))
-        .collect::<Vec<_>>()
-        .join("、")
 }
 
 pub async fn send_test(
