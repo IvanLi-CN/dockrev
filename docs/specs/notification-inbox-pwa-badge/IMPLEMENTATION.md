@@ -15,8 +15,8 @@
 - `REQ-NPB-008` and `REQ-NPB-011`: AppShell 在认证分支接入启动、恢复、焦点、联网、可见轮询、BroadcastChannel 和 Badging API 能力检测。
 - `REQ-NPB-010`: Topbar Bell、桌面/移动抽屉、显式单条已读、全部已读和点击后导航已实现。
 - `REQ-NPB-012`: 任务终态与 `job_finished` 收件箱项在同一 SQLite 事务提交；检查任务完成事务同时写入可重放的通知 dispatch outbox，进程在候选预留前或外部投递前退出时，服务启动会继续处理未完成 dispatch。检查任务的新版本候选与收件箱项在候选预留事务中一起提交，其他收件箱项先于外部投递写入。候选通知按 `service + candidate digest` 保持活动去重，并保留 canonical check-job identity，使失败重试、进程崩溃后的 pending 重试和候选子集观察复用同一收件箱项；候选投递使用短租约 claim，避免并发发送者重复投递，租约过期后仍可恢复。GHCR pending 异常由可重放的 occurrence 队列保留稳定批次身份，同一次审计的状态变化聚合为一个 batch，后续审计使用新 batch，恢复不会丢弃待投递 occurrence；每个异常批次还记录已成功的外部渠道和 Push 订阅，部分失败重试不会重复投递成功目标。DB identity key、dispatch outbox、状态账本、occurrence 重放、失败重试渠道继承和绝对读响应测试已覆盖核心并发/重试边界。
-- `REQ-NPB-013`: 共享 formatter 按任务类型/终态、新版本服务名/可读版本、GHCR 异常类型生成摘要。聚合新版本标题显示总服务数，正文列出最多两项；不从任务进度 JSON、内部 ID、digest 或异常长错误构造收件箱文案，版本标签过滤会拒绝内部服务 ID 和 `service-internal` 标记。版本行的 first-seen `service_id` 去重与显示映射由 `notify/summary.rs` 集中承载，`notify.rs` 委托该 helper 后保持既有摘要结果。
-- `REQ-NPB-014`: SQLite migration `0042_backfill_notification_summaries` 仅处理仍未读且可从保留源记录可靠重建的项目，只更新 `title`/`body`；缺失或不完整的源记录保持原文。抽屉正文自然换行，并显示与原目标一致的任务、服务、清单或审计入口；行点击仍先确认已读再导航。通知截图采集预检在写入截图前断言视口、抽屉和列表均无溢出。
+- `REQ-NPB-013`: 共享 formatter 按任务类型/终态、新版本服务名/可读版本、GHCR 异常类型生成摘要。聚合新版本标题显示总服务数，正文列出最多两项；不从任务进度 JSON、内部 ID、digest 或异常长错误构造收件箱文案，版本标签仅接受可读 Docker 标签格式并回退 ULID、`service-internal` 和其他非标签载荷。版本行的 first-seen `service_id` 去重与显示映射由 `notify/summary.rs` 集中承载，`notify.rs` 委托该 helper 后保持既有摘要结果。
+- `REQ-NPB-014`: SQLite migration `0042_backfill_notification_summaries` 仅处理仍未读且可从保留源记录可靠重建的项目，只更新 `title`/`body`；缺失或不完整的源记录保持原文。抽屉正文自然换行，并显示与原目标一致的任务、服务、清单或审计入口；任务、单服务、聚合清单及 GHCR 审计入口均覆盖点击后先确认已读再导航。通知截图采集预检在写入截图前断言视口、抽屉和列表无溢出，且摘要未被行数截断或裁切。
 
 ## Existing Foundations
 

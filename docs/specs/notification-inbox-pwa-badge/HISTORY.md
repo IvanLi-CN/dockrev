@@ -17,7 +17,7 @@
 ## Related Changes
 
 - ADR 0014 records the server-authoritative count, REST plus BroadcastChannel synchronization, optional Push, and Service Worker click-handshake boundary.
-- PR #429 records the readable task, version, and GHCR inbox summaries, unread-only summary backfill, and desktop/mobile drawer evidence with overflow checks.
+- PR #429 records the readable task, version, and GHCR inbox summaries, unread-only summary backfill, all notification target interactions, and desktop/mobile drawer evidence with overflow and text-truncation checks.
 
 ## References
 
