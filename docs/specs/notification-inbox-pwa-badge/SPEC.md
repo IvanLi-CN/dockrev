@@ -214,8 +214,8 @@
 
 ## Visual Evidence
 
-- ![Desktop notification drawer](./assets/notification-center-desktop.png)
-- ![393x852 mobile notification drawer](./assets/notification-center-mobile-393.png)
+- ![Desktop notification drawer with readable summaries and detail actions](./assets/notification-center-desktop.png)
+- ![393x852 mobile notification drawer with readable summaries and detail actions](./assets/notification-center-mobile-393.png)
 - ![Desktop AppShell notification drawer](./assets/notification-center-appshell-desktop.png)
 - ![393x852 mobile AppShell notification drawer](./assets/notification-center-appshell-mobile-393.png)
 

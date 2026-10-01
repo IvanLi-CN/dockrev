@@ -4,7 +4,7 @@
 
 ## Current Status
 
-- Implementation: 通知摘要整改已实现；更新收件箱截图待主人确认
+- Implementation: 通知摘要整改与桌面/移动收件箱视觉验收已完成
 - Lifecycle: active
 - Catalog note: 任务、新版本和 GHCR 异常摘要已统一为可读文案；运行时代码、数据库迁移、API、Push 与 AppShell 保持既有边界。
 
@@ -35,7 +35,7 @@
 - `bun run lint`: 0 errors；3 条既有 warning 位于 `GitHubReleaseDrawer.tsx`、`ServiceVersionsSection.tsx`、`ServiceDetailPage.tsx`。
 - `bun run build-storybook`: 通过；输出 `radix-ui` package metadata 与大 chunk 提示。
 - `bun run test:notification-center-summary-interactions`（先运行 `bun run build-storybook`）: 通知中心 10 个故事通过，包含任务/服务确认后导航与摘要动作可见性。
-- `bun run storybook:screenshots --only notification-center-desktop.png,notification-center-mobile-393.png --outdir <temporary-directory>`: 截图捕获及源管理边距预检通过；替换 Spec 图片仍待主人确认。
+- `bun run storybook:screenshots --only notification-center-desktop.png,notification-center-mobile-393.png --outdir <temporary-directory>`: Storybook mock-only 抽屉在 1800x960 与 393x852 CSS px 视口完成采集；边距、视口、抽屉和列表溢出预检通过，基线差异经主人确认后写入 Spec 规范图片。
 - `DOCKREV_TEST_STORYBOOK_INTERACTIVE_ONLY=1 bun run test-storybook`: 未通过；在既有 Overview 移动导航交互中等待 `document.body.style.overflow === "hidden"` 超时，与通知故事无关。
 
 ## Rollout Facts
@@ -50,7 +50,7 @@
 
 - 外部 Push 服务的真实网络投递和不同浏览器原生图标 Badge 仍需部署环境验收；本地浏览器已验证页面 Badge/抽屉和 393x852 布局。
 - 端到端双标签页和冷启动系统通知需要在启用真实 Push 的部署环境中继续验证；代码路径和协议测试已就绪。
-- 当前通知中心桌面与移动截图候选已完成基线比较；因摘要和抽屉内容变化，等待主人确认后再替换规范图片。
+- 当前通知中心桌面与移动截图已完成基线比较和主人确认；规范图片包含任务、新版本、GHCR 异常摘要及其详情入口。
 
 ## Related Changes
 
