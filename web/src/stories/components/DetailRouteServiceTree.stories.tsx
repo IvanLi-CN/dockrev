@@ -33,8 +33,9 @@ export const RuntimeStateMatrix: Story = {
   render: render('desktop'),
   play: async ({ canvasElement }) => {
     await waitForCondition(() => Boolean(canvasElement.querySelector('.detailRouteServiceLink')))
-    const toggles = canvasElement.querySelectorAll<HTMLButtonElement>('.detailRouteStackToggle')
-    toggles[1]?.click()
+    const stackNames = Array.from(canvasElement.querySelectorAll('.detailRouteStackLabel'), (label) => label.textContent?.trim())
+    expectStory(stackNames.join(',') === 'infra,prod', 'stacks should be listed by natural name order')
+    canvasElement.querySelector<HTMLButtonElement>('[aria-label="展开 infra"]')?.click()
     await waitForCondition(() => canvasElement.querySelectorAll('.detailRouteStatusDotLifecycle-running, .detailRouteStatusDotLifecycle-partial, .detailRouteStatusDotLifecycle-stopped, .detailRouteStatusDotLifecycle-unknown').length >= 6)
     const dots = canvasElement.querySelectorAll('.detailRouteStatusDotLifecycle-running, .detailRouteStatusDotLifecycle-partial, .detailRouteStatusDotLifecycle-stopped, .detailRouteStatusDotLifecycle-unknown')
     expectStory(dots.length >= 6, 'service tree should show lifecycle states across expanded stacks')
@@ -88,6 +89,10 @@ export const RuntimeStateMatrixMobile: Story = {
     expectStory(firstServiceList!.getBoundingClientRect().top - firstStackRow!.getBoundingClientRect().bottom <= 2.5, 'mobile stack headers and service lists should use a tight 2px rhythm')
     expectStory(secondGroup!.getBoundingClientRect().top - firstServiceList!.getBoundingClientRect().bottom <= 8.5, 'mobile stack groups should keep an 8px structural separation')
   },
+}
+
+export const NaturalNameOrder: Story = {
+  render: render('desktop'),
 }
 
 export const StaleScanMobile: Story = {

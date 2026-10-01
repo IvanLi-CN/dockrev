@@ -1533,6 +1533,14 @@ async function runInteractive({ baseUrl, browser }) {
   {
     const page = await openStory("pages-overviewpage--default");
     try {
+      await page.waitForFunction(
+        (storyId) =>
+          window.__STORYBOOK_PREVIEW__?.storyRenders?.some(
+            (render) => render.id === storyId && render.phase === "finished",
+          ),
+        "pages-overviewpage--default",
+        { timeout: 10_000 },
+      );
       const apiCard = page
         .locator(".homepageServiceCard", { hasText: "Acme API" })
         .first();
@@ -1576,7 +1584,20 @@ async function runInteractive({ baseUrl, browser }) {
       }
 
       await page.setViewportSize({ width: 390, height: 920 });
-      await page.waitForTimeout(150);
+      await page.waitForFunction(
+        () => {
+          const button = document.querySelector(".mobileMenuButton");
+          const drawer = document.querySelector("#mobileDockrevMenu");
+          return (
+            window.matchMedia("(max-width: 960px)").matches &&
+            button?.getAttribute("aria-expanded") === "false" &&
+            drawer instanceof HTMLElement &&
+            drawer.hidden
+          );
+        },
+        null,
+        { timeout: 10_000 },
+      );
       if (await page.locator(".topbarGlobalContent .homepageTopStrip").isVisible()) {
         throw new Error(
           "Expected mobile overview to remove the resource/search/time strip from the shell header.",
