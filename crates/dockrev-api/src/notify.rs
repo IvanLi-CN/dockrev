@@ -15,6 +15,7 @@ use web_push::{
 };
 
 mod delivery;
+mod summary;
 
 #[cfg(test)]
 use delivery::*;
@@ -312,7 +313,7 @@ async fn notify_new_versions_discovered_inner(
                         .len(),
                 ),
                 body: crate::db::format_new_version_notification_body(
-                    &notification_version_entries(&discovered_services, &service_names),
+                    &summary::notification_version_entries(&discovered_services, &service_names),
                 ),
                 target_url,
                 source_job_id: Some(check_job_id.to_string()),
@@ -702,22 +703,6 @@ async fn notification_target_url(
         public_base_url.as_deref(),
         path_no_leading_slash,
     ))
-}
-
-fn notification_version_entries(
-    items: &[NewVersionDiscoveredService],
-    service_names: &std::collections::HashMap<String, String>,
-) -> Vec<crate::db::NotificationVersionSummaryEntry> {
-    let mut seen = std::collections::BTreeSet::new();
-    items
-        .iter()
-        .filter(|item| seen.insert(item.service_id.as_str()))
-        .map(|item| crate::db::NotificationVersionSummaryEntry {
-            service_name: service_names.get(&item.service_id).cloned(),
-            current_tag: item.current_display_tag.clone(),
-            candidate_tag: item.candidate_display_tag.clone(),
-        })
-        .collect()
 }
 
 pub async fn send_test(
