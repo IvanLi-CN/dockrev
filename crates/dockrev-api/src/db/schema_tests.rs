@@ -1224,6 +1224,7 @@ INSERT INTO jobs (
                 ("item-version", "new_version_discovered", Some("job-notification"), None),
                 ("item-version-missing", "new_version_discovered", Some("job-notification"), None),
                 ("item-version-digest", "new_version_discovered", Some("job-notification"), None),
+                ("item-version-internal", "new_version_discovered", Some("job-notification"), None),
                 ("item-ghcr", "ghcr_webhook_anomaly", Some("job-notification"), None),
             ] {
                 conn.execute(
@@ -1267,6 +1268,19 @@ INSERT INTO new_version_notifications (
           'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
           'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
           'sha256:version-digest', 'sent', '2026-10-01T00:01:00Z', 'item-version-digest')
+"#,
+                [],
+            )?;
+            conn.execute(
+                r#"
+INSERT INTO new_version_notifications (
+  id, service_id, job_id, reason, image_ref, image_tag, current_tag,
+  current_display_tag, candidate_tag, candidate_display_tag, candidate_digest,
+  status, created_at, notification_item_id
+) VALUES ('version-internal', 'service-api', 'job-notification', 'scheduled',
+          'ghcr.io/acme/app', 'latest', 'service-internal', 'service-internal',
+          '2.5.0', '2.5.0', 'sha256:version-internal', 'sent',
+          '2026-10-01T00:01:00Z', 'item-version-internal')
 "#,
                 [],
             )?;
@@ -1360,12 +1374,14 @@ INSERT INTO notification_anomaly_occurrences (
     assert_eq!(row("item-version-missing").4, "旧正文");
     assert_eq!(row("item-version-digest").3, "旧标题");
     assert_eq!(row("item-version-digest").4, "旧正文");
+    assert_eq!(row("item-version-internal").3, "旧标题");
+    assert_eq!(row("item-version-internal").4, "旧正文");
     assert_eq!(row("item-ghcr").3, "GHCR Webhook 有 2 项异常");
     assert_eq!(
         row("item-ghcr").4,
         "acme/api：未在 GHCR 找到关联仓库\nacme/worker：Webhook 检查失败"
     );
-    assert_eq!(unread_before, 6);
+    assert_eq!(unread_before, 7);
     assert_eq!(unread_after, unread_before);
     assert_eq!(migration_count, 1);
 

@@ -156,8 +156,13 @@ fn notification_version_label<'a>(value: &'a str, fallback: &'a str) -> &'a str 
 pub(crate) fn notification_version_tag_is_readable(value: &str) -> bool {
     let value = value.trim();
     let lower = value.to_ascii_lowercase();
+    let service_id_like = lower
+        .strip_prefix("svc_")
+        .is_some_and(|suffix| ulid::Ulid::from_string(suffix).is_ok());
     if value.is_empty()
         || value.len() > 80
+        || lower == "service-internal"
+        || service_id_like
         || ["sha", "digest:"]
             .iter()
             .any(|prefix| lower.starts_with(prefix) && lower.contains(':'))
@@ -225,6 +230,19 @@ mod tests {
         );
         for machine_value in ["service-internal", "sha256:"] {
             assert!(!version_body.contains(machine_value));
+        }
+        let internal_tags = [
+            "service-internal".to_string(),
+            format!("svc_{}", ulid::Ulid::new()),
+        ];
+        for internal_tag in internal_tags {
+            let body = format_new_version_notification_body(&[NotificationVersionSummaryEntry {
+                service_name: Some("支付 API".to_string()),
+                current_tag: internal_tag.clone(),
+                candidate_tag: "2.5.0".to_string(),
+            }]);
+            assert_eq!(body, "支付 API：当前版本 -> 2.5.0");
+            assert!(!body.contains(&internal_tag));
         }
         let digest_version = NotificationVersionSummaryEntry {
             service_name: Some("服务".to_string()),

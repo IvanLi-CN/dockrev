@@ -308,6 +308,12 @@ async function main() {
         },
       }
     })
+    const overflow = Object.entries(geometry.viewportOverflow)
+      .filter(([, hasOverflow]) => hasOverflow)
+      .map(([area]) => area)
+    if (overflow.length > 0) {
+      throw new Error(`Notification visual evidence has overflow: ${overflow.join(', ')}`)
+    }
     console.log(`Notification visual preflight: ${JSON.stringify({
       source_type: 'storybook_canvas',
       scenario: 'notification-details; drawer open; 4 unread notifications',
