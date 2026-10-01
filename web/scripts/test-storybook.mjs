@@ -13,6 +13,8 @@ const STORIES_REQUIRING_PLAY_SUCCESS = [
   "components-notificationcenter--mark-all-read",
   "components-notificationcenter--read-before-navigation",
   "components-notificationcenter--service-read-before-navigation",
+  "components-notificationcenter--aggregate-read-before-navigation",
+  "components-notificationcenter--ghcr-read-before-navigation",
   "pages-servicedetailpage--versions-section",
   "pages-servicedetailpage--mobile-versions-section",
   "pages-servicedetailpage--versions-section-normal-update-submission",

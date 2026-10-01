@@ -63,6 +63,10 @@ function AcknowledgeBeforeNavigation() {
     const item = response.items.find((candidate) => candidate.url === target)
     if (!item?.readAt) {
       setResult('打开时通知尚未标记已读')
+    } else if (target === '/queue/job_story_aggregate') {
+      setResult('已确认已读后打开完整清单')
+    } else if (target === '/queue/job_story_ghcr') {
+      setResult('已确认已读后打开审计任务')
     } else if (target.includes('/services/')) {
       setResult('已确认已读后打开服务详情')
     } else {
@@ -165,5 +169,25 @@ export const ServiceReadBeforeNavigation: Story = {
     await canvas.findByText('查看服务详情', { exact: true })
     await userEvent.click(await canvas.findByRole('button', { name: /发现 1 个新版本/ }))
     await canvas.findByText('已确认已读后打开服务详情')
+  },
+}
+
+export const AggregateReadBeforeNavigation: Story = {
+  render: () => <AcknowledgeBeforeNavigation />,
+  parameters: { dockrevApiScenario: 'notification-details' },
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement)
+    await userEvent.click(await canvas.findByRole('button', { name: /发现 3 个新版本/ }))
+    await canvas.findByText('已确认已读后打开完整清单')
+  },
+}
+
+export const GhcrReadBeforeNavigation: Story = {
+  render: () => <AcknowledgeBeforeNavigation />,
+  parameters: { dockrevApiScenario: 'notification-details' },
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement)
+    await userEvent.click(await canvas.findByRole('button', { name: /GHCR Webhook 有 2 项异常/ }))
+    await canvas.findByText('已确认已读后打开审计任务')
   },
 }

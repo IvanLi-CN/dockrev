@@ -271,6 +271,15 @@ async function main() {
         drawerVertical: target.scrollHeight > target.clientHeight,
         listVertical: list instanceof HTMLElement && list.scrollHeight > list.clientHeight,
       }
+      const summaries = Array.from(target.querySelectorAll('.notificationItemContent > span'), (node) => {
+        const style = getComputedStyle(node)
+        return {
+          lineClamp: style.webkitLineClamp || style.lineClamp || 'none',
+          clippedHorizontal: node.scrollWidth > node.clientWidth + 1,
+          clippedVertical: node.scrollHeight > node.clientHeight + 1,
+        }
+      })
+      if (summaries.length === 0) throw new Error('Notification summary text is missing.')
       const alpha = Number(surfaceStyle.backgroundColor.match(/,\s*([\d.]+)\s*\)$/)?.[1] ?? 1)
       const requiredMargin = Math.min(48, Math.max(16, Math.round(Math.max(targetRect.width, targetRect.height) * 0.02)))
       const margins = {
@@ -299,6 +308,7 @@ async function main() {
         requiredMargin,
         margins,
         viewportOverflow,
+        summaries,
         styles: {
           backgroundColor: surfaceStyle.backgroundColor,
           surfaceBorder: surfaceStyle.border,
@@ -313,6 +323,12 @@ async function main() {
       .map(([area]) => area)
     if (overflow.length > 0) {
       throw new Error(`Notification visual evidence has overflow: ${overflow.join(', ')}`)
+    }
+    const truncatedSummaries = geometry.summaries.filter(({ lineClamp, clippedHorizontal, clippedVertical }) =>
+      lineClamp !== 'none' && lineClamp !== 'normal' || clippedHorizontal || clippedVertical,
+    )
+    if (truncatedSummaries.length > 0) {
+      throw new Error(`Notification summary text is clipped or line-clamped: ${JSON.stringify(truncatedSummaries)}`)
     }
     console.log(`Notification visual preflight: ${JSON.stringify({
       source_type: 'storybook_canvas',

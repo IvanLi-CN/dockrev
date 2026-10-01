@@ -156,13 +156,22 @@ fn notification_version_label<'a>(value: &'a str, fallback: &'a str) -> &'a str 
 pub(crate) fn notification_version_tag_is_readable(value: &str) -> bool {
     let value = value.trim();
     let lower = value.to_ascii_lowercase();
-    let service_id_like = lower
-        .strip_prefix("svc_")
-        .is_some_and(|suffix| ulid::Ulid::from_string(suffix).is_ok());
+    let bytes = value.as_bytes();
+    let tag_syntax_valid = bytes
+        .first()
+        .is_some_and(|byte| byte.is_ascii_alphanumeric() || *byte == b'_')
+        && bytes
+            .iter()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'.' | b'-'));
+    let ulid_like = ulid::Ulid::from_string(value).is_ok()
+        || lower
+            .split_once('_')
+            .is_some_and(|(_, suffix)| ulid::Ulid::from_string(suffix).is_ok());
     if value.is_empty()
         || value.len() > 80
+        || !tag_syntax_valid
         || lower == "service-internal"
-        || service_id_like
+        || ulid_like
         || ["sha", "digest:"]
             .iter()
             .any(|prefix| lower.starts_with(prefix) && lower.contains(':'))
@@ -170,7 +179,6 @@ pub(crate) fn notification_version_tag_is_readable(value: &str) -> bool {
         return false;
     }
 
-    let bytes = value.as_bytes();
     let hexadecimal = bytes.iter().all(u8::is_ascii_hexdigit);
     let common_digest_length = matches!(bytes.len(), 32 | 40 | 64);
     let hash_like_tag =
@@ -231,9 +239,13 @@ mod tests {
         for machine_value in ["service-internal", "sha256:"] {
             assert!(!version_body.contains(machine_value));
         }
+        let generated_id = ulid::Ulid::new().to_string();
         let internal_tags = [
             "service-internal".to_string(),
-            format!("svc_{}", ulid::Ulid::new()),
+            format!("svc_{generated_id}"),
+            format!("job_{generated_id}"),
+            generated_id,
+            r#"{"error":"timeout"}"#.to_string(),
         ];
         for internal_tag in internal_tags {
             let body = format_new_version_notification_body(&[NotificationVersionSummaryEntry {
