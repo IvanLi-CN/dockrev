@@ -2,6 +2,22 @@
 
 > 当前有效规范以本文为准；实现覆盖与当前状态见 `./IMPLEMENTATION.md`，关键演进原因见 `./HISTORY.md`。
 
+## Context and Scope
+
+详情页桌面服务树和移动端服务导航抽屉共用 `DetailRouteServiceTree`。本要求覆盖活动与归档 Stack，以及 Stack 名称搜索后的可见列表。
+
+## Requirements
+
+- `REQ-STACK-NATURAL-ORDER`: Stack names in the detail service tree MUST use case-insensitive natural ordering, with numeric name segments compared by value.
+
+## Verification
+
+- `VER-STACK-NATURAL-ORDER`: Covers: `REQ-STACK-NATURAL-ORDER`; `web/tests/stackNameSorting.test.ts` checks numeric and case handling, and `DetailRouteServiceTree.RuntimeStateMatrix` checks the displayed group order.
+
+## Related ADRs
+
+None
+
 ## 背景 / 问题陈述
 
 - 现有 `StackDetailPage` 与 `ServiceDetailPage` 虽然已经拆出 route-backed 子页，但详情页之间仍缺少稳定的跨 Stack / 跨 Service 直达导航。
@@ -134,6 +150,10 @@
   When 服务树渲染服务叶子
   Then 左侧点按 `running / partial / stopped / unknown` 分别显示绿色 / 琥珀 / 中性灰运行态，版本 chip 只在可更新行的右上角显示青色点。
 
+- Given 服务树包含多个 Stack
+  When Stack 列表渲染或按名称搜索
+  Then 可见 Stack 始终按名称自然顺序排列，且 `stack-2` 位于 `stack-10` 之前。
+
 - Given 详情页处于可见状态
   When 30 秒轮询或应用内操作结算触发刷新
   Then 只刷新对应 Stack，重复触发合并为一次请求；页面隐藏时轮询暂停，恢复可见立即补刷。
@@ -150,9 +170,11 @@
 ### UI / Storybook
 
 - Stories to add/update:
+  - `web/src/stories/components/DetailRouteServiceTree.stories.tsx`
   - `web/src/stories/pages/ServiceDetailPage.stories.tsx`
   - `web/src/stories/pages/StackDetailPage.stories.tsx`
 - `play` / interaction coverage to add/update:
+  - Stack 名称自然顺序
   - 服务树抽屉打开
   - 当前 Stack / Service 高亮
   - section 保留跳转
@@ -295,6 +317,22 @@
 - PR caption: Stack 详情页移动端恢复完整 Dockrev 字标，同时保留服务详情页的紧凑图标合同。
 
 ![Stack 详情页移动端完整 Dockrev 字标](./assets/stack-detail-mobile-wordmark.png)
+
+- source_type: `storybook_canvas`
+  target_program: `mock-only`
+  capture_scope: `element`
+  requested_viewport: `none`
+  viewport_strategy: `storybook-viewport`
+  margin_policy: `require_margin`
+  evidence_surface: `component`
+  sensitive_exclusion: `N/A (mock-only component surface)`
+  submission_gate: `approved`
+  story_id_or_title: `Components/DetailRouteServiceTree / Natural Name Order`
+  state: `desktop Stack list in natural name order`
+  evidence_note: 服务树按 Stack 名称自然顺序显示 `infra` 在 `prod` 前，且保留展开服务列表。
+  PR caption: 详情服务树按 Stack 名称自然排序，数字片段按数值比较。
+
+![详情服务树 Stack 自然排序](./assets/service-tree-natural-order-desktop.png)
 
 ## Related Contract
 

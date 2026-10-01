@@ -10,6 +10,7 @@ import { serviceRowStatus, statusLabel } from '../updateStatus'
 import { ServiceTreeContextActions } from './ServiceTreeContextActions'
 import { AsyncDataRegion, AsyncDataSkeleton } from './AsyncDataRegion'
 import type { AsyncDataPhase, AsyncDataTrigger } from '../asyncData'
+import { compareStackNamesNaturally } from '../stackNameSorting'
 
 type DetailRoute = Extract<Route, { name: 'services' | 'stack' | 'service' }>
 const SCAN_STALE_AFTER_MS = 7 * 24 * 60 * 60 * 1000
@@ -353,8 +354,11 @@ export function DetailRouteServiceTree(props: {
   )
   const visibleStacks = useMemo(() => {
     const query = search.trim().toLocaleLowerCase()
-    if (!query) return stacks
-    return stacks.filter((stack) => stack.name.toLocaleLowerCase().includes(query) || stack.detail?.services.some((service) => service.name.toLocaleLowerCase().includes(query)))
+    const sortedStacks = [...stacks].sort((left, right) =>
+      compareStackNamesNaturally(left.name, right.name) || left.id.localeCompare(right.id),
+    )
+    if (!query) return sortedStacks
+    return sortedStacks.filter((stack) => stack.name.toLocaleLowerCase().includes(query) || stack.detail?.services.some((service) => service.name.toLocaleLowerCase().includes(query)))
   }, [search, stacks])
   const renderServiceLink = (stack: TreeStack, service: Service) => {
     const active = props.route.name === 'service' && props.route.stackId === stack.id && props.route.serviceId === service.id
