@@ -52,6 +52,7 @@ export type DockrevApiScenario =
   | 'notification-error'
   | 'notification-all-read'
   | 'notification-single'
+  | 'notification-details'
   | 'dashboard-demo'
   | 'dashboard-demo-slow-update'
   | 'dashboard-demo-hydrated-update'
@@ -476,6 +477,7 @@ export type Fixture = {
   settings: SettingsResponse
   notifications: NotificationConfig
   notificationReadAll: boolean
+  notificationReadIds: Set<string>
   githubPackagesSettings: GitHubPackagesSettingsResponse
   githubPackagesRepos: GitHubPackagesRepo[]
   serviceSettingsById: Record<string, ServiceSettings>

@@ -250,7 +250,102 @@ async function main() {
     })
   }
 
+  const captureNotificationEvidence = async (page, filePath) => {
+    const geometry = await page.evaluate(() => {
+      const surface = document.querySelector('[data-visual-evidence-surface="notification-center"]')
+      const target = document.querySelector('[data-visual-evidence-target="notification-drawer"]')
+      if (!(surface instanceof HTMLElement) || !(target instanceof HTMLElement)) {
+        throw new Error('Notification evidence surface or drawer target is missing.')
+      }
+      if (!surface.contains(target)) throw new Error('Notification drawer escapes its evidence surface.')
+
+      const surfaceStyle = getComputedStyle(surface)
+      const surfaceRect = surface.getBoundingClientRect()
+      const targetRect = target.getBoundingClientRect()
+      const targetStyle = getComputedStyle(target)
+      const list = target.querySelector('.notificationList')
+      const viewportOverflow = {
+        horizontal: document.documentElement.scrollWidth > window.innerWidth,
+        vertical: document.documentElement.scrollHeight > window.innerHeight,
+        drawerHorizontal: target.scrollWidth > target.clientWidth,
+        drawerVertical: target.scrollHeight > target.clientHeight,
+        listVertical: list instanceof HTMLElement && list.scrollHeight > list.clientHeight,
+      }
+      const alpha = Number(surfaceStyle.backgroundColor.match(/,\s*([\d.]+)\s*\)$/)?.[1] ?? 1)
+      const requiredMargin = Math.min(48, Math.max(16, Math.round(Math.max(targetRect.width, targetRect.height) * 0.02)))
+      const margins = {
+        top: targetRect.top - surfaceRect.top,
+        right: surfaceRect.right - targetRect.right,
+        bottom: surfaceRect.bottom - targetRect.bottom,
+        left: targetRect.left - surfaceRect.left,
+      }
+      const failures = Object.entries(margins).filter(([, margin]) => margin < requiredMargin)
+      if (alpha < 1 || surfaceStyle.borderStyle !== 'none' && surfaceStyle.borderWidth !== '0px' || surfaceStyle.borderRadius !== '0px' || surfaceStyle.boxShadow !== 'none') {
+        throw new Error(`Notification evidence surface must be an opaque, unframed theme surface: ${JSON.stringify({ backgroundColor: surfaceStyle.backgroundColor, border: surfaceStyle.border, borderRadius: surfaceStyle.borderRadius, boxShadow: surfaceStyle.boxShadow })}`)
+      }
+      if (failures.length > 0) throw new Error(`Notification drawer does not meet source-managed margins: ${JSON.stringify({ requiredMargin, margins, failures: failures.map(([side]) => side) })}`)
+
+      const left = Math.max(surfaceRect.left, targetRect.left - Math.min(48, margins.left))
+      const top = Math.max(surfaceRect.top, targetRect.top - Math.min(48, margins.top))
+      const right = Math.min(surfaceRect.right, targetRect.right + Math.min(48, margins.right))
+      const bottom = Math.min(surfaceRect.bottom, targetRect.bottom + Math.min(48, margins.bottom))
+      if (targetRect.left < surfaceRect.left || targetRect.top < surfaceRect.top || targetRect.right > surfaceRect.right || targetRect.bottom > surfaceRect.bottom) {
+        throw new Error('Notification drawer is clipped by its evidence surface.')
+      }
+      return {
+        clip: { x: left, y: top, width: right - left, height: bottom - top },
+        viewport: { width: window.innerWidth, height: window.innerHeight },
+        targetRect: { x: targetRect.x, y: targetRect.y, width: targetRect.width, height: targetRect.height },
+        requiredMargin,
+        margins,
+        viewportOverflow,
+        styles: {
+          backgroundColor: surfaceStyle.backgroundColor,
+          surfaceBorder: surfaceStyle.border,
+          surfaceRadius: surfaceStyle.borderRadius,
+          surfaceShadow: surfaceStyle.boxShadow,
+          targetOverflow: `${targetStyle.overflowX}/${targetStyle.overflowY}`,
+        },
+      }
+    })
+    console.log(`Notification visual preflight: ${JSON.stringify({
+      source_type: 'storybook_canvas',
+      scenario: 'notification-details; drawer open; 4 unread notifications',
+      target_program: 'mock-only',
+      selectors: {
+        surface: '[data-visual-evidence-surface="notification-center"]',
+        target: '[data-visual-evidence-target="notification-drawer"]',
+      },
+      capture_scope: 'drawer target and natural source-managed margins',
+      margin_policy: 'require_margin',
+      viewport_strategy: 'storybook-viewport',
+      ...geometry,
+      crop: 'within surface; retain 48px only where natural margin exceeds 48px',
+    })}`)
+    await page.screenshot({ path: filePath, clip: geometry.clip, scale: 'css' })
+  }
+
   const shots = [
+    {
+      id: 'components-notificationcenter--desktop',
+      file: 'notification-center-desktop.png',
+      viewport: { width: 1800, height: 960 },
+      setup: async (page) => {
+        await page.locator('[data-visual-evidence-target="notification-drawer"]').waitFor({ timeout: STORY_TIMEOUT_MS })
+        await page.getByText('查看完整清单', { exact: true }).waitFor({ timeout: STORY_TIMEOUT_MS })
+      },
+      screenshot: captureNotificationEvidence,
+    },
+    {
+      id: 'components-notificationcenter--mobile',
+      file: 'notification-center-mobile-393.png',
+      viewport: { width: 393, height: 852 },
+      setup: async (page) => {
+        await page.locator('[data-visual-evidence-target="notification-drawer"]').waitFor({ timeout: STORY_TIMEOUT_MS })
+        await page.getByText('查看完整清单', { exact: true }).waitFor({ timeout: STORY_TIMEOUT_MS })
+      },
+      screenshot: captureNotificationEvidence,
+    },
     {
       id: 'components-notfoundview--unknown-document',
       file: 'not-found-view.png',

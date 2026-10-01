@@ -1170,3 +1170,207 @@ async fn invalid_digest_migration_rejects_blank_candidate_identities() {
     let _ = std::fs::remove_file(db_path.with_extension("sqlite3-wal"));
     let _ = std::fs::remove_file(db_path.with_extension("sqlite3-shm"));
 }
+
+#[tokio::test]
+async fn notification_summary_backfill_updates_only_reconstructable_unread_items() {
+    let db_path = temporary_db_path();
+    let db = Db::open(&db_path).await.unwrap();
+    let result = db
+        .call(|conn| {
+            conn.execute(
+                r#"
+INSERT INTO stacks (
+  id, name, compose_type, compose_files_json, backup_targets_json,
+  backup_retention_keep_last, backup_retention_delete_after_stable_seconds,
+  created_at, updated_at, last_check_at
+) VALUES ('stack-notification', '生产服务', 'path', '[]', '[]', 0, 0,
+          '2026-10-01T00:00:00Z', '2026-10-01T00:00:00Z', '2026-10-01T00:00:00Z')
+"#,
+                [],
+            )?;
+            for (id, name) in [
+                ("service-api", "支付 API"),
+                ("service-worker", "后台 Worker"),
+                ("service-web", "前端"),
+            ] {
+                conn.execute(
+                    r#"
+INSERT INTO services (
+  id, stack_id, name, image_ref, image_tag, auto_rollback,
+  backup_targets_bind_paths_json, backup_targets_volume_names_json,
+  created_at, updated_at
+) VALUES (?1, 'stack-notification', ?2, 'ghcr.io/acme/app', 'latest', 0,
+          '[]', '[]', '2026-10-01T00:00:00Z', '2026-10-01T00:00:00Z')
+"#,
+                    rusqlite::params![id, name],
+                )?;
+            }
+            conn.execute(
+                r#"
+INSERT INTO jobs (
+  id, type, scope, stack_id, service_id, status, allow_arch_mismatch,
+  backup_mode, created_by, reason, created_at, finished_at, summary_json
+) VALUES ('job-notification', 'update', 'service', 'stack-notification',
+          'service-api', 'success', 0, 'inherit', 'user', 'manual',
+          '2026-10-01T00:00:00Z', '2026-10-01T00:01:00Z', '{"progress":{"message":"raw progress"}}')
+"#,
+                [],
+            )?;
+
+            for (id, kind, source_job_id, read_at) in [
+                ("item-job", "job_finished", Some("job-notification"), None),
+                ("item-job-missing", "job_finished", Some("missing-job"), None),
+                ("item-job-read", "job_finished", Some("job-notification"), Some("2026-10-01T00:02:00Z")),
+                ("item-version", "new_version_discovered", Some("job-notification"), None),
+                ("item-version-missing", "new_version_discovered", Some("job-notification"), None),
+                ("item-version-digest", "new_version_discovered", Some("job-notification"), None),
+                ("item-ghcr", "ghcr_webhook_anomaly", Some("job-notification"), None),
+            ] {
+                conn.execute(
+                    r#"
+INSERT INTO notification_items (
+  id, kind, identity_key, title, body, target_url, source_job_id, created_at, read_at
+) VALUES (?1, ?2, ?3, '旧标题', '旧正文', '/queue/existing-target', ?4,
+          '2026-10-01T00:01:00Z', ?5)
+"#,
+                    rusqlite::params![id, kind, format!("identity:{id}"), source_job_id, read_at],
+                )?;
+            }
+
+            for (id, service_id, current_tag, candidate_tag) in [
+                ("version-api", "service-api", "1.4.0", "1.5.0"),
+                ("version-worker", "service-worker", "2.0.1", "2.0.2"),
+                ("version-web", "service-web", "5.1.0", "5.2.0"),
+            ] {
+                conn.execute(
+                    r#"
+INSERT INTO new_version_notifications (
+  id, service_id, job_id, reason, image_ref, image_tag, current_tag,
+  current_display_tag, candidate_tag, candidate_display_tag, candidate_digest,
+  status, created_at, notification_item_id
+) VALUES (?1, ?2, 'job-notification', 'scheduled', 'ghcr.io/acme/app', 'latest',
+          ?3, ?3, ?4, ?4, 'sha256:candidate', 'sent', '2026-10-01T00:01:00Z', 'item-version')
+"#,
+                    rusqlite::params![id, service_id, current_tag, candidate_tag],
+                )?;
+            }
+            conn.execute(
+                r#"
+INSERT INTO new_version_notifications (
+  id, service_id, job_id, reason, image_ref, image_tag, current_tag,
+  current_display_tag, candidate_tag, candidate_display_tag, candidate_digest,
+  status, created_at, notification_item_id
+) VALUES ('version-digest', 'service-api', 'job-notification', 'scheduled',
+          'ghcr.io/acme/app', 'latest',
+          '0123456789abcdef0123456789abcdef01234567',
+          '0123456789abcdef0123456789abcdef01234567',
+          'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+          'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+          'sha256:version-digest', 'sent', '2026-10-01T00:01:00Z', 'item-version-digest')
+"#,
+                [],
+            )?;
+            for (id, owner, repo, state) in [
+                ("anomaly-api", "acme", "api", "missing"),
+                ("anomaly-worker", "acme", "worker", "error"),
+            ] {
+                conn.execute(
+                    r#"
+INSERT INTO notification_anomaly_occurrences (
+  id, owner, repo, state, occurrence_count, batch_id, notification_item_id, created_at
+) VALUES (?1, ?2, ?3, ?4, 1, 'batch-notification', 'item-ghcr', '2026-10-01T00:01:00Z')
+"#,
+                    rusqlite::params![id, owner, repo, state],
+                )?;
+            }
+
+            let unread_before = conn.query_row(
+                "SELECT COUNT(*) FROM notification_items WHERE read_at IS NULL",
+                [],
+                |row| row.get::<_, i64>(0),
+            )?;
+            conn.execute(
+                "DELETE FROM schema_migrations WHERE id = '0042_backfill_notification_summaries'",
+                [],
+            )?;
+            super::schema_notification_inbox::apply_migration_0042_backfill_notification_summaries(conn)?;
+            super::schema_notification_inbox::apply_migration_0042_backfill_notification_summaries(conn)?;
+
+            let rows = conn
+                .prepare(
+                    "SELECT id, kind, identity_key, title, body, target_url, source_job_id, created_at, read_at FROM notification_items ORDER BY id",
+                )?
+                .query_map([], |row| {
+                    Ok((
+                        row.get::<_, String>(0)?,
+                        row.get::<_, String>(1)?,
+                        row.get::<_, String>(2)?,
+                        row.get::<_, String>(3)?,
+                        row.get::<_, String>(4)?,
+                        row.get::<_, String>(5)?,
+                        row.get::<_, Option<String>>(6)?,
+                        row.get::<_, String>(7)?,
+                        row.get::<_, Option<String>>(8)?,
+                    ))
+                })?
+                .collect::<rusqlite::Result<Vec<_>>>()?;
+            let unread_after = conn.query_row(
+                "SELECT COUNT(*) FROM notification_items WHERE read_at IS NULL",
+                [],
+                |row| row.get::<_, i64>(0),
+            )?;
+            let migration_count = conn.query_row(
+                "SELECT COUNT(*) FROM schema_migrations WHERE id = '0042_backfill_notification_summaries'",
+                [],
+                |row| row.get::<_, i64>(0),
+            )?;
+            Ok((rows, unread_before, unread_after, migration_count))
+        })
+        .await
+        .unwrap();
+
+    let (rows, unread_before, unread_after, migration_count) = result;
+    let row = |id: &str| rows.iter().find(|item| item.0 == id).unwrap();
+    assert_eq!(row("item-job").0, "item-job");
+    assert_eq!(row("item-job").1, "job_finished");
+    assert_eq!(row("item-job").2, "identity:item-job");
+    assert_eq!(row("item-job").3, "更新任务已成功");
+    assert_eq!(row("item-job").4, "服务「支付 API」的更新操作已完成。");
+    assert_eq!(row("item-job").5, "/queue/existing-target");
+    assert_eq!(row("item-job").6.as_deref(), Some("job-notification"));
+    assert_eq!(row("item-job").7, "2026-10-01T00:01:00Z");
+    assert_eq!(row("item-job").8, None);
+    assert_eq!(row("item-job-missing").3, "旧标题");
+    assert_eq!(row("item-job-missing").4, "旧正文");
+    assert_eq!(row("item-job-read").3, "旧标题");
+    assert_eq!(row("item-job-read").4, "旧正文");
+    assert_eq!(row("item-job-read").5, "/queue/existing-target");
+    assert_eq!(row("item-job-read").6.as_deref(), Some("job-notification"));
+    assert_eq!(row("item-job-read").7, "2026-10-01T00:01:00Z");
+    assert_eq!(
+        row("item-job-read").8.as_deref(),
+        Some("2026-10-01T00:02:00Z")
+    );
+    assert_eq!(row("item-version").3, "发现 3 个新版本");
+    assert_eq!(
+        row("item-version").4,
+        "支付 API：1.4.0 -> 1.5.0\n前端：5.1.0 -> 5.2.0\n另有 1 个服务有新版本。"
+    );
+    assert_eq!(row("item-version-missing").3, "旧标题");
+    assert_eq!(row("item-version-missing").4, "旧正文");
+    assert_eq!(row("item-version-digest").3, "旧标题");
+    assert_eq!(row("item-version-digest").4, "旧正文");
+    assert_eq!(row("item-ghcr").3, "GHCR Webhook 有 2 项异常");
+    assert_eq!(
+        row("item-ghcr").4,
+        "acme/api：未在 GHCR 找到关联仓库\nacme/worker：Webhook 检查失败"
+    );
+    assert_eq!(unread_before, 6);
+    assert_eq!(unread_after, unread_before);
+    assert_eq!(migration_count, 1);
+
+    drop(db);
+    std::fs::remove_file(&db_path).unwrap();
+    let _ = std::fs::remove_file(db_path.with_extension("sqlite3-wal"));
+    let _ = std::fs::remove_file(db_path.with_extension("sqlite3-shm"));
+}

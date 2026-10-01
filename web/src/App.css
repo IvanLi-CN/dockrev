@@ -274,22 +274,30 @@
 }
 
 .notificationItemContent strong {
-  overflow: hidden;
   color: var(--text);
   font-size: 13px;
   font-weight: 700;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
 }
 
 .notificationItemContent > span {
-  display: -webkit-box;
-  overflow: hidden;
   color: var(--muted);
   font-size: 12px;
   line-height: 1.45;
-  -webkit-box-orient: vertical;
-  -webkit-line-clamp: 2;
+  overflow-wrap: anywhere;
+  white-space: pre-line;
+}
+
+.notificationItemContent .notificationItemAction {
+  display: inline-flex;
+  width: fit-content;
+  align-items: center;
+  gap: 3px;
+  margin-top: 1px;
+  color: var(--color-primary);
+  font-size: 11px;
+  font-weight: 650;
 }
 
 .notificationItemContent time {
@@ -2069,9 +2077,9 @@ html[data-theme="light"] .brandLogoForLight {
 
   .notificationDrawer {
     top: var(--app-shell-topbar-height);
-    right: 12px;
-    width: calc(100vw - 24px);
-    max-height: calc(100dvh - var(--app-shell-topbar-height) - 12px);
+    right: 18px;
+    width: calc(100vw - 36px);
+    max-height: calc(100dvh - var(--app-shell-topbar-height) - 18px);
   }
 
   .appShellWithDetailSidebar {

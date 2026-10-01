@@ -22,6 +22,7 @@ export function baseEmpty(): Fixture {
     settings: makeDefaultSettings(),
     notifications: makeDefaultNotifications(),
     notificationReadAll: false,
+    notificationReadIds: new Set(),
     githubPackagesSettings: makeDefaultGitHubPackagesSettings(),
     githubPackagesRepos: [],
     serviceSettingsById: {},

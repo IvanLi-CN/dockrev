@@ -1,4 +1,5 @@
 import {
+  ArrowUpRight,
   Bell,
   CheckCheck,
   CircleAlert,
@@ -58,6 +59,18 @@ type NotificationContextValue = {
 }
 
 const NotificationContext = createContext<NotificationContextValue | null>(null)
+const NotificationNavigationOverrideContext = createContext<((target: string) => void) | null>(null)
+
+export function NotificationNavigationOverride(props: {
+  navigate: (target: string) => void
+  children: ReactNode
+}) {
+  return (
+    <NotificationNavigationOverrideContext.Provider value={props.navigate}>
+      {props.children}
+    </NotificationNavigationOverrideContext.Provider>
+  )
+}
 
 function clampUnreadCount(value: number): number {
   return Number.isFinite(value) ? Math.max(0, Math.floor(value)) : 0
@@ -422,13 +435,29 @@ function formatNotificationTime(value: string): string {
   return new Intl.DateTimeFormat('zh-CN', { dateStyle: 'short', timeStyle: 'short' }).format(date)
 }
 
+function notificationActionLabel(item: NotificationItem): string {
+  if (item.kind === 'job_finished') return '查看任务详情'
+  if (item.kind === 'ghcr_webhook_anomaly') return '查看审计任务'
+  if (item.kind === 'new_version_discovered') {
+    try {
+      const target = new URL(item.url, window.location.origin)
+      return target.pathname.includes('/services/') ? '查看服务详情' : '查看完整清单'
+    } catch {
+      return '查看详情'
+    }
+  }
+  return '查看详情'
+}
+
 export function NotificationCenter() {
+  const navigationOverride = useContext(NotificationNavigationOverrideContext)
   const { unreadCount, items, isOpen, loading, error, nextCursor, open, close, loadMore, read, readAll } = useNotifications()
 
   const onItemClick = async (item: NotificationItem) => {
     try {
       await read(item)
-      navigateToNotification(item.url)
+      if (navigationOverride) navigationOverride(item.url)
+      else navigateToNotification(item.url)
     } catch {
       // Keep the drawer open when the server cannot confirm the read.
     }
@@ -451,7 +480,7 @@ export function NotificationCenter() {
       {isOpen ? (
         <>
           <button type="button" className="notificationDrawerBackdrop" aria-label="关闭通知" onClick={close} />
-          <aside className="notificationDrawer" aria-label="通知收件箱">
+          <aside className="notificationDrawer" aria-label="通知收件箱" data-visual-evidence-target="notification-drawer">
             <div className="notificationDrawerHeader">
               <div>
                 <h2>通知</h2>
@@ -496,6 +525,10 @@ export function NotificationCenter() {
                     <span className="notificationItemContent">
                       <strong>{item.title}</strong>
                       <span>{item.body}</span>
+                      <span className="notificationItemAction">
+                        {notificationActionLabel(item)}
+                        <ArrowUpRight size={13} aria-hidden="true" />
+                      </span>
                       <time dateTime={item.createdAt}>{formatNotificationTime(item.createdAt)}</time>
                     </span>
                   </button>

@@ -1,5 +1,5 @@
 use super::{migration_applied, record_migration_tx};
-use rusqlite::TransactionBehavior;
+use rusqlite::{OptionalExtension as _, TransactionBehavior, params};
 
 pub(super) fn apply_migrations(conn: &mut rusqlite::Connection) -> anyhow::Result<()> {
     apply_migration_0027_add_notification_items(conn)?;
@@ -17,6 +17,7 @@ pub(super) fn apply_migrations(conn: &mut rusqlite::Connection) -> anyhow::Resul
     apply_migration_0039_add_notification_dispatch_decision_marker(conn)?;
     apply_migration_0040_backfill_notification_anomaly_occurrences(conn)?;
     apply_migration_0041_add_notification_anomaly_delivery_attempt(conn)?;
+    apply_migration_0042_backfill_notification_summaries(conn)?;
     Ok(())
 }
 
@@ -404,4 +405,189 @@ CREATE INDEX IF NOT EXISTS idx_notification_anomaly_occurrences_replay
     record_migration_tx(&tx, id)?;
     tx.commit()?;
     Ok(())
+}
+
+pub(super) fn apply_migration_0042_backfill_notification_summaries(
+    conn: &mut rusqlite::Connection,
+) -> anyhow::Result<()> {
+    let id = "0042_backfill_notification_summaries";
+    if migration_applied(conn, id)? {
+        return Ok(());
+    }
+
+    let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
+    let unread_items = {
+        let mut stmt = tx.prepare(
+            "SELECT id, kind, source_job_id FROM notification_items WHERE read_at IS NULL ORDER BY created_at, id",
+        )?;
+        let rows = stmt.query_map([], |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, Option<String>>(2)?,
+            ))
+        })?;
+        rows.collect::<rusqlite::Result<Vec<_>>>()?
+    };
+
+    for (item_id, kind, source_job_id) in unread_items {
+        let summary = match kind.as_str() {
+            "job_finished" => {
+                let Some(source_job_id) = source_job_id.as_deref() else {
+                    continue;
+                };
+                let context = tx
+                    .query_row(
+                        r#"
+SELECT job.type, job.scope,
+       COALESCE(NULLIF(TRIM(service.name), ''), NULLIF(TRIM(stack.name), '')),
+       job.status
+FROM jobs AS job
+LEFT JOIN services AS service ON service.id = job.service_id
+LEFT JOIN stacks AS stack ON stack.id = COALESCE(job.stack_id, service.stack_id)
+WHERE job.id = ?1
+"#,
+                        params![source_job_id],
+                        |row| {
+                            Ok((
+                                row.get::<_, String>(0)?,
+                                row.get::<_, String>(1)?,
+                                row.get::<_, Option<String>>(2)?,
+                                row.get::<_, String>(3)?,
+                            ))
+                        },
+                    )
+                    .optional()?;
+                let Some((job_type, scope, target_name, status)) = context else {
+                    continue;
+                };
+                if !is_known_notification_status(&status) {
+                    continue;
+                }
+                Some(crate::db::format_job_notification_summary(
+                    Some(&job_type),
+                    Some(&scope),
+                    target_name.as_deref(),
+                    &status,
+                ))
+            }
+            "new_version_discovered" => {
+                let rows = {
+                    let mut stmt = tx.prepare(
+                        r#"
+SELECT candidate.service_id, service.name,
+       candidate.current_display_tag, candidate.candidate_display_tag
+FROM new_version_notifications AS candidate
+LEFT JOIN services AS service ON service.id = candidate.service_id
+WHERE candidate.notification_item_id = ?1
+ORDER BY candidate.created_at, candidate.id
+"#,
+                    )?;
+                    let rows = stmt.query_map(params![item_id], |row| {
+                        Ok((
+                            row.get::<_, String>(0)?,
+                            row.get::<_, Option<String>>(1)?,
+                            row.get::<_, String>(2)?,
+                            row.get::<_, String>(3)?,
+                        ))
+                    })?;
+                    rows.collect::<rusqlite::Result<Vec<_>>>()?
+                };
+                let mut seen_services = std::collections::BTreeSet::new();
+                let mut entries = Vec::new();
+                let mut reliable = true;
+                for (service_id, service_name, current_tag, candidate_tag) in rows {
+                    if service_id.trim().is_empty()
+                        || !crate::db::notification_version_tag_is_readable(&current_tag)
+                        || !crate::db::notification_version_tag_is_readable(&candidate_tag)
+                    {
+                        reliable = false;
+                        break;
+                    }
+                    if seen_services.insert(service_id) {
+                        entries.push(crate::db::NotificationVersionSummaryEntry {
+                            service_name,
+                            current_tag,
+                            candidate_tag,
+                        });
+                    }
+                }
+                if !reliable || entries.is_empty() {
+                    continue;
+                }
+                Some((
+                    crate::db::format_new_version_notification_title(entries.len()),
+                    crate::db::format_new_version_notification_body(&entries),
+                ))
+            }
+            "ghcr_webhook_anomaly" => {
+                let rows = {
+                    let mut stmt = tx.prepare(
+                        r#"
+SELECT owner, repo, state
+FROM notification_anomaly_occurrences
+WHERE notification_item_id = ?1
+ORDER BY created_at, id
+"#,
+                    )?;
+                    let rows = stmt.query_map(params![item_id], |row| {
+                        Ok(crate::db::NotificationGhcrSummaryEntry {
+                            owner: row.get(0)?,
+                            repo: row.get(1)?,
+                            state: row.get(2)?,
+                        })
+                    })?;
+                    rows.collect::<rusqlite::Result<Vec<_>>>()?
+                };
+                let mut seen_repos = std::collections::BTreeSet::new();
+                let mut entries = Vec::new();
+                let mut reliable = true;
+                for entry in rows {
+                    if entry.owner.trim().is_empty()
+                        || entry.repo.trim().is_empty()
+                        || !matches!(entry.state.as_str(), "missing" | "conflict" | "error")
+                    {
+                        reliable = false;
+                        break;
+                    }
+                    if seen_repos.insert((entry.owner.clone(), entry.repo.clone())) {
+                        entries.push(entry);
+                    }
+                }
+                if !reliable || entries.is_empty() {
+                    continue;
+                }
+                Some((
+                    crate::db::format_ghcr_anomaly_notification_title(entries.len()),
+                    crate::db::format_ghcr_anomaly_notification_body(&entries),
+                ))
+            }
+            _ => None,
+        };
+
+        if let Some((title, body)) = summary {
+            tx.execute(
+                "UPDATE notification_items SET title = ?1, body = ?2 WHERE id = ?3 AND read_at IS NULL",
+                params![title, body, item_id],
+            )?;
+        }
+    }
+
+    record_migration_tx(&tx, id)?;
+    tx.commit()?;
+    Ok(())
+}
+
+fn is_known_notification_status(status: &str) -> bool {
+    matches!(
+        status,
+        "success"
+            | "succeeded"
+            | "failed"
+            | "error"
+            | "cancelled"
+            | "canceled"
+            | "rolled_back"
+            | "stopped"
+    )
 }

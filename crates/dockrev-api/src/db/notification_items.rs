@@ -60,7 +60,71 @@ pub(crate) struct NotificationReadAllResult {
     pub unread_count: u64,
 }
 
+#[derive(Clone, Debug)]
+pub(crate) struct NotificationJobContext {
+    pub job_type: String,
+    pub scope: String,
+    pub target_name: Option<String>,
+}
+
 impl Db {
+    pub(crate) async fn get_notification_job_context(
+        &self,
+        job_id: &str,
+    ) -> anyhow::Result<Option<NotificationJobContext>> {
+        let job_id = job_id.to_string();
+        self.call(move |conn| {
+            let context = conn
+                .query_row(
+                    r#"
+SELECT job.type, job.scope,
+       COALESCE(NULLIF(TRIM(service.name), ''), NULLIF(TRIM(stack.name), ''))
+FROM jobs AS job
+LEFT JOIN services AS service ON service.id = job.service_id
+LEFT JOIN stacks AS stack ON stack.id = COALESCE(job.stack_id, service.stack_id)
+WHERE job.id = ?1
+"#,
+                    params![job_id],
+                    |row| {
+                        Ok(NotificationJobContext {
+                            job_type: row.get(0)?,
+                            scope: row.get(1)?,
+                            target_name: row.get(2)?,
+                        })
+                    },
+                )
+                .optional()?;
+            Ok(context)
+        })
+        .await
+        .context("get notification job context")
+    }
+
+    pub(crate) async fn get_service_names_for_notifications(
+        &self,
+        service_ids: &[String],
+    ) -> anyhow::Result<std::collections::HashMap<String, String>> {
+        let service_ids = service_ids.to_vec();
+        self.call(move |conn| {
+            let mut names = std::collections::HashMap::new();
+            for service_id in service_ids {
+                let name = conn
+                    .query_row(
+                        "SELECT name FROM services WHERE id = ?1",
+                        params![service_id],
+                        |row| row.get::<_, String>(0),
+                    )
+                    .optional()?;
+                if let Some(name) = name.filter(|name| !name.trim().is_empty()) {
+                    names.insert(service_id, name);
+                }
+            }
+            Ok(names)
+        })
+        .await
+        .context("get service names for notifications")
+    }
+
     pub(crate) async fn ensure_notification_item(
         &self,
         draft: &NotificationItemDraft,

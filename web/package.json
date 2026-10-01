@@ -21,6 +21,7 @@
     "storybook:screenshots": "bun ./scripts/capture-storybook-screenshots.mjs",
     "build-storybook": "node ./scripts/storybook-build.mjs",
     "test-storybook": "bun ./scripts/test-storybook.mjs",
+    "test:notification-center-summary-interactions": "DOCKREV_TEST_STORYBOOK_NOTIFICATION_ONLY=1 bun run test-storybook",
     "preview": "bun --bun ./node_modules/.bin/vite preview"
   },
   "dependencies": {
