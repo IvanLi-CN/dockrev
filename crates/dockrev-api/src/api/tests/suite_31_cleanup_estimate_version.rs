@@ -23,11 +23,12 @@ async fn cleanup_apply_rejects_future_estimate_version_and_enqueues_refresh() {
     future_json["estimateVersion"] = serde_json::json!(
         crate::api::types::CLEANUP_ESTIMATE_VERSION + 1
     );
+    let observed_future_snapshot = future_json.to_string();
     state
         .db
         .upsert_cleanup_inventory_snapshot(
             crate::cleanup_snapshot_worker::CLEANUP_SNAPSHOT_KEY,
-            &future_json.to_string(),
+            &observed_future_snapshot,
             &test_now_rfc3339(),
             &test_now_rfc3339(),
         )
@@ -102,11 +103,12 @@ async fn cleanup_confirm_future_estimate_version_does_not_requeue_running_refres
     future_json["estimateVersion"] = serde_json::json!(
         crate::api::types::CLEANUP_ESTIMATE_VERSION + 1
     );
+    let observed_future_snapshot = future_json.to_string();
     state
         .db
         .upsert_cleanup_inventory_snapshot(
             crate::cleanup_snapshot_worker::CLEANUP_SNAPSHOT_KEY,
-            &future_json.to_string(),
+            &observed_future_snapshot,
             &test_now_rfc3339(),
             &test_now_rfc3339(),
         )
@@ -147,5 +149,13 @@ async fn cleanup_confirm_future_estimate_version_does_not_requeue_running_refres
         tokio::time::sleep(Duration::from_millis(10)).await;
     }
     assert!(!state.cleanup_snapshot_worker.is_running());
+    assert_eq!(runner.stale_generation(), 2);
+    assert!(
+        !state
+            .cleanup_snapshot_worker
+            .enqueue_if_snapshot_unchanged(&observed_future_snapshot)
+            .await
+            .unwrap()
+    );
     assert_eq!(runner.stale_generation(), 2);
 }

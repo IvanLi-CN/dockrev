@@ -24,6 +24,7 @@ pub struct CleanupSnapshotWorker {
     running: Arc<AtomicBool>,
     pending: Arc<AtomicBool>,
     last_error: Arc<Mutex<Option<String>>>,
+    snapshot_gate: Arc<Mutex<()>>,
 }
 
 impl CleanupSnapshotWorker {
@@ -35,6 +36,7 @@ impl CleanupSnapshotWorker {
             running: Arc::new(AtomicBool::new(false)),
             pending: Arc::new(AtomicBool::new(false)),
             last_error: Arc::new(Mutex::new(None)),
+            snapshot_gate: Arc::new(Mutex::new(())),
         }
     }
 
@@ -82,20 +84,32 @@ impl CleanupSnapshotWorker {
         true
     }
 
-    pub async fn enqueue_if_idle(&self) -> bool {
+    pub async fn enqueue_if_snapshot_unchanged(
+        &self,
+        observed_snapshot_json: &str,
+    ) -> anyhow::Result<bool> {
+        let _snapshot_guard = self.snapshot_gate.lock().await;
+        if let Some(current) = self
+            .db
+            .get_cleanup_inventory_snapshot(CLEANUP_SNAPSHOT_KEY)
+            .await?
+            && current.snapshot_json != observed_snapshot_json
+        {
+            return Ok(false);
+        }
         if self
             .running
             .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
             .is_err()
         {
-            return false;
+            return Ok(false);
         }
         self.pending.store(true, Ordering::SeqCst);
         let worker = self.clone();
         tokio::spawn(async move {
             worker.run_loop().await;
         });
-        true
+        Ok(true)
     }
 
     pub fn is_running(&self) -> bool {
@@ -119,7 +133,9 @@ impl CleanupSnapshotWorker {
             *last_error = result.err().map(|err| err.to_string());
             drop(last_error);
 
+            let snapshot_guard = self.snapshot_gate.lock().await;
             if self.pending.swap(false, Ordering::SeqCst) {
+                drop(snapshot_guard);
                 continue;
             }
 
@@ -130,8 +146,10 @@ impl CleanupSnapshotWorker {
                     .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
                     .is_ok()
             {
+                drop(snapshot_guard);
                 continue;
             }
+            drop(snapshot_guard);
             break;
         }
     }

@@ -285,7 +285,11 @@ pub(super) async fn scan_cleanups(
                 if req.refresh {
                     let _ = state.cleanup_snapshot_worker.enqueue().await;
                 } else if !estimate_version_supported && !is_running {
-                    let _ = state.cleanup_snapshot_worker.enqueue_if_idle().await;
+                    let _ = state
+                        .cleanup_snapshot_worker
+                        .enqueue_if_snapshot_unchanged(&row.snapshot_json)
+                        .await
+                        .map_err(map_internal)?;
                 }
                 if !state.cleanup_snapshot_worker.is_running()
                     && let Some(last_error) = state.cleanup_snapshot_worker.last_error().await
