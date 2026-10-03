@@ -126,11 +126,13 @@
 - Given 用户点击 `全部`、`清理此 stack` 或 `清理此服务`，When confirm-scan 返回结果，Then 二次确认对话框展示最新候选、最新预计释放空间、最新扫描时间。
 - Given cleanup inventory 包含镜像，When Docker usage 返回有效的 `Size=1000, SharedSize=700`，Then 该镜像的估算为 `300`，且完整 `Size` 不参与预计回收量。
 - Given 镜像 usage 缺字段、越界、ID 不匹配或不可用，When cleanup inventory 投影完成，Then 该项大小未知且没有完整镜像大小回退值。
+- Given 镜像候选的 inspect `Size` 很大但 Docker usage 中没有该镜像 ID，When cleanup inventory 投影完成，Then 该候选仍为未知，不以 inspect `Size` 作为回收估算。
 - Given cleanup inventory snapshot 缺少 `estimateVersion`，When 页面读取或确认该快照，Then 镜像旧估算投影为未知、触发重扫，且 apply 不接受该快照；未来版本中的未知 `estimateBasis` 不阻断此降级流程。
 - Given 用户打开确认清理对话框，When 查看四类资源，Then 每组折叠时可比较数量、已知小计和未知项，展开后可查看资源及 Stack/服务归属；多组可同时展开，且不会改变清理范围与指纹。
 - Given confirm-scan 返回 pending，When 页面等待服务端 `retryAfterMs`，Then 首次请求为 `refresh=true`、后续请求为 `refresh=false`，候选列表上方显示“更新中”，按钮文案仍为 `全部` / `重扫`。
 - Given confirm worker 已失败且不再运行，When 页面轮询 confirm-scan，Then API 返回明确失败，页面显示“刷新失败”与可重试的 `重试`，不显示内部 worker 错误且不循环 pending。
 - Given 用户基于旧 fingerprint 提交 apply，When 服务器检测到候选已变化，Then 返回 `409 cleanup_snapshot_stale` 与最新 confirm payload，前端刷新弹窗并要求再次确认。
+- Given scope、候选身份、basis、未知状态、时间戳及预计总量都相同，When 仅一个候选的估算字节数改变，Then confirmation fingerprint 必须改变。
 - Given confirm snapshot 年龄为 299 秒或 301 秒，When 用户分别执行 confirm/apply，Then 前者可 ready/apply，后者只能 pending/stale 并等待新快照。
 - Given cleanup apply job 完成，When 用户查看任务摘要或日志，Then 可看到 `preset`、`scope`、`reclaimedBytesEstimated`、`deletedCountsByKind`、`skippedInUse` 与 `groupedTargets`。
 
