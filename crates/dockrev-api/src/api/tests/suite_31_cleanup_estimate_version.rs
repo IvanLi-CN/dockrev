@@ -23,6 +23,9 @@ async fn cleanup_apply_rejects_future_estimate_version_and_enqueues_refresh() {
     future_json["estimateVersion"] = serde_json::json!(
         crate::api::types::CLEANUP_ESTIMATE_VERSION + 1
     );
+    let candidates = future_json["candidates"].as_array_mut().unwrap();
+    assert!(!candidates.is_empty());
+    candidates[0]["estimateBasis"] = serde_json::json!("future_usage_metric");
     let observed_future_snapshot = future_json.to_string();
     state
         .db

@@ -58,7 +58,7 @@ pub enum CleanupResourceKind {
     BuilderCache,
 }
 
-#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Clone, Debug, Default, Serialize, PartialEq, Eq, PartialOrd, Ord)]
 #[serde(rename_all = "snake_case")]
 pub enum CleanupEstimateBasis {
     ImageUnique,
@@ -66,6 +66,22 @@ pub enum CleanupEstimateBasis {
     LowerBound,
     #[default]
     Unknown,
+}
+
+impl<'de> Deserialize<'de> for CleanupEstimateBasis {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let value = String::deserialize(deserializer)?;
+        Ok(match value.as_str() {
+            "image_unique" => Self::ImageUnique,
+            "reported_usage" => Self::ReportedUsage,
+            "lower_bound" => Self::LowerBound,
+            "unknown" => Self::Unknown,
+            _ => Self::Unknown,
+        })
+    }
 }
 
 impl CleanupResourceKind {

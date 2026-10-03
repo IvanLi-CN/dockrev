@@ -84,7 +84,7 @@
 - 确认对话框只展示四个独立资源类型组，不改变原 `scope/preset/fingerprint`；每组折叠标题始终显示候选数、已知字节小计和未知数量，展开后逐项显示资源与 Stack/服务归属。
 - 镜像候选使用 Docker Engine `/system/df?verbose=true` 返回的 `ImageUsage.Items`；兼容旧版 `Images`。仅当镜像 ID 可精确匹配且 `Size`、`SharedSize` 均有效且 `SharedSize <= Size` 时，估算为 `Size - SharedSize`。
 - 镜像磁盘统计不可用、缺少字段、ID 不匹配或数据不可信时，资源估算为未知，不使用 `docker image inspect Size` 替代。估算仅表示 Docker 报告的独占空间，不承诺执行后的实际物理磁盘净变化。
-- Cleanup inventory snapshot 写入 `estimateVersion=1`；缺失版本按 `0` 处理。读取旧版本快照时，旧镜像字节数投影为未知并触发刷新；confirm/apply 不接受旧版本快照。
+- Cleanup inventory snapshot 写入 `estimateVersion=1`；缺失版本按 `0` 处理。读取旧版本快照时，旧镜像字节数投影为未知并触发刷新；未知 `estimateBasis` 字符串映射为 `unknown`，以便未来版本快照被安全识别并刷新；confirm/apply 不接受旧版本快照。
 - confirm-scan 首次请求使用 `refresh=true`，后续严格按响应中的 `retryAfterMs` 以 `refresh=false` 轮询；pending 期间页面在候选列表上方显示可访问的“更新中”状态栏，按钮只保留稳定短标签 `全部`、`重扫`，不把等待说明塞进按钮。
 - 用户在确认对话框点击确认后，前端调用 `POST /api/cleanups/apply` 创建 `cleanup_apply` job，并跳转/关联任务队列状态。
 
@@ -126,7 +126,7 @@
 - Given 用户点击 `全部`、`清理此 stack` 或 `清理此服务`，When confirm-scan 返回结果，Then 二次确认对话框展示最新候选、最新预计释放空间、最新扫描时间。
 - Given cleanup inventory 包含镜像，When Docker usage 返回有效的 `Size=1000, SharedSize=700`，Then 该镜像的估算为 `300`，且完整 `Size` 不参与预计回收量。
 - Given 镜像 usage 缺字段、越界、ID 不匹配或不可用，When cleanup inventory 投影完成，Then 该项大小未知且没有完整镜像大小回退值。
-- Given cleanup inventory snapshot 缺少 `estimateVersion`，When 页面读取或确认该快照，Then 镜像旧估算投影为未知、触发重扫，且 apply 不接受该快照。
+- Given cleanup inventory snapshot 缺少 `estimateVersion`，When 页面读取或确认该快照，Then 镜像旧估算投影为未知、触发重扫，且 apply 不接受该快照；未来版本中的未知 `estimateBasis` 不阻断此降级流程。
 - Given 用户打开确认清理对话框，When 查看四类资源，Then 每组折叠时可比较数量、已知小计和未知项，展开后可查看资源及 Stack/服务归属；多组可同时展开，且不会改变清理范围与指纹。
 - Given confirm-scan 返回 pending，When 页面等待服务端 `retryAfterMs`，Then 首次请求为 `refresh=true`、后续请求为 `refresh=false`，候选列表上方显示“更新中”，按钮文案仍为 `全部` / `重扫`。
 - Given confirm worker 已失败且不再运行，When 页面轮询 confirm-scan，Then API 返回明确失败，页面显示“刷新失败”与可重试的 `重试`，不显示内部 worker 错误且不循环 pending。

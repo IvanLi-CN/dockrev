@@ -158,7 +158,9 @@ export const ApplyingAllState: Story = {
 
     findButton(doc, '全部')?.click()
     await waitForCondition(() => doc.body.textContent?.includes('确认清理全部') ?? false)
-    findButton(doc, '确认清理')?.click()
+    const approve = findButton(doc, '确认清理')
+    assertStory(approve, 'all-resource confirmation button missing')
+    approve.click()
 
     await waitForCondition(() => findButton(doc, '全部')?.getAttribute('aria-busy') === 'true')
     assertStory(findButton(doc, '全部')?.disabled === true, 'cleanup all action should stay disabled while apply request is in flight')
@@ -209,6 +211,18 @@ export const ConfirmDialogLatestScan: Story = {
     assertStory(doc.body.textContent?.includes('prod / api'), 'expanded details should show Stack and service ownership')
     assertStory(groupToggles[0]?.getAttribute('aria-expanded') === 'true' && groupToggles[1]?.getAttribute('aria-expanded') === 'true', 'multiple resource groups should remain open together')
     assertStory(doc.body.textContent?.includes('全部候选'), 'expanding groups should preserve the all-candidates confirmation')
+
+    findButton(doc, '确认清理')?.click()
+    await waitForCondition(() => globalThis.__DOCKREV_MOCK_DEBUG__?.lastCleanupApplyRequest != null)
+    const applyRequest = globalThis.__DOCKREV_MOCK_DEBUG__?.lastCleanupApplyRequest as {
+      scope?: unknown
+      confirmationFingerprint?: unknown
+    } | null
+    assertStory(applyRequest?.scope === 'all', 'expanding resource groups should preserve the all-resource apply scope')
+    assertStory(
+      typeof applyRequest?.confirmationFingerprint === 'string' && applyRequest.confirmationFingerprint.length > 0,
+      'all-resource apply should retain the confirmed snapshot fingerprint',
+    )
   },
 }
 

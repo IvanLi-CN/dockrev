@@ -492,6 +492,7 @@ export function resolveCleanupMockApply(
   request: CleanupApplyRequest,
   runtime: CleanupMockRuntimeState,
 ): { ok: true; jobId: string } | { ok: false; status: number; body: { error: { code: string; message: string; details: CleanupFingerprintMismatchError } } } {
+  if (globalThis.__DOCKREV_MOCK_DEBUG__) globalThis.__DOCKREV_MOCK_DEBUG__.lastCleanupApplyRequest = request
   if (scenario === 'cleanup-console-stale' && !runtime.staleApplyConsumed) {
     runtime.staleApplyConsumed = true
     const latest = buildCleanupMockScanResponse(

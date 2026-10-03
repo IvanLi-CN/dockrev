@@ -97,6 +97,7 @@
 - 镜像候选按 ID 匹配 `/system/df?verbose=true` 的 `ImageUsage.Items`；兼容旧响应的 `Images` 数组。仅当 `Size` 与 `SharedSize` 均为非负整数且 `SharedSize <= Size` 时，`estimatedReclaimableBytes = Size - SharedSize`、`estimateBasis=image_unique`。缺失/无效字段、ID 不匹配、重复 ID 或接口不可用时，镜像估算为 `null`、`estimateUnknown=true`、`estimateBasis=unknown`；不得以 `docker image inspect Size` 回退。
 - `estimatedReclaimableBytes` 是 Docker 报告的候选独占/使用量总和，不是对删除所选资源后的物理磁盘净变化承诺；未计入删除集合共同释放的共享镜像层。
 - 持久化 cleanup inventory snapshot 带 `estimateVersion`，当前值为 `1`；缺省按 `0` 读取。低于当前版本的快照中，旧镜像估算必须投影为未知并触发既有重扫；旧版本快照不得用于 ready confirm 或 apply。
+- 持久化读取遇到未识别的 `estimateBasis` 字符串时映射为 `unknown`，保证更高 estimate version 可被识别为过期并安全重扫，而不会因新枚举值反序列化失败。
 - `serverDiskUsage` 表示 Dockrev 运行环境看到的服务器根文件系统用量；字段可省略，省略时前端必须展示“未获取”而不是把它混入可回收候选估算。
 - `reason=confirm` 只有在最新 cleanup snapshot 年龄 `<=300s`（5 分钟）且无 refresh in-flight 时才返回 ready；否则返回 pending，前端必须 poll 到 ready 后再允许确认。
 - cleanup confirm/page 的首次请求可以使用 `refresh=true` 触发后台刷新；后续 poll 必须改用 `refresh=false`，避免重复 re-enqueue 同一轮扫描。

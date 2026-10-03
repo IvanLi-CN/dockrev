@@ -356,6 +356,7 @@ export type MockDebug = {
   jobsEventsCalls: number
   jobsListCalls: number
   jobsListUrls: string[]
+  lastCleanupApplyRequest: unknown | null
   ghcrReposUrls: string[]
   lastUpdateRequest: unknown | null
   lastUpdateUrl: string | null
@@ -822,6 +823,7 @@ export function makeMockDebug(): MockDebug {
     jobsEventsCalls: 0,
     jobsListCalls: 0,
     jobsListUrls: [],
+    lastCleanupApplyRequest: null,
     ghcrReposUrls: [],
     lastUpdateRequest: null,
     lastUpdateUrl: null,
