@@ -191,8 +191,9 @@ pub(super) async fn scan_cleanups(
             if let Some(row) = snapshot_row {
                 let snapshot = serde_json::from_str::<CleanupInventorySnapshot>(&row.snapshot_json)
                     .map_err(|err| map_internal(err.into()))?;
-                let is_fresh = snapshot.estimate_version
-                    >= crate::api::types::CLEANUP_ESTIMATE_VERSION
+                let estimate_version_supported =
+                    snapshot.estimate_version == crate::api::types::CLEANUP_ESTIMATE_VERSION;
+                let is_fresh = estimate_version_supported
                     && cleanup_snapshot_worker::cleanup_snapshot_is_fresh(&row.checked_at, now);
                 let mut refreshing = is_running;
                 let last_error = state.cleanup_snapshot_worker.last_error().await;
@@ -257,14 +258,13 @@ pub(super) async fn scan_cleanups(
             if let Some(row) = snapshot_row {
                 let snapshot = serde_json::from_str::<CleanupInventorySnapshot>(&row.snapshot_json)
                     .map_err(|err| map_internal(err.into()))?;
-                let is_fresh = snapshot.estimate_version
-                    >= crate::api::types::CLEANUP_ESTIMATE_VERSION
+                let estimate_version_supported =
+                    snapshot.estimate_version == crate::api::types::CLEANUP_ESTIMATE_VERSION;
+                let is_fresh = estimate_version_supported
                     && cleanup_snapshot_worker::cleanup_snapshot_is_fresh(&row.checked_at, now);
                 let last_error = state.cleanup_snapshot_worker.last_error().await;
                 if is_fresh && !is_running {
-                    if req.refresh
-                        || snapshot.estimate_version < crate::api::types::CLEANUP_ESTIMATE_VERSION
-                    {
+                    if req.refresh {
                         let refreshing = state.cleanup_snapshot_worker.enqueue().await
                             || state.cleanup_snapshot_worker.is_running();
                         if refreshing {
@@ -282,7 +282,7 @@ pub(super) async fn scan_cleanups(
                     .map_err(map_internal)?;
                     return Ok(Json(plan.to_response(req.reason)));
                 }
-                if req.refresh {
+                if req.refresh || !estimate_version_supported {
                     let _ = state.cleanup_snapshot_worker.enqueue().await;
                 }
                 if !state.cleanup_snapshot_worker.is_running()
@@ -509,7 +509,7 @@ pub(super) async fn apply_cleanups(
     let snapshot = serde_json::from_str::<CleanupInventorySnapshot>(&snapshot_row.snapshot_json)
         .map_err(|err| map_internal(err.into()))?;
     let now = time::OffsetDateTime::now_utc();
-    let is_fresh = snapshot.estimate_version >= crate::api::types::CLEANUP_ESTIMATE_VERSION
+    let is_fresh = snapshot.estimate_version == crate::api::types::CLEANUP_ESTIMATE_VERSION
         && cleanup_snapshot_worker::cleanup_snapshot_is_fresh(&snapshot_row.checked_at, now);
     let is_running = state.cleanup_snapshot_worker.is_running();
     let last_error = state.cleanup_snapshot_worker.last_error().await;

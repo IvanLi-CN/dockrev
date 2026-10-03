@@ -762,6 +762,57 @@ fn legacy_image_snapshot_projects_unknown_instead_of_virtual_size() {
 }
 
 #[test]
+fn future_estimate_snapshot_projects_all_sizes_as_unknown() {
+    let image = sample_candidate(
+        "image:sha256:future",
+        CleanupResourceKind::Image,
+        CleanupOwnership::Unowned,
+        CleanupInventoryCategory::GlobalUnusedImage,
+        Some(12_000),
+    );
+    let volume = sample_candidate(
+        "volume:future",
+        CleanupResourceKind::Volume,
+        CleanupOwnership::Unowned,
+        CleanupInventoryCategory::GlobalUnusedVolume,
+        Some(24_000),
+    );
+    let snapshot = CleanupInventorySnapshot {
+        estimate_version: CLEANUP_ESTIMATE_VERSION + 1,
+        scanned_at: "2026-10-04T00:00:00Z".to_string(),
+        server_disk_usage: None,
+        candidates: vec![image, volume],
+    };
+    let request = CleanupScanRequest {
+        reason: CleanupScanReason::Confirm,
+        preset: CleanupPreset::Aggressive,
+        refresh: false,
+        scope: CleanupScope::All,
+        stack_id: None,
+        service_id: None,
+    };
+
+    let response = build_execution_plan_from_snapshot(&snapshot, &request, &snapshot.scanned_at)
+        .unwrap()
+        .to_response(CleanupScanReason::Confirm);
+    let resources = response.unowned_group.unwrap().resources;
+
+    assert_eq!(resources.len(), 2);
+    assert!(
+        resources
+            .iter()
+            .all(|item| item.estimated_reclaimable_bytes.is_none())
+    );
+    assert!(resources.iter().all(|item| item.estimate_unknown));
+    assert!(
+        resources
+            .iter()
+            .all(|item| item.estimate_basis == Some(CleanupEstimateBasis::Unknown))
+    );
+    assert_eq!(response.estimated_reclaimable_bytes, Some(0));
+}
+
+#[test]
 fn current_snapshot_persists_estimate_version_and_basis() {
     let candidate = sample_candidate(
         "image:sha256:current",

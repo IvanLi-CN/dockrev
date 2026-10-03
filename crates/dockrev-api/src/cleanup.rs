@@ -302,6 +302,7 @@ struct BuildxDuRecord {
     size: serde_json::Value,
 }
 
+#[cfg(test)]
 pub async fn build_inventory_snapshot(
     db: Db,
     runner: std::sync::Arc<dyn crate::runner::CommandRunner>,
@@ -309,6 +310,7 @@ pub async fn build_inventory_snapshot(
     build_inventory_snapshot_with_progress(db, runner, |_| {}).await
 }
 
+#[cfg(test)]
 pub async fn build_inventory_snapshot_with_progress(
     db: Db,
     runner: std::sync::Arc<dyn crate::runner::CommandRunner>,
@@ -1265,7 +1267,10 @@ fn candidate_from_snapshot(
     mut candidate: CleanupInventoryCandidate,
     estimate_version: u32,
 ) -> CleanupInventoryCandidate {
-    if estimate_version < CLEANUP_ESTIMATE_VERSION && candidate.kind == CleanupResourceKind::Image {
+    let unsupported_future_version = estimate_version > CLEANUP_ESTIMATE_VERSION;
+    let unsupported_legacy_image =
+        estimate_version < CLEANUP_ESTIMATE_VERSION && candidate.kind == CleanupResourceKind::Image;
+    if unsupported_future_version || unsupported_legacy_image {
         candidate.estimated_reclaimable_bytes = None;
         candidate.estimate_unknown = true;
         candidate.estimate_basis = Some(CleanupEstimateBasis::Unknown);
