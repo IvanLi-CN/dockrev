@@ -1,5 +1,6 @@
 import type {
   CleanupApplyRequest,
+  CleanupEstimateBasis,
   CleanupFingerprintMismatchError,
   CleanupPreset,
   CleanupResourceItem,
@@ -17,6 +18,7 @@ export type CleanupMockScenario =
   | 'cleanup-console-stale'
   | 'cleanup-console-confirm-pending'
   | 'cleanup-console-confirm-failed'
+  | 'cleanup-console-confirm-overflow'
   | 'cleanup-console-scan-pending'
   | 'cleanup-console-scan-slow'
   | 'cleanup-console-apply-slow'
@@ -57,6 +59,7 @@ type CleanupEntry = {
   minPreset: CleanupPreset
   estimatedReclaimableBytes?: number | null
   estimateUnknown?: boolean
+  estimateBasis?: CleanupEstimateBasis
   owner: CleanupOwner
 }
 
@@ -72,6 +75,7 @@ export function isCleanupMockScenario(value: string): value is CleanupMockScenar
     value === 'cleanup-console-stale' ||
     value === 'cleanup-console-confirm-pending' ||
     value === 'cleanup-console-confirm-failed' ||
+    value === 'cleanup-console-confirm-overflow' ||
     value === 'cleanup-console-scan-pending' ||
     value === 'cleanup-console-scan-slow' ||
     value === 'cleanup-console-apply-slow' ||
@@ -92,6 +96,7 @@ function toResource(entry: CleanupEntry): CleanupResourceItem {
     minPreset: entry.minPreset,
     estimatedReclaimableBytes: entry.estimatedReclaimableBytes ?? null,
     estimateUnknown: entry.estimateUnknown === true || entry.estimatedReclaimableBytes == null,
+    estimateBasis: entry.estimateBasis ?? (entry.estimateUnknown === true || entry.estimatedReclaimableBytes == null ? 'unknown' : 'reported_usage'),
   }
 }
 
@@ -166,7 +171,8 @@ function entriesForScenario(
       label: revision === 2 ? 'ghcr.io/acme/api@sha256:cleanup-newer' : 'ghcr.io/acme/api@sha256:cleanup-old',
       reason: '旧镜像未被任何容器使用',
       minPreset: 'balanced',
-      estimatedReclaimableBytes: (revision === 2 ? 1710 : 1430) * 1024 * 1024,
+      estimatedReclaimableBytes: (revision === 2 ? 360 : 290) * 1024 * 1024,
+      estimateBasis: 'image_unique',
       owner: {
         kind: 'service',
         stackId: 'stack-prod',
@@ -236,7 +242,8 @@ function entriesForScenario(
       label: 'quay.io/prometheus/prometheus@sha256:unused',
       reason: '旧镜像未被任何容器使用',
       minPreset: 'balanced',
-      estimatedReclaimableBytes: 620 * 1024 * 1024,
+      estimatedReclaimableBytes: 140 * 1024 * 1024,
+      estimateBasis: 'image_unique',
       owner: {
         kind: 'service',
         stackId: 'stack-infra',
@@ -246,6 +253,27 @@ function entriesForScenario(
       },
     },
   ]
+
+  if (scenario === 'cleanup-console-confirm-overflow') {
+    base.push(
+      ...Array.from({ length: 12 }, (_, index): CleanupEntry => ({
+        resourceId: `prod-api-image-overflow-${index + 1}`,
+        kind: 'image',
+        label: `ghcr.io/acme/api@sha256:cleanup-overflow-${String(index + 1).padStart(2, '0')}`,
+        reason: '旧镜像未被任何容器使用',
+        minPreset: 'balanced',
+        estimatedReclaimableBytes: (64 + index * 8) * 1024 * 1024,
+        estimateBasis: 'image_unique',
+        owner: {
+          kind: 'service',
+          stackId: 'stack-prod',
+          stackName: 'prod',
+          serviceId: 'svc-prod-api',
+          serviceName: 'api',
+        },
+      })),
+    )
+  }
 
   if (scenario === 'cleanup-console-aggressive-unowned') {
     base.push(
@@ -264,7 +292,8 @@ function entriesForScenario(
         label: 'sha256:global-unused-image',
         reason: '未归属镜像未被任何容器使用',
         minPreset: 'aggressive',
-        estimatedReclaimableBytes: 1830 * 1024 * 1024,
+        estimatedReclaimableBytes: 220 * 1024 * 1024,
+        estimateBasis: 'image_unique',
         owner: { kind: 'unowned', title: UNOWNED_TITLE },
       },
       {
@@ -287,7 +316,8 @@ function entriesForScenario(
       label: 'ghcr.io/acme/worker@sha256:late-candidate',
       reason: '旧镜像未被任何容器使用',
       minPreset: 'balanced',
-      estimatedReclaimableBytes: 540 * 1024 * 1024,
+      estimatedReclaimableBytes: 180 * 1024 * 1024,
+      estimateBasis: 'image_unique',
       owner: {
         kind: 'service',
         stackId: 'stack-prod',

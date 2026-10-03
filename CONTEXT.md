@@ -294,3 +294,25 @@ The Stack detail mobile-header contract applies from 320px through 960px wide: i
 - `mobile context drawer` is the temporary, page-owned presentation of context navigation on narrow screens. It complements the persistent primary bottom navigation and does not combine with it into a single undifferentiated menu.
 - `service directory` is the searchable, multi-expand Stack and service tree for Operations Dashboard. It keeps its expanded branches and selected entry while the operator remains in that work area.
 - `recent completed task` retains exactly five newest terminal tasks in context navigation and links to each task's detailed record. The complete task history remains in the primary content area.
+
+## Docker Resource Cleanup
+
+**cleanup candidate**:
+A Docker resource identified as eligible for cleanup under a cleanup rule and ownership scope. Being a candidate does not establish how much storage its deletion can release.
+_Avoid_: reclaimable bytes, deletion result
+
+**cleanup selection**:
+The set of cleanup candidates covered by one proposed operation. Its scope is independent of which groups are expanded or which resources are visible in the list.
+_Avoid_: expanded rows, visible candidates
+
+**candidate image size**:
+The complete size attributed to a candidate image, including data shared with other images. It describes the image's size rather than the storage released by deleting that image.
+_Avoid_: reclaimable space, exclusive image size
+
+**estimated reclaimable space**:
+A pre-execution estimate of storage that a cleanup selection can release, together with its estimation basis and completeness. It is distinct from the sum of candidate image sizes and from an observed cleanup result.
+_Avoid_: candidate size total, actual released space
+
+**observed disk-space change**:
+The difference in filesystem usage observed across a cleanup operation. It can include concurrent writes and storage activity beyond that operation, so it does not by itself establish how many bytes cleanup released.
+_Avoid_: exact cleanup yield, estimated reclaimable space

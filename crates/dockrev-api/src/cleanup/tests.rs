@@ -1,6 +1,7 @@
 use super::parse::{
     parse_df_bytes_output, parse_du_kilobytes_output, parse_human_size,
-    parse_volume_sizes_from_system_df_verbose, volume_fingerprint_key,
+    parse_image_unique_sizes_from_system_df_json, parse_volume_sizes_from_system_df_verbose,
+    volume_fingerprint_key,
 };
 use super::planning::preset_includes_candidate;
 use super::*;
@@ -54,6 +55,11 @@ fn sample_candidate(
         instance_id: None,
         estimated_reclaimable_bytes,
         estimate_unknown: estimated_reclaimable_bytes.is_none(),
+        estimate_basis: Some(if estimated_reclaimable_bytes.is_some() {
+            CleanupEstimateBasis::ReportedUsage
+        } else {
+            CleanupEstimateBasis::Unknown
+        }),
         requires_ephemeral_confirmation: false,
         ownership: ownership_to_snapshot(ownership),
         category,
@@ -251,6 +257,7 @@ fn fingerprint_ignores_candidate_iteration_order() {
             instance_id: Some("2026-03-29T00:00:00Z".to_string()),
             estimated_reclaimable_bytes: Some(2048),
             estimate_unknown: false,
+            estimate_basis: Some(CleanupEstimateBasis::ReportedUsage),
             requires_ephemeral_confirmation: false,
             ownership: ownership_to_snapshot(CleanupOwnership::Unowned),
             category: CleanupInventoryCategory::GlobalUnusedVolume,
@@ -263,6 +270,7 @@ fn fingerprint_ignores_candidate_iteration_order() {
             instance_id: None,
             estimated_reclaimable_bytes: Some(1024),
             estimate_unknown: false,
+            estimate_basis: Some(CleanupEstimateBasis::ImageUnique),
             requires_ephemeral_confirmation: false,
             ownership: ownership_to_snapshot(service.clone()),
             category: CleanupInventoryCategory::ManagedUnusedImage,
@@ -497,6 +505,7 @@ fn fingerprint_changes_when_reusable_volume_instance_changes() {
         instance_id: Some("2026-03-29T00:00:00Z".to_string()),
         estimated_reclaimable_bytes: Some(8192),
         estimate_unknown: false,
+        estimate_basis: Some(CleanupEstimateBasis::ReportedUsage),
         requires_ephemeral_confirmation: false,
         ownership: ownership_to_snapshot(ownership.clone()),
         category: CleanupInventoryCategory::ManagedUnusedVolume,
@@ -509,6 +518,7 @@ fn fingerprint_changes_when_reusable_volume_instance_changes() {
         instance_id: Some("2026-03-29T00:10:00Z".to_string()),
         estimated_reclaimable_bytes: Some(8192),
         estimate_unknown: false,
+        estimate_basis: Some(CleanupEstimateBasis::ReportedUsage),
         requires_ephemeral_confirmation: false,
         ownership: ownership_to_snapshot(ownership),
         category: CleanupInventoryCategory::ManagedUnusedVolume,
@@ -659,4 +669,174 @@ fn parse_df_bytes_output_reads_wrapped_filesystem_line() {
         parse_df_bytes_output(input),
         Some((37_800_000_000, 80_000_000_000))
     );
+}
+
+#[test]
+fn image_usage_parser_uses_exclusive_bytes_for_current_and_legacy_shapes() {
+    let current = serde_json::json!({
+        "ImageUsage": {"Items": [
+            {"Id": "sha256:shared", "Size": 1000, "SharedSize": 700},
+            {"Id": "sha256:only-shared", "Size": 42, "SharedSize": 42}
+        ]}
+    });
+    assert_eq!(
+        parse_image_unique_sizes_from_system_df_json(&current),
+        BTreeMap::from([
+            ("sha256:only-shared".to_string(), 0),
+            ("sha256:shared".to_string(), 300),
+        ])
+    );
+
+    let legacy = serde_json::json!({
+        "Images": [{"ID": "sha256:legacy", "Size": 4096, "SharedSize": 1024}]
+    });
+    assert_eq!(
+        parse_image_unique_sizes_from_system_df_json(&legacy).get("sha256:legacy"),
+        Some(&3072)
+    );
+}
+
+#[test]
+fn image_usage_parser_rejects_untrusted_or_ambiguous_rows() {
+    let usage = serde_json::json!({
+        "ImageUsage": {"Items": [
+            {"Id": "sha256:missing-shared", "Size": 100},
+            {"Id": "sha256:shared-too-large", "Size": 10, "SharedSize": 11},
+            {"Id": "sha256:duplicate", "Size": 10, "SharedSize": 2},
+            {"Id": "sha256:duplicate", "Size": 10, "SharedSize": 2},
+            {"Id": "sha256:good", "Size": 10, "SharedSize": 4}
+        ]}
+    });
+    assert_eq!(
+        parse_image_unique_sizes_from_system_df_json(&usage),
+        BTreeMap::from([("sha256:good".to_string(), 6)])
+    );
+
+    let malformed_current_with_legacy = serde_json::json!({
+        "ImageUsage": {"Items": null},
+        "Images": [{"ID": "sha256:legacy-fallback", "Size": 10, "SharedSize": 2}]
+    });
+    assert!(
+        parse_image_unique_sizes_from_system_df_json(&malformed_current_with_legacy).is_empty()
+    );
+}
+
+#[test]
+fn legacy_image_snapshot_projects_unknown_instead_of_virtual_size() {
+    let candidate = sample_candidate(
+        "image:sha256:legacy",
+        CleanupResourceKind::Image,
+        CleanupOwnership::Unowned,
+        CleanupInventoryCategory::GlobalUnusedImage,
+        Some(12_000),
+    );
+    let snapshot = CleanupInventorySnapshot {
+        estimate_version: 0,
+        scanned_at: "2026-10-04T00:00:00Z".to_string(),
+        server_disk_usage: None,
+        candidates: vec![candidate],
+    };
+    let mut old_json = serde_json::to_value(snapshot).unwrap();
+    old_json.as_object_mut().unwrap().remove("estimateVersion");
+    let old_snapshot = serde_json::from_value::<CleanupInventorySnapshot>(old_json).unwrap();
+    assert_eq!(old_snapshot.estimate_version, 0);
+
+    let request = CleanupScanRequest {
+        reason: CleanupScanReason::Confirm,
+        preset: CleanupPreset::Aggressive,
+        refresh: false,
+        scope: CleanupScope::All,
+        stack_id: None,
+        service_id: None,
+    };
+    let response =
+        build_execution_plan_from_snapshot(&old_snapshot, &request, &old_snapshot.scanned_at)
+            .unwrap()
+            .to_response(CleanupScanReason::Confirm);
+
+    let item = &response.unowned_group.unwrap().resources[0];
+    assert_eq!(item.estimated_reclaimable_bytes, None);
+    assert!(item.estimate_unknown);
+    assert_eq!(item.estimate_basis, Some(CleanupEstimateBasis::Unknown));
+    assert_eq!(response.estimated_reclaimable_bytes, Some(0));
+}
+
+#[test]
+fn current_snapshot_persists_estimate_version_and_basis() {
+    let candidate = sample_candidate(
+        "image:sha256:current",
+        CleanupResourceKind::Image,
+        CleanupOwnership::Unowned,
+        CleanupInventoryCategory::GlobalUnusedImage,
+        Some(300),
+    );
+    let mut candidate = candidate;
+    candidate.estimate_basis = Some(CleanupEstimateBasis::ImageUnique);
+    let snapshot = CleanupInventorySnapshot {
+        estimate_version: CLEANUP_ESTIMATE_VERSION,
+        scanned_at: "2026-10-04T00:00:00Z".to_string(),
+        server_disk_usage: None,
+        candidates: vec![candidate],
+    };
+    let value = serde_json::to_value(snapshot).unwrap();
+
+    assert_eq!(value["estimateVersion"], CLEANUP_ESTIMATE_VERSION);
+    assert_eq!(value["candidates"][0]["estimateBasis"], "image_unique");
+}
+
+#[test]
+fn current_snapshot_without_image_usage_keeps_candidate_unknown() {
+    let candidate = sample_candidate(
+        "image:sha256:missing-usage",
+        CleanupResourceKind::Image,
+        CleanupOwnership::Unowned,
+        CleanupInventoryCategory::GlobalUnusedImage,
+        None,
+    );
+    let snapshot = CleanupInventorySnapshot {
+        estimate_version: CLEANUP_ESTIMATE_VERSION,
+        scanned_at: "2026-10-04T00:00:00Z".to_string(),
+        server_disk_usage: None,
+        candidates: vec![candidate],
+    };
+    let request = CleanupScanRequest {
+        reason: CleanupScanReason::Confirm,
+        preset: CleanupPreset::Aggressive,
+        refresh: false,
+        scope: CleanupScope::All,
+        stack_id: None,
+        service_id: None,
+    };
+
+    let response = build_execution_plan_from_snapshot(&snapshot, &request, &snapshot.scanned_at)
+        .unwrap()
+        .to_response(CleanupScanReason::Confirm);
+
+    let item = &response.unowned_group.unwrap().resources[0];
+    assert_eq!(item.estimated_reclaimable_bytes, None);
+    assert!(item.estimate_unknown);
+    assert_eq!(item.estimate_basis, Some(CleanupEstimateBasis::Unknown));
+}
+
+#[test]
+fn confirmation_fingerprint_changes_when_estimate_basis_changes() {
+    let request = CleanupPlanRequest {
+        preset: CleanupPreset::Aggressive,
+        scope: CleanupScope::All,
+        stack_id: None,
+        service_id: None,
+    };
+    let mut candidate = sample_candidate(
+        "image:sha256:unique",
+        CleanupResourceKind::Image,
+        CleanupOwnership::Unowned,
+        CleanupInventoryCategory::GlobalUnusedImage,
+        Some(1024),
+    );
+    candidate.estimate_basis = Some(CleanupEstimateBasis::ImageUnique);
+    let first =
+        compute_confirmation_fingerprint(&request, &[candidate.clone()], "", 1024, false).unwrap();
+    candidate.estimate_basis = Some(CleanupEstimateBasis::ReportedUsage);
+    let second = compute_confirmation_fingerprint(&request, &[candidate], "", 1024, false).unwrap();
+    assert_ne!(first, second);
 }

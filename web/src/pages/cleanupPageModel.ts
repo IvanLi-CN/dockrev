@@ -12,6 +12,19 @@ export const KIND_LABEL: Record<CleanupResourceKind, string> = {
 
 export type CleanupUsageBucket = 'container' | 'image' | 'volume' | 'other'
 
+export type CleanupConfirmResourceRow = {
+  resource: CleanupResourceItem
+  ownerLabel: string
+}
+
+export type CleanupConfirmGroup = {
+  key: CleanupUsageBucket
+  label: string
+  resources: CleanupConfirmResourceRow[]
+  bytes: number
+  unknownCount: number
+}
+
 export type CleanupUsageCard = {
   key: CleanupUsageBucket
   label: string
@@ -42,6 +55,12 @@ const CLEANUP_USAGE_CARD_COPY: Record<CleanupUsageBucket, { label: string; descr
 }
 
 const USAGE_BUCKETS: CleanupUsageBucket[] = ['container', 'image', 'volume', 'other']
+const CONFIRM_BUCKETS: Array<{ key: CleanupUsageBucket; label: string }> = [
+  { key: 'image', label: '镜像' },
+  { key: 'volume', label: '卷' },
+  { key: 'container', label: '容器' },
+  { key: 'other', label: '其他' },
+]
 
 export function formatBytes(bytes: number): string {
   if (!Number.isFinite(bytes) || bytes <= 0) return '0 B'
@@ -110,6 +129,35 @@ export function countRenderableResources(response: CleanupScanResponse): number 
   }
   total += response.unownedGroup?.resources.length ?? 0
   return total
+}
+
+export function buildCleanupConfirmGroups(response: CleanupScanResponse): CleanupConfirmGroup[] {
+  const groups = new Map<CleanupUsageBucket, CleanupConfirmGroup>(
+    CONFIRM_BUCKETS.map(({ key, label }) => [key, { key, label, resources: [], bytes: 0, unknownCount: 0 }]),
+  )
+  const addResource = (resource: CleanupResourceItem, ownerLabel: string) => {
+    const group = groups.get(usageBucketForKind(resource.kind))
+    if (!group) return
+    group.resources.push({ resource, ownerLabel })
+    group.bytes += resource.estimatedReclaimableBytes ?? 0
+    if (itemHasUnknownSize(resource)) group.unknownCount += 1
+  }
+
+  for (const stack of response.stackGroups) {
+    for (const resource of stack.stackOrphans) {
+      addResource(resource, `${stack.stackName} · Stack 资源`)
+    }
+    for (const service of stack.services) {
+      for (const resource of service.resources) {
+        addResource(resource, `${stack.stackName} / ${service.serviceName}`)
+      }
+    }
+  }
+  for (const resource of response.unownedGroup?.resources ?? []) {
+    addResource(resource, '未归属资源')
+  }
+
+  return CONFIRM_BUCKETS.map(({ key }) => groups.get(key)!)
 }
 
 export function flattenAllResources(response: CleanupScanResponse): CleanupResourceItem[] {

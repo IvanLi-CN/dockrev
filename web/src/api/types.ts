@@ -880,6 +880,8 @@ export type CleanupServerDiskUsage = {
   totalBytes: number
 }
 
+export type CleanupEstimateBasis = 'image_unique' | 'reported_usage' | 'lower_bound' | 'unknown'
+
 export type CleanupResourceItem = {
   resourceId: string
   kind: CleanupResourceKind
@@ -888,6 +890,7 @@ export type CleanupResourceItem = {
   minPreset: CleanupPreset
   estimatedReclaimableBytes?: number | null
   estimateUnknown?: boolean
+  estimateBasis?: CleanupEstimateBasis
 }
 
 export type CleanupServiceGroup = {

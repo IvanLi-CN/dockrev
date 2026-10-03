@@ -19,6 +19,8 @@ const STORIES_REQUIRING_PLAY_SUCCESS = [
   "pages-servicedetailpage--mobile-versions-section",
   "pages-servicedetailpage--versions-section-normal-update-submission",
   "pages-servicedetailpage--versions-section-forced-update-submission",
+  "pages-cleanuppage--confirm-dialog-latest-scan",
+  "pages-cleanuppage--confirm-dialog-scrollable-latest-scan",
 ];
 
 function parsePort(value, fallback) {

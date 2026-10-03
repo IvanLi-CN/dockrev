@@ -234,6 +234,54 @@ async function main() {
     return page
   }
 
+  const openCleanupConfirmDialog = async (page) => {
+    const dialog = page.locator('.cleanupConfirmDialogCard')
+    if (!(await dialog.isVisible())) {
+      await page.getByRole('button', { name: '全部', exact: true }).first().click()
+    }
+    await page.getByText('确认清理全部', { exact: true }).waitFor({ timeout: STORY_TIMEOUT_MS })
+  }
+
+  const setupCleanupConfirmDialog = async (page) => {
+    await openCleanupConfirmDialog(page)
+    const toggles = page.locator('.cleanupConfirmGroupToggle')
+    for (const index of [0, 1]) {
+      const toggle = toggles.nth(index)
+      if (await toggle.getAttribute('aria-expanded') !== 'true') await toggle.click()
+    }
+    await page.waitForFunction(() => {
+      const card = document.querySelector('.cleanupConfirmDialogCard')
+      const groups = card?.querySelectorAll('.cleanupConfirmGroupToggle')
+      return groups?.length === 4 && groups[0]?.getAttribute('aria-expanded') === 'true' && groups[1]?.getAttribute('aria-expanded') === 'true'
+      }, null, { timeout: STORY_TIMEOUT_MS })
+    await page.mouse.move(0, 0)
+  }
+
+  const setupScrollableCleanupConfirmDialog = async (page) => {
+    await openCleanupConfirmDialog(page)
+    const firstGroup = page.locator('.cleanupConfirmGroupToggle').first()
+    await firstGroup.focus()
+    const initiallyExpanded = await firstGroup.getAttribute('aria-expanded') === 'true'
+    await page.keyboard.press('Space')
+    if (initiallyExpanded) await page.keyboard.press('Space')
+    await page.waitForFunction(() => {
+      const firstGroup = document.querySelector('.cleanupConfirmGroupToggle')
+      return firstGroup?.getAttribute('aria-expanded') === 'true'
+    }, null, { timeout: STORY_TIMEOUT_MS })
+
+    const hasScrollableBody = await page.locator('.cleanupConfirmDialogBody').evaluate((body) => body.scrollHeight > body.clientHeight)
+    if (!hasScrollableBody) throw new Error('Expanded cleanup details should scroll inside the confirmation dialog.')
+    await page.locator('.cleanupConfirmDialogBody').evaluate((body) => { body.scrollTop = body.scrollHeight })
+    await page.waitForTimeout(80)
+    const confirmBounds = await page.getByRole('button', { name: '确认清理', exact: true }).boundingBox()
+    const viewport = page.viewportSize()
+    if (!confirmBounds || !viewport || confirmBounds.y < 0 || confirmBounds.y + confirmBounds.height > viewport.height) {
+      throw new Error('Cleanup confirmation action is not visible after scrolling dialog details.')
+    }
+    await page.locator('.cleanupConfirmDialogBody').evaluate((body) => { body.scrollTop = 0 })
+    await page.mouse.move(0, 0)
+  }
+
   const scrollSidebarToBottom = async (page) => {
     await page.evaluate(() => {
       const el = document.querySelector('.sidebar')
@@ -348,6 +396,33 @@ async function main() {
   }
 
   const shots = [
+    {
+      id: 'pages-cleanuppage--confirm-dialog-latest-scan',
+      file: 'cleanup-confirm-dialog-desktop.png',
+      viewport: { width: 1440, height: 900 },
+      setup: setupCleanupConfirmDialog,
+      screenshot: async (page, filePath) => {
+        await page.locator('.cleanupConfirmDialogCard').screenshot({ path: filePath })
+      },
+    },
+    {
+      id: 'pages-cleanuppage--confirm-dialog-latest-scan',
+      file: 'cleanup-confirm-dialog-mobile.png',
+      viewport: { width: 393, height: 852 },
+      setup: setupCleanupConfirmDialog,
+      screenshot: async (page, filePath) => {
+        await page.locator('.cleanupConfirmDialogCard').screenshot({ path: filePath })
+      },
+    },
+    {
+      id: 'pages-cleanuppage--confirm-dialog-scrollable-latest-scan',
+      file: 'cleanup-confirm-dialog-mobile-scroll.png',
+      viewport: { width: 393, height: 852 },
+      setup: setupScrollableCleanupConfirmDialog,
+      screenshot: async (page, filePath) => {
+        await page.locator('.cleanupConfirmDialogCard').screenshot({ path: filePath })
+      },
+    },
     {
       id: 'components-notificationcenter--desktop',
       file: 'notification-center-desktop.png',
