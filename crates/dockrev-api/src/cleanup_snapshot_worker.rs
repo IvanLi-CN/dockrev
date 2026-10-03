@@ -82,6 +82,22 @@ impl CleanupSnapshotWorker {
         true
     }
 
+    pub async fn enqueue_if_idle(&self) -> bool {
+        if self
+            .running
+            .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
+            .is_err()
+        {
+            return false;
+        }
+        self.pending.store(true, Ordering::SeqCst);
+        let worker = self.clone();
+        tokio::spawn(async move {
+            worker.run_loop().await;
+        });
+        true
+    }
+
     pub fn is_running(&self) -> bool {
         self.running.load(Ordering::SeqCst)
     }

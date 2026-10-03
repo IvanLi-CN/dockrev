@@ -987,6 +987,7 @@ async fn configure_webhook_notifications(
 #[derive(Clone)]
 enum CleanupRunnerMode {
     StaleOnSecondScan,
+    SlowStaleOnSecondScan,
     VolumeInUse,
     VolumeEstimateFallback,
     VolumeMountpointFallback,
@@ -1006,6 +1007,13 @@ impl CleanupRunner {
     fn stale_on_second_scan() -> Self {
         Self {
             mode: CleanupRunnerMode::StaleOnSecondScan,
+            scan_generation: Arc::new(AtomicUsize::new(0)),
+        }
+    }
+
+    fn slow_stale_on_second_scan() -> Self {
+        Self {
+            mode: CleanupRunnerMode::SlowStaleOnSecondScan,
             scan_generation: Arc::new(AtomicUsize::new(0)),
         }
     }

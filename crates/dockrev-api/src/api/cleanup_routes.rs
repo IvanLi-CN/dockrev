@@ -282,8 +282,10 @@ pub(super) async fn scan_cleanups(
                     .map_err(map_internal)?;
                     return Ok(Json(plan.to_response(req.reason)));
                 }
-                if req.refresh || !estimate_version_supported {
+                if req.refresh {
                     let _ = state.cleanup_snapshot_worker.enqueue().await;
+                } else if !estimate_version_supported && !is_running {
+                    let _ = state.cleanup_snapshot_worker.enqueue_if_idle().await;
                 }
                 if !state.cleanup_snapshot_worker.is_running()
                     && let Some(last_error) = state.cleanup_snapshot_worker.last_error().await

@@ -2,6 +2,11 @@
 impl CommandRunner for CleanupRunner {
     async fn run(&self, spec: CommandSpec, _timeout: Duration) -> anyhow::Result<CommandOutput> {
         let args = spec.args.iter().map(String::as_str).collect::<Vec<_>>();
+        if matches!(&self.mode, CleanupRunnerMode::SlowStaleOnSecondScan)
+            && args == vec!["container", "ls", "-aq"]
+        {
+            tokio::time::sleep(Duration::from_millis(150)).await;
+        }
         if spec.program == "df"
             && (args == vec!["-P", "-B1", "/"] || args == vec!["-B1", "."])
         {
@@ -12,7 +17,7 @@ impl CommandRunner for CleanupRunner {
             });
         }
         let out = match self.mode {
-            CleanupRunnerMode::StaleOnSecondScan => {
+            CleanupRunnerMode::StaleOnSecondScan | CleanupRunnerMode::SlowStaleOnSecondScan => {
                 if args == vec!["container", "ls", "-aq"] {
                     let generation = self.scan_generation.fetch_add(1, Ordering::SeqCst);
                     if generation == 0 {
