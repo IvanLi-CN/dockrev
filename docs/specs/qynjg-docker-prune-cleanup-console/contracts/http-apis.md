@@ -10,6 +10,7 @@
 - `CleanupScanRunEvent`
 - `CleanupScanRunPhase = "scan_started" | "scan_partial" | "scan_ready" | "scan_failed"`
 - `CleanupServerDiskUsage`
+- `CleanupEstimateBasis = "image_unique" | "reported_usage" | "lower_bound" | "unknown"`
 - `CleanupStackGroup`
 - `CleanupServiceGroup`
 - `CleanupApplyRequest`
@@ -42,7 +43,8 @@
           "label": "alpha_cache",
           "minPreset": "conservative",
           "estimateUnknown": false,
-          "estimatedReclaimableBytes": 4096
+          "estimatedReclaimableBytes": 4096,
+          "estimateBasis": "reported_usage"
         }
       ],
       "services": [
@@ -58,7 +60,8 @@
               "label": "ghcr.io/acme/web:old",
               "minPreset": "balanced",
               "estimateUnknown": false,
-              "estimatedReclaimableBytes": 8192
+              "estimatedReclaimableBytes": 8192,
+              "estimateBasis": "image_unique"
             }
           ]
         }
@@ -76,7 +79,8 @@
         "label": "global builder cache",
         "minPreset": "balanced",
         "estimateUnknown": false,
-        "estimatedReclaimableBytes": 20480
+        "estimatedReclaimableBytes": 20480,
+        "estimateBasis": "reported_usage"
       }
     ]
   },
@@ -89,6 +93,10 @@
 - `reason=page` 的实现约定是：前端固定以 `preset=aggressive, scope=all` 读取一份完整 inventory snapshot，再用每个资源项的 `minPreset` 做本地 tab 投影；页面默认展示 `balanced` 投影，但不重复全量扫描。
 - `minPreset` 表示该资源最早在哪个 preset 开始出现，前端据此决定 tabs 是否显示该资源。
 - `estimatedReclaimableBytes` 对资源项来说允许为 `null`；这时 `estimateUnknown=true`，group/response 级 `hasUnknownSize=true`。
+- 资源项可带 `estimateBasis`：`image_unique` 表示 Docker 报告的镜像独占字节数，`reported_usage` 表示 Docker 报告或资源专用扫描返回值，`lower_bound` 表示可用字节是保守下界，`unknown` 表示没有可信估算。客户端必须允许旧服务端省略此可选字段。
+- 镜像候选按 ID 匹配 `/system/df?verbose=true` 的 `ImageUsage.Items`；兼容旧响应的 `Images` 数组。仅当 `Size` 与 `SharedSize` 均为非负整数且 `SharedSize <= Size` 时，`estimatedReclaimableBytes = Size - SharedSize`、`estimateBasis=image_unique`。缺失/无效字段、ID 不匹配、重复 ID 或接口不可用时，镜像估算为 `null`、`estimateUnknown=true`、`estimateBasis=unknown`；不得以 `docker image inspect Size` 回退。
+- `estimatedReclaimableBytes` 是 Docker 报告的候选独占/使用量总和，不是对删除所选资源后的物理磁盘净变化承诺；未计入删除集合共同释放的共享镜像层。
+- 持久化 cleanup inventory snapshot 带 `estimateVersion`，当前值为 `1`；缺省按 `0` 读取。低于当前版本的快照中，旧镜像估算必须投影为未知并触发既有重扫；旧版本快照不得用于 ready confirm 或 apply。
 - `serverDiskUsage` 表示 Dockrev 运行环境看到的服务器根文件系统用量；字段可省略，省略时前端必须展示“未获取”而不是把它混入可回收候选估算。
 - `reason=confirm` 只有在最新 cleanup snapshot 年龄 `<=300s`（5 分钟）且无 refresh in-flight 时才返回 ready；否则返回 pending，前端必须 poll 到 ready 后再允许确认。
 - cleanup confirm/page 的首次请求可以使用 `refresh=true` 触发后台刷新；后续 poll 必须改用 `refresh=false`，避免重复 re-enqueue 同一轮扫描。
@@ -166,7 +174,7 @@ pending 示例：
 `confirmationFingerprint` 语义说明：
 
 - fingerprint 代表“当前 confirm-scan 同意执行的 cleanup 语义快照”，必须在 confirm/apply 之间保持稳定。
-- 仅当以下语义变化时才允许 fingerprint 变化：`preset`、`scope`、`stackId/serviceId`、候选 identity/ownership/category、候选估算值、候选 `estimateUnknown`、聚合 `estimatedReclaimableBytes`、聚合 `hasUnknownSize`。
+- 仅当以下语义变化时才允许 fingerprint 变化：`preset`、`scope`、`stackId/serviceId`、候选 identity/ownership/category、候选估算值、候选 `estimateUnknown`、候选 `estimateBasis`、聚合 `estimatedReclaimableBytes`、聚合 `hasUnknownSize`。
 - 对名字可复用的资源（例如 named volume、builder cache），服务端必须把底层实例 freshness identity 一并纳入 fingerprint（例如 volume `CreatedAt` / mountpoint、builder cache inventory hash），避免旧确认误删后续重建的同名目标。
 - `scannedAt` 只用于 UI 展示“最新扫描时间”，不得单独导致 fingerprint 变化。
 

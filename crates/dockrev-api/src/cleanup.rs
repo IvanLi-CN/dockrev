@@ -6,9 +6,10 @@ use serde::Deserialize;
 use serde_json::json;
 
 use crate::api::types::{
-    CleanupInventoryCandidate, CleanupInventoryCategory, CleanupInventoryOwnership,
-    CleanupInventoryOwnershipType, CleanupInventorySnapshot, CleanupPreset, CleanupResourceKind,
-    CleanupScanReason, CleanupScanRequest, CleanupScanResponse, CleanupScanStatus, CleanupScope,
+    CLEANUP_ESTIMATE_VERSION, CleanupEstimateBasis, CleanupInventoryCandidate,
+    CleanupInventoryCategory, CleanupInventoryOwnership, CleanupInventoryOwnershipType,
+    CleanupInventorySnapshot, CleanupPreset, CleanupResourceKind, CleanupScanReason,
+    CleanupScanRequest, CleanupScanResponse, CleanupScanStatus, CleanupScope,
     CleanupServerDiskUsage, CleanupStackGroup, CleanupUnownedGroup, JobLogLine, JobProgress,
 };
 use crate::db::{ArchivedFilter, Db};
@@ -23,11 +24,16 @@ mod planning;
 use parse::{
     ensure_success, fingerprint_hint_from_buildx_text_output, fingerprint_hint_from_output,
     parse_buildx_du_json_lines, parse_buildx_du_text_summary,
+    parse_image_unique_sizes_from_system_df_json as parse_image_unique_sizes,
 };
 use planning::{
     build_grouped_response, candidate_matches_request, compute_confirmation_fingerprint,
     grouped_targets_json, image_is_dangling, is_builtin_network, preferred_image_label,
 };
+
+pub fn image_unique_sizes_from_system_df_json(value: &serde_json::Value) -> BTreeMap<String, u64> {
+    parse_image_unique_sizes(value)
+}
 
 #[derive(Clone, Debug)]
 pub struct CleanupExecutionPlan {
@@ -198,8 +204,6 @@ struct DockerImageInspect {
     #[serde(default)]
     repo_digests: Vec<String>,
     #[serde(default)]
-    size: Option<u64>,
-    #[serde(default)]
     config: DockerInspectConfig,
 }
 
@@ -298,6 +302,7 @@ struct BuildxDuRecord {
     size: serde_json::Value,
 }
 
+#[cfg(test)]
 pub async fn build_inventory_snapshot(
     db: Db,
     runner: std::sync::Arc<dyn crate::runner::CommandRunner>,
@@ -305,24 +310,42 @@ pub async fn build_inventory_snapshot(
     build_inventory_snapshot_with_progress(db, runner, |_| {}).await
 }
 
+#[cfg(test)]
 pub async fn build_inventory_snapshot_with_progress(
     db: Db,
     runner: std::sync::Arc<dyn crate::runner::CommandRunner>,
+    on_partial: impl FnMut(CleanupInventorySnapshot) + Send,
+) -> anyhow::Result<CleanupInventorySnapshot> {
+    build_inventory_snapshot_with_image_unique_sizes(db, runner, None, on_partial).await
+}
+
+pub async fn build_inventory_snapshot_with_image_unique_sizes(
+    db: Db,
+    runner: std::sync::Arc<dyn crate::runner::CommandRunner>,
+    image_unique_sizes: Option<BTreeMap<String, u64>>,
     mut on_partial: impl FnMut(CleanupInventorySnapshot) + Send,
 ) -> anyhow::Result<CleanupInventorySnapshot> {
     let managed = load_managed_context_from_db(&db).await?;
-    let mut candidates = scan_candidates_with_progress(&runner, &db, &managed, |candidates| {
-        on_partial(CleanupInventorySnapshot {
-            scanned_at: now_rfc3339()
-                .unwrap_or_else(|_| time::OffsetDateTime::now_utc().to_string()),
-            server_disk_usage: None,
-            candidates,
-        });
-    })
+    let mut candidates = scan_candidates_with_progress(
+        &runner,
+        &db,
+        &managed,
+        image_unique_sizes.as_ref(),
+        |candidates| {
+            on_partial(CleanupInventorySnapshot {
+                estimate_version: CLEANUP_ESTIMATE_VERSION,
+                scanned_at: now_rfc3339()
+                    .unwrap_or_else(|_| time::OffsetDateTime::now_utc().to_string()),
+                server_disk_usage: None,
+                candidates,
+            });
+        },
+    )
     .await?;
     if let Some(builder_cache) = scan_builder_cache_candidate(runner.clone()).await {
         candidates.push(builder_cache);
         on_partial(CleanupInventorySnapshot {
+            estimate_version: CLEANUP_ESTIMATE_VERSION,
             scanned_at: now_rfc3339()
                 .unwrap_or_else(|_| time::OffsetDateTime::now_utc().to_string()),
             server_disk_usage: None,
@@ -334,6 +357,7 @@ pub async fn build_inventory_snapshot_with_progress(
         .await
         .map(CleanupServerDiskUsage::from);
     Ok(CleanupInventorySnapshot {
+        estimate_version: CLEANUP_ESTIMATE_VERSION,
         scanned_at,
         server_disk_usage,
         candidates,
@@ -349,7 +373,7 @@ pub fn build_execution_plan_from_snapshot(
         .candidates
         .iter()
         .cloned()
-        .map(candidate_from_snapshot)
+        .map(|candidate| candidate_from_snapshot(candidate, snapshot.estimate_version))
         .collect::<Vec<_>>();
 
     let request = CleanupPlanRequest {
@@ -686,6 +710,7 @@ async fn scan_candidates_with_progress(
     runner: &std::sync::Arc<dyn crate::runner::CommandRunner>,
     db: &Db,
     managed: &ManagedContext,
+    image_unique_sizes: Option<&BTreeMap<String, u64>>,
     mut on_partial: impl FnMut(Vec<CleanupInventoryCandidate>) + Send,
 ) -> anyhow::Result<Vec<CleanupInventoryCandidate>> {
     let container_ids = docker_list_ids(runner, vec!["container", "ls", "-aq"]).await?;
@@ -745,6 +770,11 @@ async fn scan_candidates_with_progress(
                 .size_rw
                 .and_then(|size| u64::try_from(size).ok())
                 .is_none(),
+            estimate_basis: Some(if container.size_rw.is_some_and(|size| size >= 0) {
+                CleanupEstimateBasis::ReportedUsage
+            } else {
+                CleanupEstimateBasis::Unknown
+            }),
             requires_ephemeral_confirmation: false,
             ownership: snapshot_ownership(owner),
             category: CleanupInventoryCategory::StoppedContainer,
@@ -780,14 +810,20 @@ async fn scan_candidates_with_progress(
             CleanupInventoryCategory::ManagedUnusedImage
         };
         let label = preferred_image_label(&inspect);
+        let unique_size = image_unique_sizes.and_then(|sizes| sizes.get(&inspect.id).copied());
         candidates.push(CleanupInventoryCandidate {
             key: format!("image:{}", inspect.id),
             resource_id: inspect.id,
             kind: CleanupResourceKind::Image,
             label,
             instance_id: None,
-            estimated_reclaimable_bytes: inspect.size,
-            estimate_unknown: inspect.size.is_none(),
+            estimated_reclaimable_bytes: unique_size,
+            estimate_unknown: unique_size.is_none(),
+            estimate_basis: Some(if unique_size.is_some() {
+                CleanupEstimateBasis::ImageUnique
+            } else {
+                CleanupEstimateBasis::Unknown
+            }),
             requires_ephemeral_confirmation: false,
             ownership: snapshot_ownership(ownership),
             category,
@@ -855,6 +891,11 @@ async fn scan_candidates_with_progress(
             instance_id: Some(instance_id),
             estimated_reclaimable_bytes,
             estimate_unknown: estimated_reclaimable_bytes.is_none(),
+            estimate_basis: Some(if estimated_reclaimable_bytes.is_some() {
+                CleanupEstimateBasis::ReportedUsage
+            } else {
+                CleanupEstimateBasis::Unknown
+            }),
             requires_ephemeral_confirmation: false,
             ownership: snapshot_ownership(ownership),
             category,
@@ -890,6 +931,7 @@ async fn scan_candidates_with_progress(
             instance_id: None,
             estimated_reclaimable_bytes: Some(0),
             estimate_unknown: false,
+            estimate_basis: Some(CleanupEstimateBasis::ReportedUsage),
             requires_ephemeral_confirmation: false,
             ownership: snapshot_ownership(resolve_network_ownership(&inspect, managed)),
             category: CleanupInventoryCategory::UnusedNetwork,
@@ -921,6 +963,13 @@ async fn scan_builder_cache_candidate(
         instance_id: None,
         estimated_reclaimable_bytes: estimate.reclaimable_bytes,
         estimate_unknown: estimate.estimate_unknown,
+        estimate_basis: Some(if estimate.reclaimable_bytes.is_none() {
+            CleanupEstimateBasis::Unknown
+        } else if estimate.estimate_unknown {
+            CleanupEstimateBasis::LowerBound
+        } else {
+            CleanupEstimateBasis::ReportedUsage
+        }),
         requires_ephemeral_confirmation: false,
         ownership: CleanupInventoryOwnership {
             kind: CleanupInventoryOwnershipType::Unowned,
@@ -1214,7 +1263,24 @@ fn snapshot_ownership(ownership: CleanupOwnership) -> CleanupInventoryOwnership 
     }
 }
 
-fn candidate_from_snapshot(candidate: CleanupInventoryCandidate) -> CleanupInventoryCandidate {
+fn candidate_from_snapshot(
+    mut candidate: CleanupInventoryCandidate,
+    estimate_version: u32,
+) -> CleanupInventoryCandidate {
+    let unsupported_future_version = estimate_version > CLEANUP_ESTIMATE_VERSION;
+    let unsupported_legacy_image =
+        estimate_version < CLEANUP_ESTIMATE_VERSION && candidate.kind == CleanupResourceKind::Image;
+    if unsupported_future_version || unsupported_legacy_image {
+        candidate.estimated_reclaimable_bytes = None;
+        candidate.estimate_unknown = true;
+        candidate.estimate_basis = Some(CleanupEstimateBasis::Unknown);
+    } else if candidate.estimate_basis.is_none() {
+        candidate.estimate_basis = Some(if candidate.estimate_unknown {
+            CleanupEstimateBasis::Unknown
+        } else {
+            CleanupEstimateBasis::ReportedUsage
+        });
+    }
     candidate
 }
 

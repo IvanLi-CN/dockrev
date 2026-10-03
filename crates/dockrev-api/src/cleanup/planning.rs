@@ -127,6 +127,7 @@ pub(super) fn build_grouped_response(
             min_preset: minimum_preset_for_category(&candidate.category),
             estimated_reclaimable_bytes: candidate.estimated_reclaimable_bytes,
             estimate_unknown: candidate.estimate_unknown,
+            estimate_basis: candidate.estimate_basis.clone(),
         };
         let known = candidate.estimated_reclaimable_bytes.unwrap_or_default();
         let unknown = candidate.estimate_unknown;
@@ -268,6 +269,7 @@ pub(super) fn compute_confirmation_fingerprint(
                 "instanceId": candidate.instance_id,
                 "estimatedReclaimableBytes": candidate.estimated_reclaimable_bytes,
                 "estimateUnknown": candidate.estimate_unknown,
+                "estimateBasis": candidate.estimate_basis,
                 "requiresEphemeralConfirmation": candidate.requires_ephemeral_confirmation,
                 "ownership": ownership,
                 "category": category,
@@ -281,6 +283,7 @@ pub(super) fn compute_confirmation_fingerprint(
                     candidate.instance_id.clone(),
                     candidate.estimated_reclaimable_bytes,
                     candidate.estimate_unknown,
+                    candidate.estimate_basis.clone(),
                     candidate.requires_ephemeral_confirmation,
                     ownership_key,
                     category.clone(),

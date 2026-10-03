@@ -15610,6 +15610,129 @@ html[data-theme="light"] .btnPrimary {
   min-height: 0;
 }
 
+.cleanupConfirmEstimateHint {
+  margin-top: 4px;
+  font-size: 11px;
+  line-height: 1.45;
+}
+
+.cleanupConfirmGroups {
+  min-width: 0;
+  border-top: 1px solid color-mix(in srgb, var(--borderColor) 78%, transparent);
+}
+
+.cleanupConfirmGroup {
+  min-width: 0;
+  border-bottom: 1px solid color-mix(in srgb, var(--borderColor) 78%, transparent);
+}
+
+.cleanupConfirmGroupToggle {
+  display: grid;
+  grid-template-columns: 16px minmax(0, 1fr) minmax(120px, auto);
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  min-height: 54px;
+  padding: 8px 6px;
+  border: 0;
+  color: var(--text);
+  background: transparent;
+  text-align: left;
+  cursor: pointer;
+}
+
+.cleanupConfirmGroupToggle:hover {
+  background: color-mix(in srgb, var(--panel2) 48%, transparent);
+}
+
+.cleanupConfirmGroupToggle:focus-visible {
+  outline: 2px solid var(--color-primary);
+  outline-offset: -2px;
+}
+
+.cleanupConfirmGroupChevron {
+  color: var(--muted2);
+  transition: transform 120ms ease;
+}
+
+.cleanupConfirmGroupChevronOpen {
+  transform: rotate(180deg);
+}
+
+.cleanupConfirmGroupTitle,
+.cleanupConfirmGroupTotals {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  min-width: 0;
+}
+
+.cleanupConfirmGroupTitle > span,
+.cleanupConfirmGroupTotals > span {
+  color: var(--muted2);
+  font-size: 11px;
+}
+
+.cleanupConfirmGroupTotals {
+  justify-content: flex-end;
+  text-align: right;
+  white-space: nowrap;
+}
+
+.cleanupConfirmGroupDetails {
+  padding: 0 6px 6px 32px;
+}
+
+.cleanupConfirmGroupDetails[hidden] {
+  display: none;
+}
+
+.cleanupConfirmResource {
+  display: grid;
+  grid-template-columns: minmax(0, 1.35fr) minmax(0, 1fr) minmax(90px, auto);
+  align-items: center;
+  gap: 12px;
+  min-height: 48px;
+  padding: 8px 4px;
+  border-top: 1px solid color-mix(in srgb, var(--borderColor) 52%, transparent);
+}
+
+.cleanupConfirmResourceMain {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.cleanupConfirmResourceLabel,
+.cleanupConfirmResourceOwner,
+.cleanupConfirmResourceEstimate {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.cleanupConfirmResourceReason {
+  font-size: 11px;
+  line-height: 1.4;
+}
+
+.cleanupConfirmResourceOwner {
+  color: var(--muted2);
+  font-size: 11px;
+}
+
+.cleanupConfirmResourceEstimate {
+  color: var(--text);
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+
+.cleanupConfirmGroupEmpty {
+  padding: 12px 0 8px;
+  color: var(--muted2);
+  font-size: 12px;
+}
+
 .cleanupConfirmDialogCard {
   width: min(1040px, calc(100vw - 40px));
   max-height: calc(100vh - 28px);
@@ -15675,6 +15798,38 @@ html[data-theme="light"] .btnPrimary {
 
   .cleanupPresetTabsInline {
     width: 100%;
+  }
+
+  .cleanupConfirmGroupToggle {
+    grid-template-columns: 16px minmax(0, 1fr);
+  }
+
+  .cleanupConfirmGroupTotals {
+    grid-column: 2;
+    justify-content: flex-start;
+    flex-wrap: wrap;
+    text-align: left;
+    white-space: normal;
+  }
+
+  .cleanupConfirmResource {
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: 4px 10px;
+  }
+
+  .cleanupConfirmResourceMain {
+    grid-column: 1;
+    grid-row: 1;
+  }
+
+  .cleanupConfirmResourceOwner {
+    grid-column: 1;
+    grid-row: 2;
+  }
+
+  .cleanupConfirmResourceEstimate {
+    grid-column: 2;
+    grid-row: 1 / span 2;
   }
 }
 

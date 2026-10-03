@@ -1,0 +1,83 @@
+{
+  "schema_version": 1,
+  "kind": "version-impact-record",
+  "change": {
+    "description": "Use Docker-reported image-exclusive bytes for cleanup estimates, version persisted estimate semantics, and group confirmation candidates by resource type.",
+    "release_unit_description": "Dockrev cleanup scan API and persisted cleanup inventory snapshot contract.",
+    "affected_contracts": [
+      "public-api",
+      "persistent-state"
+    ]
+  },
+  "classification": {
+    "allowed_impacts": [
+      "patch",
+      "minor",
+      "major"
+    ],
+    "planned": {
+      "impact": "patch",
+      "reasoning": "The API adds an optional estimateBasis response field. Persisted snapshots add an estimate version and preserve legacy reads by treating old image estimates as unknown and rescanning; no destructive migration is introduced.",
+      "assessed_at": "2026-10-03T17:21:37Z",
+      "evidence": [
+        "docs/specs/qynjg-docker-prune-cleanup-console/contracts/http-apis.md",
+        "C4: estimateBasis is optional and missing snapshot version defaults to 0"
+      ]
+    },
+    "current": {
+      "impact": "patch",
+      "scope_drift": {
+        "detected": false,
+        "description": "No new public API or persistent-state surface beyond the planned optional estimate basis and estimate version."
+      },
+      "reasoning": "Existing API fields and requests remain unchanged. New snapshot fields are additive; the candidate reads pre-version snapshots and fails closed for their stale image estimates.",
+      "reassessed_at": "2026-10-03T17:21:37Z",
+      "evidence": [
+        "crates/dockrev-api/src/api/types/cleanup.rs: estimate_basis is optional and estimate_version defaults to 0",
+        "crates/dockrev-api/src/cleanup/tests.rs::legacy_image_snapshot_projects_unknown_instead_of_virtual_size",
+        "crates/dockrev-api/src/cleanup/tests.rs::current_snapshot_persists_estimate_version_and_basis"
+      ]
+    },
+    "verified": {
+      "impact": "patch",
+      "reasoning": "Compatibility tests verify optional response metadata, current snapshot versioning, and safe handling of legacy snapshots. Release version selection and publication remain deferred to the release process.",
+      "verified_at": "2026-10-03T17:21:37Z",
+      "evidence": [
+        "cargo test -p dockrev-api cleanup::tests",
+        "cargo test -p dockrev-api api::tests::cleanup_",
+        "docs/specs/qynjg-docker-prune-cleanup-console/contracts/http-apis.md"
+      ]
+    }
+  },
+  "compatibility_evidence": {
+    "public_api": {
+      "change": "compatible",
+      "supported_consumer_range": "Existing cleanup API consumers; estimateBasis is optional and request/apply fields are unchanged.",
+      "evidence": [
+        "web/src/api/types.ts: estimateBasis is optional",
+        "docs/specs/qynjg-docker-prune-cleanup-console/contracts/http-apis.md: older clients may omit or ignore estimateBasis"
+      ]
+    },
+    "persistent_state": {
+      "applicable": true,
+      "state_description": "JSON cleanup inventory snapshots persisted under the cleanup inventory snapshot key.",
+      "source_program_compatibility_range": "The candidate reads snapshots from earlier versions with no estimateVersion. Earlier readers ignore additive JSON fields by default; release-specific support bounds will be confirmed during Release Preparation.",
+      "evidence": [
+        "crates/dockrev-api/src/api/types/cleanup.rs: estimate_version uses serde default 0",
+        "crates/dockrev-api/src/cleanup/tests.rs::legacy_image_snapshot_projects_unknown_instead_of_virtual_size",
+        "crates/dockrev-api/src/api/tests/suite_18.rs::cleanup_apply_rejects_legacy_snapshot_and_enqueues_refresh"
+      ]
+    }
+  },
+  "release_unit": {
+    "member_change_records": [
+      "dockrev-cleanup-estimate-v1"
+    ],
+    "maximum_verified_impact": "patch",
+    "calculation_evidence": [
+      "public_api impact: patch",
+      "persistent_state impact: patch",
+      "release version and channel selection are deferred until after PR merge"
+    ]
+  }
+}
