@@ -1172,9 +1172,27 @@ async function runSplitActionHover({ baseUrl, browser }) {
 async function runInteractive({ baseUrl, browser }) {
   const base = normalizeBaseUrl(baseUrl);
 
-  const openStory = async (id) => {
-    const page = await browser.newPage();
+  const openStory = async (id, options = {}) => {
+    const page = options.viewport
+      ? await browser.newPage({ viewport: options.viewport })
+      : await browser.newPage();
     page.on("dialog", (d) => d.accept().catch(() => {}));
+    if (options.waitForPlay) {
+      await page.addInitScript(() => {
+        window.__DOCKREV_STORY_FINISHED__ = [];
+        let preview;
+        Object.defineProperty(window, "__STORYBOOK_PREVIEW__", {
+          configurable: true,
+          get: () => preview,
+          set: (value) => {
+            preview = value;
+            value?.channel?.on?.("storyFinished", (result) => {
+              window.__DOCKREV_STORY_FINISHED__.push(result);
+            });
+          },
+        });
+      });
+    }
     const url = new URL("iframe.html", base);
     url.searchParams.set("id", id);
     url.searchParams.set("viewMode", "story");
@@ -1187,8 +1205,176 @@ async function runInteractive({ baseUrl, browser }) {
       null,
       { timeout: 60_000 },
     );
+    if (options.waitForPlay) {
+      const resultHandle = await page.waitForFunction(
+        (storyId) => window.__DOCKREV_STORY_FINISHED__?.find((result) => result.storyId === storyId) ?? null,
+        id,
+        { timeout: 60_000 },
+      );
+      const result = await resultHandle.jsonValue();
+      if (result.status !== "success") {
+        await page.close().catch(() => {});
+        throw new Error(`Storybook finished with status ${result.status}: ${JSON.stringify(result)}`);
+      }
+    }
     return page;
   };
+
+  // Keep the narrow confirmation layout and keyboard behavior under CI interaction coverage.
+  {
+    const page = await openStory("pages-cleanuppage--confirm-dialog-latest-scan", {
+      viewport: { width: 393, height: 852 },
+      waitForPlay: true,
+    });
+    try {
+      const groups = page.locator(".cleanupConfirmGroupToggle");
+      await page.getByRole("button", { name: "全部", exact: true }).click();
+      await page.waitForFunction(
+        () => document.body.textContent?.includes("确认清理全部") ?? false,
+        null,
+        { timeout: 10_000 },
+      );
+      await page.waitForFunction(
+        () => document.querySelectorAll(".cleanupConfirmGroupToggle").length === 4,
+        null,
+        { timeout: 10_000 },
+      );
+      for (const index of [0, 1]) {
+        const group = groups.nth(index);
+        if (await group.getAttribute("aria-expanded") === "true") {
+          await group.focus();
+          await page.keyboard.press("Space");
+          await page.waitForFunction(
+            (groupIndex) => document.querySelectorAll(".cleanupConfirmGroupToggle")[groupIndex]?.getAttribute("aria-expanded") === "false",
+            index,
+            { timeout: 10_000 },
+          );
+        }
+      }
+
+      const layout = await page.evaluate(() => {
+        const card = document.querySelector(".cleanupConfirmDialogCard");
+        const body = card?.querySelector(".cleanupConfirmDialogBody");
+        const footer = card?.querySelector(".modalActions");
+        const groups = Array.from(card?.querySelectorAll(".cleanupConfirmGroupToggle") ?? []);
+        if (!(card instanceof HTMLElement && body instanceof HTMLElement && footer instanceof HTMLElement)) return null;
+        const bounds = (element) => {
+          const rect = element.getBoundingClientRect();
+          return { left: rect.left, right: rect.right, top: rect.top, bottom: rect.bottom, width: rect.width, height: rect.height };
+        };
+        return {
+          card: bounds(card),
+          body: bounds(body),
+          footer: bounds(footer),
+          groups: groups.map((group) => ({
+            ...bounds(group),
+            text: group.textContent ?? "",
+            clientWidth: group.clientWidth,
+            scrollWidth: group.scrollWidth,
+          })),
+          viewport: { width: document.documentElement.clientWidth, height: document.documentElement.clientHeight },
+          documentWidth: document.documentElement.scrollWidth,
+        };
+      });
+      if (!layout || layout.groups.length !== 4) {
+        throw new Error(`Expected four mobile cleanup confirmation groups, got ${JSON.stringify(layout)}.`);
+      }
+      if (
+        layout.card.top < 0 || layout.card.bottom > layout.viewport.height ||
+        layout.footer.top < layout.card.top || layout.footer.bottom > layout.viewport.height ||
+        layout.body.bottom > layout.footer.top + 1 || layout.documentWidth > layout.viewport.width + 1
+      ) {
+        throw new Error(`Mobile cleanup confirmation dialog or footer is clipped: ${JSON.stringify(layout)}.`);
+      }
+      for (const [index, group] of layout.groups.entries()) {
+        if (
+          !group.text.includes("已知") || !group.text.includes("项") ||
+          group.left < layout.card.left || group.right > layout.card.right ||
+          group.scrollWidth > group.clientWidth + 1
+        ) {
+          throw new Error(`Mobile cleanup group ${index + 1} subtotal is clipped or missing: ${JSON.stringify(group)}.`);
+        }
+      }
+
+      const keyboardGroup = groups.nth(2);
+      await keyboardGroup.focus();
+      await page.keyboard.press("Enter");
+      await page.waitForFunction(
+        () => document.querySelectorAll(".cleanupConfirmGroupToggle")[2]?.getAttribute("aria-expanded") === "true",
+        null,
+        { timeout: 10_000 },
+      );
+      const keyboardState = await keyboardGroup.evaluate((group) => ({
+        focused: document.activeElement === group,
+        focusVisible: group.matches(":focus-visible"),
+      }));
+      if (!keyboardState.focused || !keyboardState.focusVisible) {
+        throw new Error(`Mobile cleanup group keyboard focus is not visible: ${JSON.stringify(keyboardState)}.`);
+      }
+    } finally {
+      await page.close().catch(() => {});
+    }
+  }
+
+  // Verify expanded image details scroll independently while the narrow dialog footer remains fixed.
+  {
+    const page = await openStory("pages-cleanuppage--confirm-dialog-scrollable-latest-scan", {
+      viewport: { width: 393, height: 852 },
+      waitForPlay: true,
+    });
+    try {
+      await page.getByRole("button", { name: "全部", exact: true }).click();
+      await page.waitForFunction(
+        () => document.body.textContent?.includes("确认清理全部") ?? false,
+        null,
+        { timeout: 10_000 },
+      );
+      const firstGroup = page.locator(".cleanupConfirmGroupToggle").first();
+      await firstGroup.click();
+      await page.waitForFunction(
+        () => document.querySelector(".cleanupConfirmGroupToggle")?.getAttribute("aria-expanded") === "true",
+        null,
+        { timeout: 10_000 },
+      );
+      const body = page.locator(".cleanupConfirmDialogBody");
+      const scrollState = await body.evaluate((element) => {
+        const scrollable = element.scrollHeight > element.clientHeight;
+        element.scrollTop = element.scrollHeight;
+        const footer = document.querySelector(".cleanupConfirmDialogCard .modalActions");
+        const bounds = footer?.getBoundingClientRect();
+        return {
+          scrollable,
+          viewportHeight: document.documentElement.clientHeight,
+          footerTop: bounds?.top ?? null,
+          footerBottom: bounds?.bottom ?? null,
+          bodyBottom: element.getBoundingClientRect().bottom,
+        };
+      });
+      if (
+        !scrollState.scrollable || scrollState.footerTop === null || scrollState.footerBottom === null ||
+        scrollState.footerTop < 0 || scrollState.footerBottom > scrollState.viewportHeight ||
+        scrollState.bodyBottom > scrollState.footerTop + 1
+      ) {
+        throw new Error(`Mobile cleanup details do not scroll above the fixed footer: ${JSON.stringify(scrollState)}.`);
+      }
+
+      await firstGroup.focus();
+      await page.keyboard.press("Space");
+      await page.waitForFunction(
+        () => document.querySelector(".cleanupConfirmGroupToggle")?.getAttribute("aria-expanded") === "false",
+        null,
+        { timeout: 10_000 },
+      );
+      await page.keyboard.press("Space");
+      await page.waitForFunction(
+        () => document.querySelector(".cleanupConfirmGroupToggle")?.getAttribute("aria-expanded") === "true",
+        null,
+        { timeout: 10_000 },
+      );
+    } finally {
+      await page.close().catch(() => {});
+    }
+  }
 
   // Exercise the notification inbox mutation against the real Storybook browser harness.
   {

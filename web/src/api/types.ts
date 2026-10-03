@@ -1,7 +1,9 @@
 import type { ServiceResourceOverviewItem, ServiceResourceOverviewResponse } from './serviceResourceTypes'
 import type { VersionInferenceState } from './autoUpdateTypes'
+import type { CleanupResourceItem } from './cleanupTypes'
 export * from './notificationTypes'
 export * from './versionUpdateTypes'
+export type { CleanupEstimateBasis, CleanupResourceItem } from './cleanupTypes'
 export type {
   AutoUpdateProjection,
   CandidateHydrationDiagnostic,
@@ -878,19 +880,6 @@ export type CleanupApplyResponse = {
 export type CleanupServerDiskUsage = {
   usedBytes: number
   totalBytes: number
-}
-
-export type CleanupEstimateBasis = 'image_unique' | 'reported_usage' | 'lower_bound' | 'unknown'
-
-export type CleanupResourceItem = {
-  resourceId: string
-  kind: CleanupResourceKind
-  label: string
-  reason: string
-  minPreset: CleanupPreset
-  estimatedReclaimableBytes?: number | null
-  estimateUnknown?: boolean
-  estimateBasis?: CleanupEstimateBasis
 }
 
 export type CleanupServiceGroup = {
