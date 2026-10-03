@@ -1,4 +1,50 @@
 #[tokio::test]
+async fn cleanup_scan_uses_image_unique_usage_by_exact_image_id() {
+    let db_path = format!("/tmp/dockrev-cleanup-image-estimate-{}.sqlite3", ulid::Ulid::new());
+    let runner = Arc::new(CleanupRunner::image_estimate_projection());
+    let state = test_state_with(&db_path, Arc::new(FakeRegistry), runner.clone()).await;
+    let usage = serde_json::json!({
+        "ImageUsage": { "Items": [
+            { "Id": "sha256:estimate-known", "Size": 1000, "SharedSize": 700 }
+        ] }
+    });
+    let image_unique_sizes = crate::cleanup::image_unique_sizes_from_system_df_json(&usage);
+
+    let snapshot = crate::cleanup::build_inventory_snapshot_with_image_unique_sizes(
+        state.db.clone(),
+        runner,
+        Some(image_unique_sizes),
+        |_| {},
+    )
+    .await
+    .unwrap();
+
+    let known = snapshot
+        .candidates
+        .iter()
+        .find(|candidate| candidate.resource_id == "sha256:estimate-known")
+        .unwrap();
+    assert_eq!(known.estimated_reclaimable_bytes, Some(300));
+    assert!(!known.estimate_unknown);
+    assert_eq!(
+        known.estimate_basis,
+        Some(crate::api::types::CleanupEstimateBasis::ImageUnique)
+    );
+
+    let unknown = snapshot
+        .candidates
+        .iter()
+        .find(|candidate| candidate.resource_id == "sha256:estimate-unknown")
+        .unwrap();
+    assert_eq!(unknown.estimated_reclaimable_bytes, None);
+    assert!(unknown.estimate_unknown);
+    assert_eq!(
+        unknown.estimate_basis,
+        Some(crate::api::types::CleanupEstimateBasis::Unknown)
+    );
+}
+
+#[tokio::test]
 async fn cleanup_apply_rejects_future_estimate_version_and_enqueues_refresh() {
     let db_path = format!("/tmp/dockrev-cleanup-future-snapshot-{}.sqlite3", ulid::Ulid::new());
     let runner = Arc::new(CleanupRunner::volume_in_use());

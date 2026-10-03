@@ -891,3 +891,40 @@ fn confirmation_fingerprint_changes_when_estimate_basis_changes() {
     let second = compute_confirmation_fingerprint(&request, &[candidate], "", 1024, false).unwrap();
     assert_ne!(first, second);
 }
+
+#[test]
+fn confirmation_fingerprint_changes_when_estimate_value_changes() {
+    let request = CleanupPlanRequest {
+        preset: CleanupPreset::Aggressive,
+        scope: CleanupScope::All,
+        stack_id: None,
+        service_id: None,
+    };
+    let first_candidate = sample_candidate(
+        "image:sha256:unique",
+        CleanupResourceKind::Image,
+        CleanupOwnership::Unowned,
+        CleanupInventoryCategory::GlobalUnusedImage,
+        Some(300),
+    );
+    let mut second_candidate = first_candidate.clone();
+    second_candidate.estimated_reclaimable_bytes = Some(301);
+
+    let first = compute_confirmation_fingerprint(
+        &request,
+        &[first_candidate],
+        "2026-10-04T00:00:00Z",
+        300,
+        false,
+    )
+    .unwrap();
+    let second = compute_confirmation_fingerprint(
+        &request,
+        &[second_candidate],
+        "2026-10-04T00:00:00Z",
+        300,
+        false,
+    )
+    .unwrap();
+    assert_ne!(first, second);
+}

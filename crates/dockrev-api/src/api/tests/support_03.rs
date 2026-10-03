@@ -988,6 +988,7 @@ async fn configure_webhook_notifications(
 enum CleanupRunnerMode {
     StaleOnSecondScan,
     SlowStaleOnSecondScan,
+    ImageEstimateProjection,
     VolumeInUse,
     VolumeEstimateFallback,
     VolumeMountpointFallback,
@@ -1004,6 +1005,13 @@ struct CleanupRunner {
 }
 
 impl CleanupRunner {
+    fn image_estimate_projection() -> Self {
+        Self {
+            mode: CleanupRunnerMode::ImageEstimateProjection,
+            scan_generation: Arc::new(AtomicUsize::new(0)),
+        }
+    }
+
     fn stale_on_second_scan() -> Self {
         Self {
             mode: CleanupRunnerMode::StaleOnSecondScan,
