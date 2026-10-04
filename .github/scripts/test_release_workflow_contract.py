@@ -119,6 +119,11 @@ assert all(item["workflow"] != "Release Preparation" for item in quality["expect
 
 completion_workflow = read(".github/workflows/release-completion-pr.yml")
 assert "pull_request_target:" in completion_workflow and "\n  pull_request:" not in completion_workflow
+completion_trigger = re.search(r"types:\s*\[([^]]+)\]", completion_workflow)
+assert completion_trigger, "completion workflow must declare pull request activity types"
+completion_actions = {item.strip() for item in completion_trigger.group(1).split(",")}
+assert completion_actions == {"opened", "synchronize", "reopened", "ready_for_review"}
+assert "edited" not in completion_actions
 assert "github.event.pull_request.number == 421" not in completion_workflow
 assert "github.event.pull_request.head.sha" not in completion_workflow.split("Checkout trusted release helpers", 1)[1].split("- name: Verify", 1)[0]
 assert "ref: ${{ github.workflow_sha }}" in completion_workflow
