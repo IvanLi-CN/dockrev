@@ -158,7 +158,9 @@ export const ApplyingAllState: Story = {
 
     findButton(doc, '全部')?.click()
     await waitForCondition(() => doc.body.textContent?.includes('确认清理全部') ?? false)
-    findButton(doc, '确认清理')?.click()
+    const approve = findButton(doc, '确认清理')
+    assertStory(approve, 'all-resource confirmation button missing')
+    approve.click()
 
     await waitForCondition(() => findButton(doc, '全部')?.getAttribute('aria-busy') === 'true')
     assertStory(findButton(doc, '全部')?.disabled === true, 'cleanup all action should stay disabled while apply request is in flight')
@@ -196,6 +198,60 @@ export const ConfirmDialogLatestScan: Story = {
     await waitForCondition(() => doc.body.textContent?.includes('确认清理全部') ?? false)
     assertStory(doc.body.textContent?.includes('最新扫描'), 'confirm dialog should show latest scan timestamp')
     assertStory(doc.body.textContent?.includes('预计释放'), 'confirm dialog should show reclaim estimate')
+
+    const groupToggles = Array.from(doc.querySelectorAll<HTMLButtonElement>('.cleanupConfirmGroupToggle'))
+    assertStory(groupToggles.length === 4, 'confirm dialog should render four resource type groups')
+    assertStory(groupToggles.every((button) => button.getAttribute('aria-expanded') === 'false'), 'groups should start collapsed')
+    assertStory(groupToggles.every((button) => button.textContent?.includes('已知')), 'collapsed group headers should show known subtotals')
+    assertStory(groupToggles.some((button) => button.textContent?.includes('项大小未知')), 'collapsed group headers should show unknown counts')
+
+    groupToggles[0]?.click()
+    groupToggles[1]?.click()
+    await waitForCondition(() => groupToggles[0]?.getAttribute('aria-expanded') === 'true' && groupToggles[1]?.getAttribute('aria-expanded') === 'true')
+    assertStory(doc.body.textContent?.includes('prod / api'), 'expanded details should show Stack and service ownership')
+    assertStory(groupToggles[0]?.getAttribute('aria-expanded') === 'true' && groupToggles[1]?.getAttribute('aria-expanded') === 'true', 'multiple resource groups should remain open together')
+    assertStory(doc.body.textContent?.includes('全部候选'), 'expanding groups should preserve the all-candidates confirmation')
+
+    findButton(doc, '确认清理')?.click()
+    await waitForCondition(() => globalThis.__DOCKREV_MOCK_DEBUG__?.lastCleanupApplyRequest != null)
+    const applyRequest = globalThis.__DOCKREV_MOCK_DEBUG__?.lastCleanupApplyRequest as {
+      scope?: unknown
+      confirmationFingerprint?: unknown
+    } | null
+    assertStory(applyRequest?.scope === 'all', 'expanding resource groups should preserve the all-resource apply scope')
+    assertStory(
+      typeof applyRequest?.confirmationFingerprint === 'string' && applyRequest.confirmationFingerprint.length > 0,
+      'all-resource apply should retain the confirmed snapshot fingerprint',
+    )
+  },
+}
+
+export const ConfirmDialogScrollableLatestScan: Story = {
+  parameters: { dockrevApiScenario: 'cleanup-console-confirm-overflow' },
+  render: renderPage,
+  play: async ({ canvasElement }) => {
+    const doc = canvasElement.ownerDocument
+    await waitForCondition(() => findButton(doc, '全部') != null)
+    findButton(doc, '全部')?.click()
+    await waitForCondition(() => doc.body.textContent?.includes('确认清理全部') ?? false)
+
+    const groups = Array.from(doc.querySelectorAll<HTMLButtonElement>('.cleanupConfirmGroupToggle'))
+    assertStory(groups.length === 4, 'scrollable confirm dialog should render four resource groups')
+    assertStory(groups[0]?.textContent?.includes('14 项'), 'overflow fixture should include a long image list')
+    groups[0]?.click()
+    await waitForCondition(() => groups[0]?.getAttribute('aria-expanded') === 'true')
+
+    const body = doc.querySelector<HTMLElement>('.cleanupConfirmDialogBody')
+    const confirmButton = findButton(doc, '确认清理')
+    assertStory(body && confirmButton, 'scrollable confirm dialog body and action should exist')
+    assertStory(body.scrollHeight > body.clientHeight, 'expanded image details should scroll inside the dialog body')
+    body.scrollTop = body.scrollHeight
+    const actionBounds = confirmButton.getBoundingClientRect()
+    assertStory(
+      actionBounds.top >= 0 && actionBounds.bottom <= doc.documentElement.clientHeight,
+      'confirm action should remain visible while dialog details are scrolled',
+    )
+    body.scrollTop = 0
   },
 }
 

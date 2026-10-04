@@ -599,6 +599,15 @@ impl DockerEngineClient {
             .unwrap_or_default()
     }
 
+    pub(crate) async fn image_disk_usage(&self) -> anyhow::Result<serde_json::Value> {
+        self.get_json(
+            "/system/df",
+            &[("verbose", "true".to_string())],
+            Duration::from_secs(20),
+        )
+        .await
+    }
+
     async fn get_json<T>(
         &self,
         path: &str,

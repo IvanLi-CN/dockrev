@@ -20,6 +20,8 @@
 - 固定提供 `conservative`、`balanced`、`project_deep_clean`、`aggressive` 四个预设规则，并以 tabs 切换视图。
 - 清理候选按 stack 分组展示，区分 service 级资源、stack orphan 资源与 `all` 范围下的 `未归属资源`。
 - 所有执行动作都必须先做 scoped confirm-scan，并在二次确认对话框中展示最新候选与最新预计释放空间。
+- 镜像预计回收量按 Docker Engine 独占空间 `Size - SharedSize` 计算；数据缺失或不可信时标未知，不回退到镜像完整虚拟体积。
+- 确认清理对话框按镜像、卷、容器、其他分为四个独立折叠组；收起时展示数量、已知小计和未知项数量，展开后显示资源标签与 Stack/服务归属。
 - 后端执行链路必须按目标资源类型拆解成定向 prune/remove 命令，不允许对 `stack` 或 `service` 盲跑 `docker system prune`。
 
 ### Non-goals
@@ -62,7 +64,7 @@
 
 - UI 对“未知或近似空间”提供清晰文案，而不是伪装成精确字节值。
 - UI 在清理空间概览中展示服务器磁盘“已使用 / 总容量”，并明确候选卡片百分比是“已知候选占比”。
-- 确认弹窗复用页面分组语义，避免操作者在执行前看到另一套信息结构。
+- 确认弹窗只改为按资源类型分组；清理主页面继续按 Stack/服务展示，不增加确认框内的嵌套归属折叠。
 - apply job 的日志/summary 能明确列出预计释放空间、实际删除计数与跳过原因。
 
 ### COULD
@@ -79,6 +81,10 @@
 - 每个 stack 分组头部显示 stack 名称、预计释放空间、stack orphan 资源摘要与 `清理此 stack` 按钮。
 - 每个 service 行显示 service 名称、可清理 image/container/volume 等资源摘要、预计释放空间与 `清理此服务` 按钮。
 - 顶部主按钮 `全部` 对应 `scope=all`；当点击任一动作时，前端发起 `reason=confirm` scoped scan，拿到最新候选后再打开确认对话框。
+- 确认对话框只展示四个独立资源类型组，不改变原 `scope/preset/fingerprint`；每组折叠标题始终显示候选数、已知字节小计和未知数量，展开后逐项显示资源与 Stack/服务归属。
+- 镜像候选使用 Docker Engine `/system/df?verbose=true` 返回的 `ImageUsage.Items`；兼容旧版 `Images`。仅当镜像 ID 可精确匹配且 `Size`、`SharedSize` 均有效且 `SharedSize <= Size` 时，估算为 `Size - SharedSize`。
+- 镜像磁盘统计不可用、缺少字段、ID 不匹配或数据不可信时，资源估算为未知，不使用 `docker image inspect Size` 替代。估算仅表示 Docker 报告的独占空间，不承诺执行后的实际物理磁盘净变化。
+- Cleanup inventory snapshot 写入 `estimateVersion=1`；缺失版本按 `0` 处理。读取旧版本快照时，旧镜像字节数投影为未知并触发刷新；未知 `estimateBasis` 字符串映射为 `unknown`，以便未来版本快照被安全识别并刷新；confirm/apply 不接受旧版本快照。
 - confirm-scan 首次请求使用 `refresh=true`，后续严格按响应中的 `retryAfterMs` 以 `refresh=false` 轮询；pending 期间页面在候选列表上方显示可访问的“更新中”状态栏，按钮只保留稳定短标签 `全部`、`重扫`，不把等待说明塞进按钮。
 - 用户在确认对话框点击确认后，前端调用 `POST /api/cleanups/apply` 创建 `cleanup_apply` job，并跳转/关联任务队列状态。
 
@@ -91,6 +97,7 @@
 - confirm snapshot 与 apply 共用固定 5 分钟 freshness 边界；过期只触发/等待新快照，绝不自动创建 cleanup job。
 - volume 若缺少 `CreatedAt`，仅在可取得 mountpoint 文件系统实例元数据时进入可执行候选；无法取得实例身份时保持跳过，避免把 Compose 逻辑标签当作实例身份。
 - confirm fingerprint 必须序列化候选的实例身份（`CreatedAt` 或 mountpoint 文件系统元数据）；即使资源 key 与大小不变，实例身份变化也必须要求重新确认。
+- confirm fingerprint 还必须包含每个候选的 `estimateBasis`、估算值与未知状态；估算口径变化必须要求重新确认。
 - 初始 page scan 的 partial 候选只在扫描仍进行时展示且保持动作锁定；若后续扫描失败，临时 partial 投影会被丢弃并显示稳定的刷新失败状态。
 - management resync/ready 重载使用请求世代校验；旧重载响应不得覆盖更新中的显式重扫，5xx 只显示稳定的用户可见错误。
 - 若资源无法确定 service 归属但属于 compose project，则降级为 stack orphan；若无法归属任何 managed stack，则仅在 `all` 中显示为 `未归属资源`。
@@ -117,9 +124,15 @@
 - Given 某个 stack 下同时存在 service 级候选与 project orphan，When 页面渲染列表，Then stack 头部展示 orphan 摘要，service 行仅展示该 service 可确定归属的候选。
 - Given `aggressive` 预设存在无法归属任何 stack 的全局候选，When 用户查看 `全部` 视角，Then 页面展示 `未归属资源` 伪分组；When 用户查看 `stack/service` 视角，Then 这些候选不会出现。
 - Given 用户点击 `全部`、`清理此 stack` 或 `清理此服务`，When confirm-scan 返回结果，Then 二次确认对话框展示最新候选、最新预计释放空间、最新扫描时间。
+- Given cleanup inventory 包含镜像，When Docker usage 返回有效的 `Size=1000, SharedSize=700`，Then 该镜像的估算为 `300`，且完整 `Size` 不参与预计回收量。
+- Given 镜像 usage 缺字段、越界、ID 不匹配或不可用，When cleanup inventory 投影完成，Then 该项大小未知且没有完整镜像大小回退值。
+- Given 镜像候选的 inspect `Size` 很大但 Docker usage 中没有该镜像 ID，When cleanup inventory 投影完成，Then 该候选仍为未知，不以 inspect `Size` 作为回收估算。
+- Given cleanup inventory snapshot 缺少 `estimateVersion`，When 页面读取或确认该快照，Then 镜像旧估算投影为未知、触发重扫，且 apply 不接受该快照；未来版本中的未知 `estimateBasis` 不阻断此降级流程。
+- Given 用户打开确认清理对话框，When 查看四类资源，Then 每组折叠时可比较数量、已知小计和未知项，展开后可查看资源及 Stack/服务归属；多组可同时展开，且不会改变清理范围与指纹。
 - Given confirm-scan 返回 pending，When 页面等待服务端 `retryAfterMs`，Then 首次请求为 `refresh=true`、后续请求为 `refresh=false`，候选列表上方显示“更新中”，按钮文案仍为 `全部` / `重扫`。
 - Given confirm worker 已失败且不再运行，When 页面轮询 confirm-scan，Then API 返回明确失败，页面显示“刷新失败”与可重试的 `重试`，不显示内部 worker 错误且不循环 pending。
 - Given 用户基于旧 fingerprint 提交 apply，When 服务器检测到候选已变化，Then 返回 `409 cleanup_snapshot_stale` 与最新 confirm payload，前端刷新弹窗并要求再次确认。
+- Given scope、候选身份、basis、未知状态、时间戳及预计总量都相同，When 仅一个候选的估算字节数改变，Then confirmation fingerprint 必须改变。
 - Given confirm snapshot 年龄为 299 秒或 301 秒，When 用户分别执行 confirm/apply，Then 前者可 ready/apply，后者只能 pending/stale 并等待新快照。
 - Given cleanup apply job 完成，When 用户查看任务摘要或日志，Then 可看到 `preset`、`scope`、`reclaimedBytesEstimated`、`deletedCountsByKind`、`skippedInUse` 与 `groupedTargets`。
 
@@ -191,14 +204,48 @@
 
 - source_type: `storybook_canvas`
   target_program: `mock-only`
-  capture_scope: `browser-viewport`
+  capture_scope: `element`
+  requested_viewport: `1440x900`
+  viewport_strategy: `storybook-viewport`
+  margin_policy: `trim_only`
+  evidence_surface: `page`
   sensitive_exclusion: `N/A`
-  submission_gate: `pending-owner-approval`
+  submission_gate: `approved`
   story_id_or_title: `Pages/CleanupPage/ConfirmDialogLatestScan`
-  state: `confirm dialog latest scan`
-  evidence_note: 验证执行前二次确认弹窗展示最新扫描时间、最新预计释放空间、最新候选分组列表，以及“不会停止正在运行容器”的安全提示。
+  state: `desktop confirm dialog with multiple resource groups expanded`
+  evidence_note: 验证四类资源组的数量、已知小计与未知项数量始终可见，多组可同时展开，明细显示 Stack/服务归属，确认范围仍为全部候选。
 
-![Cleanup confirm dialog](./assets/cleanup-confirm-dialog.png)
+![Cleanup confirm dialog desktop](./assets/cleanup-confirm-dialog.png)
+
+- source_type: `storybook_canvas`
+  target_program: `mock-only`
+  capture_scope: `element`
+  requested_viewport: `393x852`
+  viewport_strategy: `storybook-viewport`
+  margin_policy: `trim_only`
+  evidence_surface: `page`
+  sensitive_exclusion: `N/A`
+  submission_gate: `approved`
+  story_id_or_title: `Pages/CleanupPage/ConfirmDialogLatestScan`
+  state: `narrow confirm dialog with resource group subtotals and fixed footer`
+  evidence_note: 验证窄屏下四类资源小计仍可查看，确认与取消操作保持可见。
+
+![Cleanup confirm dialog mobile](./assets/cleanup-confirm-dialog-mobile.png)
+
+- source_type: `storybook_canvas`
+  target_program: `mock-only`
+  capture_scope: `element`
+  requested_viewport: `393x852`
+  viewport_strategy: `storybook-viewport`
+  margin_policy: `trim_only`
+  evidence_surface: `page`
+  sensitive_exclusion: `N/A`
+  submission_gate: `approved`
+  story_id_or_title: `Pages/CleanupPage/ConfirmDialogScrollableLatestScan`
+  state: `narrow confirm dialog with expanded long image list scrolled to the bottom`
+  evidence_note: 验证长明细可在对话框主体内滚动，滚动时固定页脚中的确认操作仍在视口内，展开控件保留键盘焦点样式。
+
+![Cleanup confirm dialog mobile scroll](./assets/cleanup-confirm-dialog-mobile-scroll.png)
 
 - source_type: `storybook_canvas`
   target_program: `mock-only`
@@ -223,7 +270,6 @@
   state: `confirm refresh worker failure`
   evidence_note: 验证确认刷新失败只显示一个可访问的“刷新失败”状态栏和“重试”按钮，不重复渲染旧的 Alert，也不泄漏 worker 内部错误。
 
-PR: include
 
 ![Cleanup confirm failed single status](./assets/cleanup-confirm-failed-single.png)
 
@@ -237,7 +283,6 @@ PR: include
   state: `ready confirmation on mobile`
   evidence_note: 验证移动端确认弹窗在 ready 后打开，确认与取消按钮均可见，底部导航不会遮挡弹窗操作区。
 
-PR: include
 
 ![Cleanup confirm mobile ready](./assets/cleanup-confirm-mobile-ready.png)
 
@@ -255,7 +300,8 @@ None
 
 - 后端先构建一次全局 cleanup inventory，再按 preset 与作用域做稳定投影，保证 page scan 与 confirm-scan 共享同一分类语义。
 - fingerprint 以 confirm-scan 的分组候选为输入计算，apply 前强制重算，从协议层阻止“看见旧数据却执行新环境”的问题。
-- 前端页面以 preset tabs + grouped list 为主，确认弹窗复用同一分组展示模型，降低执行前后的认知切换成本。
+- 主清理页面保留 preset tabs 与 Stack/服务列表；确认弹窗单独以资源类型折叠组呈现候选，展开行只显示 Stack/服务归属文字，不嵌套归属折叠。
+- 镜像回收估算采用 Docker Engine 报告的独占层字节数；共享层不重复计入，Docker 未提供可信数据时使用未知值。
 - 清理命令按资源类型与作用域合成，优先定向 prune/remove，避免 `docker system prune` 在局部范围内误伤共享资源。
 
 ## 风险 / 开放问题 / 假设（Risks, Open Questions, Assumptions）
@@ -273,6 +319,7 @@ None
 - 2026-04-28：补充服务器磁盘已使用/总容量展示，明确候选百分比语义，并修正未知大小资源的空轨道展示。
 - 2026-07-07：新增 cleanup scan-runs SSE 流式重扫契约，页面重扫期间使用旧 snapshot 弱加载态并按 partial 事件渐进替换。
 - Cleanup confirm/apply 使用固定 300 秒 freshness；confirm 轮询提供可见、可重试的状态栏与稳定短按钮标签，worker 失败终态不再无限 pending。
+- 2026-10-04：镜像估算改为 Docker 独占空间并版本化失效旧快照；确认清理对话框增加资源类型折叠小计。
 - Mock-only cleanup pending/failed scenarios retain the 1200-line installer budget without changing the API or confirmation flow.
 
 ## 参考（References）

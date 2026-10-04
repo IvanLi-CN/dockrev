@@ -2,6 +2,11 @@
 impl CommandRunner for CleanupRunner {
     async fn run(&self, spec: CommandSpec, _timeout: Duration) -> anyhow::Result<CommandOutput> {
         let args = spec.args.iter().map(String::as_str).collect::<Vec<_>>();
+        if matches!(&self.mode, CleanupRunnerMode::SlowStaleOnSecondScan)
+            && args == vec!["container", "ls", "-aq"]
+        {
+            tokio::time::sleep(Duration::from_millis(150)).await;
+        }
         if spec.program == "df"
             && (args == vec!["-P", "-B1", "/"] || args == vec!["-B1", "."])
         {
@@ -12,7 +17,58 @@ impl CommandRunner for CleanupRunner {
             });
         }
         let out = match self.mode {
-            CleanupRunnerMode::StaleOnSecondScan => {
+            CleanupRunnerMode::ImageEstimateProjection => {
+                let stdout = if args == vec!["container", "ls", "-aq"]
+                    || args == vec!["volume", "ls", "-q"]
+                    || args == vec!["network", "ls", "-q"]
+                {
+                    String::new()
+                } else if args == vec!["image", "ls", "-aq", "--no-trunc"] {
+                    "sha256:estimate-known\nsha256:estimate-unknown\n".to_string()
+                } else if args
+                    == vec![
+                        "image",
+                        "inspect",
+                        "--format",
+                        "{{json .}}",
+                        "sha256:estimate-known",
+                    ]
+                {
+                    serde_json::json!({
+                        "Id": "sha256:estimate-known",
+                        "RepoTags": ["ghcr.io/acme/known:1"],
+                        "RepoDigests": [],
+                        "Size": 8192,
+                        "Config": { "Labels": {} }
+                    })
+                    .to_string()
+                } else if args
+                    == vec![
+                        "image",
+                        "inspect",
+                        "--format",
+                        "{{json .}}",
+                        "sha256:estimate-unknown",
+                    ]
+                {
+                    serde_json::json!({
+                        "Id": "sha256:estimate-unknown",
+                        "RepoTags": ["ghcr.io/acme/unknown:1"],
+                        "RepoDigests": [],
+                        "Size": 16384,
+                        "Config": { "Labels": {} }
+                    })
+                    .to_string()
+                } else {
+                    String::new()
+                };
+                CommandOutput {
+                    status: if args.first() == Some(&"buildx") { 1 } else { 0 },
+                    stdout,
+                    stderr: String::new(),
+                }
+            }
+            CleanupRunnerMode::StaleOnSecondScan | CleanupRunnerMode::SlowStaleOnSecondScan => {
                 if args == vec!["container", "ls", "-aq"] {
                     let generation = self.scan_generation.fetch_add(1, Ordering::SeqCst);
                     if generation == 0 {

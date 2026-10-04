@@ -247,7 +247,7 @@ async fn main() -> anyhow::Result<()> {
     let runner = std::sync::Arc::new(runner::TokioCommandRunner);
     let docker_engine = docker_engine::DockerEngineClient::from_env()?;
     let resource_sampling =
-        resource_usage::ResourceSamplingCoordinator::with_docker_engine(docker_engine);
+        resource_usage::ResourceSamplingCoordinator::with_docker_engine(docker_engine.clone());
     let resource_hub = std::sync::Arc::new(resource_usage::RealtimeSamplerHub::with_coordinator(
         db.clone(),
         resource_sampling.clone(),
@@ -259,7 +259,8 @@ async fn main() -> anyhow::Result<()> {
         registry.clone(),
     ));
     let cleanup_snapshot_worker = std::sync::Arc::new(
-        cleanup_snapshot_worker::CleanupSnapshotWorker::new(db.clone(), runner.clone()),
+        cleanup_snapshot_worker::CleanupSnapshotWorker::new(db.clone(), runner.clone())
+            .with_docker_engine(docker_engine),
     );
     let cleanup_scan_runs = std::sync::Arc::new(cleanup_scan_runs::CleanupScanRunHub::new());
     let deploy_check_refresh_worker =

@@ -1,5 +1,5 @@
 import { startTransition, useCallback, useEffect, useRef, useMemo, useState, type ReactNode } from 'react'
-import { Box, HardDrive, Layers3, Package } from 'lucide-react'
+import { Box, ChevronDown, HardDrive, Layers3, Package } from 'lucide-react'
 import {
   ApiError,
   applyCleanups,
@@ -25,6 +25,7 @@ import { Button, Mono, Pill, RefreshIcon, SectionTitle, Tabs, TabsList, TabsTrig
 import {
   KIND_LABEL,
   aggregateStackResources,
+  buildCleanupConfirmGroups,
   buildUsageCards,
   cleanupResourceKey,
   cleanupResourceKeys,
@@ -500,6 +501,7 @@ function CleanupConfirmBody(props: { response: CleanupScanResponse; targetLabel:
             props.response.estimatedReclaimableBytes,
             props.response.hasUnknownSize,
           )}</div>
+          <div className="muted cleanupConfirmEstimateHint">镜像按独占空间估算，共享层不重复计入。</div>
         </div>
       </div>
 
@@ -510,7 +512,71 @@ function CleanupConfirmBody(props: { response: CleanupScanResponse; targetLabel:
         </div>
       </div>
 
-      <CleanupResponseView compact response={props.response} />
+      <CleanupConfirmResourceGroups response={props.response} />
+    </div>
+  )
+}
+
+function CleanupConfirmResourceGroups(props: { response: CleanupScanResponse }) {
+  const groups = useMemo(() => buildCleanupConfirmGroups(props.response), [props.response])
+  const [expandedGroups, setExpandedGroups] = useState<Set<string>>(() => new Set())
+
+  const toggleGroup = (key: string) => {
+    setExpandedGroups((current) => {
+      const next = new Set(current)
+      if (next.has(key)) next.delete(key)
+      else next.add(key)
+      return next
+    })
+  }
+
+  return (
+    <div className="cleanupConfirmGroups" aria-label="按资源类型查看清理候选">
+      {groups.map((group) => {
+        const expanded = expandedGroups.has(group.key)
+        const detailsId = `cleanup-confirm-resources-${group.key}`
+        return (
+          <section className="cleanupConfirmGroup" key={group.key}>
+            <button
+              aria-controls={detailsId}
+              aria-expanded={expanded}
+              className="cleanupConfirmGroupToggle"
+              onClick={() => toggleGroup(group.key)}
+              type="button"
+            >
+              <ChevronDown
+                aria-hidden="true"
+                className={`cleanupConfirmGroupChevron${expanded ? ' cleanupConfirmGroupChevronOpen' : ''}`}
+                size={16}
+              />
+              <span className="cleanupConfirmGroupTitle">
+                <strong>{group.label}</strong>
+                <span>{group.resources.length} 项</span>
+              </span>
+              <span className="cleanupConfirmGroupTotals">
+                <strong>已知 {formatBytes(group.bytes)}</strong>
+                <span>{group.unknownCount > 0 ? `${group.unknownCount} 项大小未知` : '无未知项'}</span>
+              </span>
+            </button>
+            <div className="cleanupConfirmGroupDetails" hidden={!expanded} id={detailsId}>
+              {group.resources.length > 0 ? group.resources.map(({ resource, ownerLabel }) => (
+                <div className="cleanupConfirmResource" key={`${resource.kind}:${resource.resourceId}`}>
+                  <div className="cleanupConfirmResourceMain">
+                    <strong className="cleanupConfirmResourceLabel">{resource.label}</strong>
+                    <span className="muted cleanupConfirmResourceReason">{resource.reason}</span>
+                  </div>
+                  <span className="cleanupConfirmResourceOwner">{ownerLabel}</span>
+                  <span className="cleanupConfirmResourceEstimate">
+                    {formatEstimate(resource.estimatedReclaimableBytes, itemHasUnknownSize(resource))}
+                  </span>
+                </div>
+              )) : (
+                <div className="cleanupConfirmGroupEmpty">当前没有此类候选。</div>
+              )}
+            </div>
+          </section>
+        )
+      })}
     </div>
   )
 }

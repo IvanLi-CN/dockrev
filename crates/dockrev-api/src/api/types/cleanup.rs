@@ -1,5 +1,7 @@
 use super::*;
 
+pub const CLEANUP_ESTIMATE_VERSION: u32 = 1;
+
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord)]
 #[serde(rename_all = "snake_case")]
 pub enum CleanupPreset {
@@ -54,6 +56,32 @@ pub enum CleanupResourceKind {
     Network,
     Volume,
     BuilderCache,
+}
+
+#[derive(Clone, Debug, Default, Serialize, PartialEq, Eq, PartialOrd, Ord)]
+#[serde(rename_all = "snake_case")]
+pub enum CleanupEstimateBasis {
+    ImageUnique,
+    ReportedUsage,
+    LowerBound,
+    #[default]
+    Unknown,
+}
+
+impl<'de> Deserialize<'de> for CleanupEstimateBasis {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let value = String::deserialize(deserializer)?;
+        Ok(match value.as_str() {
+            "image_unique" => Self::ImageUnique,
+            "reported_usage" => Self::ReportedUsage,
+            "lower_bound" => Self::LowerBound,
+            "unknown" => Self::Unknown,
+            _ => Self::Unknown,
+        })
+    }
 }
 
 impl CleanupResourceKind {
@@ -158,6 +186,8 @@ pub struct CleanupResourceItem {
     pub estimated_reclaimable_bytes: Option<u64>,
     #[serde(default)]
     pub estimate_unknown: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub estimate_basis: Option<CleanupEstimateBasis>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -266,6 +296,8 @@ pub struct CleanupScanRunEvent {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CleanupInventorySnapshot {
+    #[serde(default)]
+    pub estimate_version: u32,
     pub scanned_at: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub server_disk_usage: Option<CleanupServerDiskUsage>,
@@ -285,6 +317,8 @@ pub struct CleanupInventoryCandidate {
     pub estimated_reclaimable_bytes: Option<u64>,
     #[serde(default)]
     pub estimate_unknown: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub estimate_basis: Option<CleanupEstimateBasis>,
     #[serde(default)]
     pub requires_ephemeral_confirmation: bool,
     pub ownership: CleanupInventoryOwnership,

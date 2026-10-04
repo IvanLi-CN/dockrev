@@ -13,6 +13,56 @@ pub(super) fn ensure_success(ctx: &str, out: &CommandOutput) -> anyhow::Result<(
     ))
 }
 
+pub(super) fn parse_image_unique_sizes_from_system_df_json(
+    value: &serde_json::Value,
+) -> BTreeMap<String, u64> {
+    let rows = match value.get("ImageUsage") {
+        Some(usage) => usage.get("Items").and_then(serde_json::Value::as_array),
+        None => value.get("Images").and_then(serde_json::Value::as_array),
+    };
+    let Some(rows) = rows else {
+        return BTreeMap::new();
+    };
+
+    let mut seen = BTreeSet::new();
+    let mut invalid = BTreeSet::new();
+    let mut unique_sizes = BTreeMap::new();
+    for row in rows {
+        let Some(id) = ["Id", "ID", "id"]
+            .into_iter()
+            .find_map(|field| row.get(field).and_then(serde_json::Value::as_str))
+            .map(str::trim)
+            .filter(|id| !id.is_empty())
+        else {
+            continue;
+        };
+
+        if !seen.insert(id.to_string()) {
+            unique_sizes.remove(id);
+            invalid.insert(id.to_string());
+            continue;
+        }
+
+        let size = row.get("Size").and_then(serde_json::Value::as_u64);
+        let shared_size = row.get("SharedSize").and_then(serde_json::Value::as_u64);
+        match size
+            .zip(shared_size)
+            .and_then(|(size, shared)| size.checked_sub(shared))
+        {
+            Some(unique) => {
+                unique_sizes.insert(id.to_string(), unique);
+            }
+            None => {
+                invalid.insert(id.to_string());
+            }
+        }
+    }
+    for id in invalid {
+        unique_sizes.remove(&id);
+    }
+    unique_sizes
+}
+
 pub(super) fn parse_human_size(input: &str) -> Option<u64> {
     let trimmed = input.trim();
     if trimmed.is_empty() {
