@@ -23,6 +23,7 @@
 - Review hardening wires operation impacts into overview, batch-update, homepage, detail, context-menu, cleanup and version-history controls, preserves project/service object IDs in backend projections, and acknowledges recovery only after the report and event are durable.
 - The interactive app stories include a concurrent IndexedDB auto-open claim check so same-origin tabs have executable one-winner evidence.
 - Auto-open claims are keyed by origin and application base path rather than the current route, so root and nested pages share the same one-time claim.
+- The final compatibility cleanup extracted deploy-check API types and service-detail snapshot helpers while preserving the existing public re-exports and runtime behavior; frontend file-budget validation is part of the delivery evidence.
 
 ## References
 

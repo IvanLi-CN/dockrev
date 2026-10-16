@@ -28,6 +28,7 @@
 - Web lint, build, Storybook interaction tests and owner-approved mock-only desktop/mobile evidence passed for Step 5C readiness.
 - Review hardening revalidated the full backend suite and the remaining overview and operations-dashboard update paths after the initial implementation review.
 - Storybook interaction coverage now races two same-origin IndexedDB claims for one failure key, requires exactly one winner, and verifies that changing from `/` to `/services` cannot create a second deployment claim.
+- The final frontend compatibility pass keeps deploy-check types re-exported through the existing API barrel and moves snapshot validation into the existing service-detail helper without changing runtime contracts; the tracked web file-budget gate is clear.
 - Docker, Compose and heavy integration validation passed through the session-owned Agent VM deployment smoke; the VM guest had no native Rust/Node toolchains, so native full-suite evidence remains local.
 
 ## References

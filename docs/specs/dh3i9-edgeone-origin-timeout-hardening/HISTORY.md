@@ -23,3 +23,4 @@
 - 2026-08-25: Stale deploy-check failures no longer reset a newer gate, and foreground replacement sessions remain visibly reconnecting until open.
 - 2026-08-25: Foreground recovery diagnostics now use recovery wording for a zero-attempt replacement instead of first-connection wording.
 - 2026-08-25: Foreground management resyncs now revalidate deploy-check in the background while ordinary deploy-check events avoid duplicate refresh jobs.
+- The final deploy-check type/helper compatibility pass remains governed by [server-owned-self-checks](../server-owned-self-checks/SPEC.md); this topic records no new EdgeOne behavior.

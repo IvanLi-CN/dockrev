@@ -43,6 +43,7 @@
 - Added Storybook coverage for cleanup pending state and deploy-check diagnostic states; the former cached-refreshing and blocking-gate stories are historical evidence only.
 - The former application-level deploy-check gate and `neverAutoOpen`-controlled redirect are superseded by ADR 0016 and the [server-owned-self-checks](../server-owned-self-checks/SPEC.md) contract.
 - Deterministic mock-only Storybook evidence now covers immediate target-page rendering, scoped notices, continue browsing and repair availability at desktop and `393x852` mobile views.
+- The final deploy-check compatibility cleanup is documented under the server-owned topic; this legacy topic retains the EdgeOne request-path constraints and its existing API references.
 - Replaced database-startup auto-archiving with a post-start safe discovery scan. Saved Compose files now classify unobserved projects as `stopped`, `missing`, or `invalid`; only every-file `ENOENT` receives `auto_archive_compose_files_missing`.
 - Restricted automatic restoration to `auto_archive_compose_files_missing` and the legacy `auto_archive_on_restart` reason. The reconciliation preserves Compose files, services, Docker runtime resources, and every user archive.
 - Updated the shared testbox Compose regression to verify stopped, missing, invalid, historical auto-archive recovery, manual archive protection, and deploy-check behavior within one isolated run.
