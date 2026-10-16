@@ -2,13 +2,13 @@
 
 - 2026-06-26: Created the follow-up spec to freeze the EdgeOne `15s` origin timeout constraint, snapshot-backed cleanup/deploy-check reads, release drawer fallback, and `5s` SSE heartbeat policy.
 - 2026-06-26: Implemented cleanup snapshot workers, deploy-check refresh workers, owner-facing API contract changes, Web polling flows, Storybook coverage, and visual evidence.
-- Deploy-check now acts as a hard capability gate on startup and foreground resume; cached preference settings cannot bypass a required-core failure.
-- Deploy-check pass/fail desktop and `393x852` mobile mock evidence now covers the hard gate and Dashboard lock; the full Storybook smoke suite is green.
-- Required core checks now require explicit `pass`, and App-level startup failure stories verify that `neverAutoOpen` cannot bypass the deploy-check gate.
+- Historical deploy-check hard-gate behavior on startup and foreground resume is superseded by [server-owned-self-checks](../server-owned-self-checks/SPEC.md) and ADR 0016.
+- Historical pass/fail desktop and `393x852` mobile evidence remains for context; current evidence must cover immediate target-page rendering, scoped notices, continue browsing and repair entry points.
+- The legacy `neverAutoOpen` preference remains API-compatible but no longer controls route navigation or bypasses the server-owned one-time startup failure claim.
 - Discovery reconciliation is performed by an effective scan rather than database startup. Healthy saved Compose files report `stopped`; all-file `ENOENT` uses `auto_archive_compose_files_missing`; partial absence and unreadable or invalid files remain visible as `invalid`.
 - System archives created by the current or legacy automatic reason recover when a valid scan proves the project is stopped or invalid. User archives, Stack metadata, Service metadata, and running resources remain unchanged.
 - Shared-testbox cleanup remains relative to the verified run directory after containment checks, so a later parent-path replacement cannot redirect deletion outside that run scope.
-- 管理页面改用应用级 SSE：缓存 deploy-check PASS 立即放行并后台复核；事件仅保存在 60 秒或 1024 条的进程内环形缓冲，断线通过游标补发或 REST 重同步恢复，且不保留轮询降级。
+- 管理页面改用应用级 SSE；deploy-check 事件只触发对服务端快照的重读，调度仍由服务端拥有，事件仅保存在 60 秒或 1024 条的进程内环形缓冲，断线通过游标补发或 REST 重同步恢复，且不保留轮询降级。
 - 管理事件发布覆盖任务进度与摘要更新、Discovery 人工归档/恢复、GHCR 配置/目标/仓库选择以及 webhook 状态变更，确保管理页面无需轮询仍能同步跨标签写入。
 - 2026-08-24: Cleanup confirm/apply freshness is fixed at 300 seconds. Confirm polling now uses a visible retryable status rail with stable short labels, and failed workers exit pending with an explicit API error.
 - 2026-08-25: Management SSE recovery is application-owned per tab: named cursor-free heartbeats make silent sessions observable, failed or stale sessions are replaced with bounded backoff, foreground resume rebuilds the session, and protocol-invalid payloads remain connected while triggering one REST resync. The transport warning is scoped to management events and does not affect independent logs or resource streams.

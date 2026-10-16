@@ -1442,6 +1442,13 @@ async fn run_scan_inner(
             }),
         )
         .await;
+    let _ = state
+        .deploy_check_refresh_worker
+        .enqueue_for_change(crate::deploy_check_refresh_worker::input_fingerprint(
+            "discovery",
+            &actions,
+        ))
+        .await;
     Ok(TriggerDiscoveryScanResponse {
         started_at,
         duration_ms,

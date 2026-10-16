@@ -21,7 +21,7 @@ function expectStory(condition: unknown, message: string): asserts condition {
   if (!condition) throw new globalThis.Error(message)
 }
 
-function makeDeployCheckEnvelope(blocked: boolean): DeployCheckReportEnvelope {
+function makeDeployCheckEnvelope(blocked: boolean, settled = false): DeployCheckReportEnvelope {
   const status = blocked ? 'fail' : 'pass'
   return {
     status: 'ready',
@@ -33,6 +33,18 @@ function makeDeployCheckEnvelope(blocked: boolean): DeployCheckReportEnvelope {
         summary: blocked ? 'Compose V2 is required' : 'All required capabilities are available',
       },
       generatedAt: '2026-06-26T14:23:00.000Z',
+      serverBootId: blocked ? 'boot-blocked' : 'boot-healthy',
+      reportBootId: blocked ? 'boot-blocked' : 'boot-healthy',
+      reportRevision: 1,
+      startupStatus: settled ? 'settled' : status,
+      startupFailureKey: blocked && !settled ? 'boot-blocked:core.update_executor_ready' : null,
+      operationImpacts: blocked ? [{
+        checkId: 'core.update_executor_ready',
+        scope: 'global',
+        objectIds: [],
+        operations: ['update', 'rollback'],
+        reason: 'writes blocked',
+      }] : [],
       checks: [
         {
           id: 'core.update_executor_ready',
@@ -256,7 +268,6 @@ export const DeployCheckGateBlocked: Story = {
   parameters: {
     dockrevApiScenario: 'settings-configured',
     dockrevDeployCheckReportOverride: makeDeployCheckEnvelope(true),
-    dockrevDeployWelcomeOverride: { neverAutoOpen: true },
   },
   render: () => {
     return (
@@ -268,9 +279,9 @@ export const DeployCheckGateBlocked: Story = {
   },
   play: async ({ canvasElement }) => {
     await waitForCondition(() => window.location.pathname === '/deploy-check')
-    await waitForCondition(() => canvasElement.textContent?.includes('BLOCKING') ?? false)
-    const dashboardButton = Array.from(canvasElement.querySelectorAll('button')).find((button) => button.textContent?.includes('进入 Dashboard'))
-    expectStory(Boolean(dashboardButton?.disabled), 'failed deploy-check must disable Dashboard entry')
+    await waitForCondition(() => canvasElement.textContent?.includes('影响提示') ?? false)
+    const continueButton = Array.from(canvasElement.querySelectorAll('button')).find((button) => button.textContent?.includes('继续浏览'))
+    expectStory(Boolean(continueButton && !continueButton.disabled), 'failed deploy-check must keep continuing to browse available')
   },
 }
 
@@ -281,7 +292,6 @@ export const DeployCheckGateRefreshFailed: Story = {
       ...makeDeployCheckEnvelope(false),
       lastError: 'deploy-check refresh failed',
     },
-    dockrevDeployWelcomeOverride: { neverAutoOpen: true },
   },
   render: () => {
     return (
@@ -319,14 +329,7 @@ export const DeployCheckGatePassed: Story = {
 export const DeployCheckGateRefreshBlocked: Story = {
   parameters: {
     dockrevApiScenario: 'settings-configured',
-    dockrevDeployCheckReportSequence: [
-      makeDeployCheckEnvelope(false),
-      makeDeployCheckEnvelope(false),
-      makeDeployCheckEnvelope(false),
-      makeDeployCheckEnvelope(false),
-      makeDeployCheckEnvelope(true),
-    ],
-    dockrevDeployWelcomeOverride: { neverAutoOpen: true },
+    dockrevDeployCheckReportOverride: makeDeployCheckEnvelope(true, true),
   },
   render: () => {
     return (
@@ -339,10 +342,8 @@ export const DeployCheckGateRefreshBlocked: Story = {
   play: async ({ canvasElement }) => {
     await waitForCondition(() => Boolean(canvasElement.querySelector('.appShell')))
     await sleep(350)
-    window.dispatchEvent(new Event('focus'))
-    await waitForCondition(() => window.location.pathname === '/deploy-check')
-    const dashboardButton = Array.from(canvasElement.querySelectorAll('button')).find((button) => button.textContent?.includes('进入 Dashboard'))
-    expectStory(Boolean(dashboardButton?.disabled), 'foreground deploy-check failure must disable Dashboard entry')
+    expectStory(window.location.pathname === '/', 'background deploy-check failure must keep the current page')
+    await waitForCondition(() => canvasElement.textContent?.includes('部署能力需要处理') ?? false)
   },
 }
 

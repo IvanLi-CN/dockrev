@@ -855,6 +855,17 @@ async fn put_settings(
         skip_targets_over_bytes: req.backup.skip_targets_over_bytes,
     };
 
+    let deploy_check_input = deploy_check_refresh_worker::input_fingerprint(
+        "settings",
+        &json!({
+            "backup": merged_backup,
+            "resourceMonitor": merged_resource_monitor,
+            "schedules": merged_schedules,
+            "releaseNotes": merged_release_notes,
+            "instancePublicBaseUrl": merged_public_base_url,
+        }),
+    );
+
     state
         .db
         .put_settings(
@@ -876,6 +887,10 @@ async fn put_settings(
             json!({ "operation": "updated" }),
         )
         .await;
+    let _ = state
+        .deploy_check_refresh_worker
+        .enqueue_for_change(deploy_check_input)
+        .await;
     Ok(Json(PutSettingsResponse { ok: true }))
 }
 
@@ -889,26 +904,21 @@ async fn get_deploy_check_report(
         .get_deploy_check_report_snapshot(deploy_check_refresh_worker::DEPLOY_CHECK_SNAPSHOT_KEY)
         .await
         .map_err(map_internal)?;
-    let mut refreshing = state.deploy_check_refresh_worker.is_running();
+    let refreshing = state.deploy_check_refresh_worker.is_running();
     let last_error = state.deploy_check_refresh_worker.last_error().await;
 
     if let Some(row) = cached {
-        let now = time::OffsetDateTime::now_utc();
-        let is_fresh =
-            deploy_check_refresh_worker::deploy_check_report_is_fresh(&row.checked_at, now);
-        if !refreshing && !is_fresh && last_error.is_none() {
-            let started = state.deploy_check_refresh_worker.enqueue().await;
-            refreshing = started || state.deploy_check_refresh_worker.is_running();
-            if !refreshing
-                && let Some(last_error) = state.deploy_check_refresh_worker.last_error().await
-            {
-                return Err(ApiError::internal(format!(
-                    "deploy-check refresh failed: {last_error}"
-                )));
-            }
-        }
-        let report = serde_json::from_str::<DeployCheckReportResponse>(&row.report_json)
+        let mut report = serde_json::from_str::<DeployCheckReportResponse>(&row.report_json)
             .map_err(|err| map_internal(err.into()))?;
+        if report.report_boot_id.as_deref()
+            != Some(state.deploy_check_refresh_worker.server_boot_id())
+        {
+            // A persisted report from an earlier process is diagnostic history only. Keep the
+            // checklist readable, but never project its startup failure into this boot's UI.
+            report.startup_status = Some(DeployCheckStartupStatus::Settled);
+            report.startup_failure_key = None;
+            report.operation_impacts.clear();
+        }
         return Ok(Json(DeployCheckReportEnvelope {
             status: DeployCheckReportStatus::Ready,
             refreshing,
@@ -917,7 +927,7 @@ async fn get_deploy_check_report(
             } else {
                 None
             },
-            last_error: if refreshing { None } else { last_error },
+            last_error,
             report: Some(attach_authz_checks(
                 state.as_ref(),
                 &headers,
@@ -927,30 +937,12 @@ async fn get_deploy_check_report(
         }));
     }
 
-    if !refreshing && let Some(last_error) = last_error {
-        return Err(ApiError::internal(format!(
-            "deploy-check refresh failed: {last_error}"
-        )));
-    }
-
-    if !refreshing {
-        let started = state.deploy_check_refresh_worker.enqueue().await;
-        refreshing = started || state.deploy_check_refresh_worker.is_running();
-        if !refreshing
-            && let Some(last_error) = state.deploy_check_refresh_worker.last_error().await
-        {
-            return Err(ApiError::internal(format!(
-                "deploy-check refresh failed: {last_error}"
-            )));
-        }
-    }
-
     Ok(Json(DeployCheckReportEnvelope {
         status: DeployCheckReportStatus::Pending,
         refreshing,
         retry_after_ms: refreshing
             .then_some(deploy_check_refresh_worker::DEPLOY_CHECK_PENDING_RETRY_AFTER_MS),
-        last_error: None,
+        last_error,
         report: None,
     }))
 }
@@ -1047,24 +1039,6 @@ fn attach_authz_checks(
 ) -> DeployCheckReportResponse {
     let mut checks = build_authz_checks(state, headers, &auth);
     checks.extend(report.checks);
-    let blocking_check_ids = checks
-        .iter()
-        .filter(|item| item.required && item.status == DeployCheckStatus::Fail)
-        .map(|item| item.id.clone())
-        .collect::<Vec<_>>();
-    report.overall = if blocking_check_ids.is_empty() {
-        DeployCheckOverall {
-            result: DeployCheckResult::Pass,
-            blocking_check_ids,
-            summary: "All required capabilities are available".to_string(),
-        }
-    } else {
-        DeployCheckOverall {
-            result: DeployCheckResult::Fail,
-            blocking_check_ids,
-            summary: "At least one required capability is unavailable".to_string(),
-        }
-    };
     report.checks = checks;
     report
 }
@@ -1088,7 +1062,7 @@ fn deploy_check_pass(
         id: id.to_string(),
         title: title.to_string(),
         group: DeployCheckGroup::Core,
-        required: true,
+        required: false,
         status: DeployCheckStatus::Pass,
         na_reason: None,
         summary: summary.to_string(),
@@ -1110,7 +1084,7 @@ fn deploy_check_fail(
         id: id.to_string(),
         title: title.to_string(),
         group: DeployCheckGroup::Core,
-        required: true,
+        required: false,
         status: DeployCheckStatus::Fail,
         na_reason: None,
         summary: summary.to_string(),

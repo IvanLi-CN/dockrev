@@ -1,0 +1,58 @@
+{
+  "schema_version": 1,
+  "kind": "version-impact-record",
+  "change": {
+    "description": "Make deploy self-check scheduling server-owned and expose additive startup and operation-impact projections.",
+    "release_unit_description": "Dockrev server-owned self-checks and non-blocking web entry.",
+    "affected_contracts": ["public-api", "persistent-state"]
+  },
+  "classification": {
+    "allowed_impacts": ["patch", "minor", "major"],
+    "planned": {
+      "impact": "patch",
+      "reasoning": "Existing report routes and fields remain; new fields are optional and report JSON has no schema migration.",
+      "assessed_at": "2026-10-16T00:00:00+08:00",
+      "evidence": ["docs/adr/0016-server-owned-self-checks.md"]
+    },
+    "current": {
+      "impact": "patch",
+      "scope_drift": {"detected": false, "description": "No new public route or durable schema is planned."},
+      "reasoning": "Implementation preserves GET/POST paths, old envelope fields and old snapshot readability while adding metadata projections.",
+      "reassessed_at": "2026-10-16T00:00:00+08:00",
+      "evidence": ["docs/specs/server-owned-self-checks/SPEC.md"]
+    },
+    "verified": {
+      "impact": "patch",
+      "reasoning": "Report compatibility, historical snapshot isolation, server-owned scheduling, operation projections and browser entry behavior were covered by backend/frontend tests and the VM deployment smoke.",
+      "verified_at": "2026-10-16T05:10:47Z",
+      "evidence": [
+        "cargo test -p dockrev-api",
+        "bun test",
+        "bun tsc -b",
+        "bun run lint",
+        "bun run build",
+        "bun run build-storybook -- --quiet",
+        "DOCKREV_TEST_STORYBOOK_INTERACTIVE_ONLY=1 bun run test-storybook",
+        ".github/scripts/deploy-smoke.sh in Agent VM"
+      ]
+    }
+  },
+  "compatibility_evidence": {
+    "public_api": {
+      "change": "compatible",
+      "supported_consumer_range": "Existing Dockrev web consumers that read the current deploy-check envelope.",
+      "evidence": ["Existing GET/POST paths are retained; additive fields are optional."]
+    },
+    "persistent_state": {
+      "applicable": true,
+      "state_description": "Existing deploy-check snapshot JSON gains optional server boot, revision, startup and impact metadata.",
+      "source_program_compatibility_range": "Current minor release line and immediately preceding supported minor.",
+      "evidence": ["No SQLite table or migration changes; old snapshots deserialize as historical reports."]
+    }
+  },
+  "release_unit": {
+    "member_change_records": ["server-owned-self-checks"],
+    "maximum_verified_impact": "patch",
+    "calculation_evidence": ["public_api=patch", "persistent_state=patch"]
+  }
+}

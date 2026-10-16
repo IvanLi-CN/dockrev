@@ -1220,7 +1220,7 @@ services:
 }
 
 #[tokio::test]
-async fn deploy_check_report_marks_stale_cached_report_refreshing_and_reenqueues_worker() {
+async fn deploy_check_report_reads_stale_cached_report_without_scheduling_work() {
     let state = test_state_with(":memory:", Arc::new(FakeRegistry), Arc::new(FakeRunner)).await;
     let checked_at = test_offset_from_now_rfc3339(time::Duration::seconds(
         -(crate::deploy_check_refresh_worker::DEPLOY_CHECK_REPORT_STALE_AFTER_SECONDS + 5),
@@ -1234,6 +1234,12 @@ async fn deploy_check_report_marks_stale_cached_report_refreshing_and_reenqueues
         },
         generated_at: checked_at.clone(),
         checks: Vec::new(),
+        server_boot_id: None,
+        report_boot_id: None,
+        report_revision: None,
+        startup_status: None,
+        startup_failure_key: None,
+        operation_impacts: Vec::new(),
     };
     state
         .db
@@ -1262,12 +1268,9 @@ async fn deploy_check_report_marks_stale_cached_report_refreshing_and_reenqueues
     assert_eq!(resp.status(), 200);
     let body = response_json(resp).await;
     assert_eq!(body["status"], "ready");
-    assert_eq!(body["refreshing"], true);
-    assert_eq!(
-        body["retryAfterMs"].as_u64(),
-        Some(crate::deploy_check_refresh_worker::DEPLOY_CHECK_PENDING_RETRY_AFTER_MS)
-    );
-    assert!(state.deploy_check_refresh_worker.is_running());
+    assert_eq!(body["refreshing"], false);
+    assert!(body["retryAfterMs"].is_null());
+    assert!(!state.deploy_check_refresh_worker.is_running());
 
     let ready_body = wait_for_deploy_check_report_ready(&app, Some("ops")).await;
     assert_eq!(ready_body["status"], "ready");
@@ -1277,7 +1280,7 @@ async fn deploy_check_report_marks_stale_cached_report_refreshing_and_reenqueues
 }
 
 #[tokio::test]
-async fn deploy_check_report_returns_error_after_initial_refresh_failure_until_explicit_retry() {
+async fn deploy_check_report_reads_initial_refresh_failure_without_blocking_get() {
     let state = test_state_with(":memory:", Arc::new(FakeRegistry), Arc::new(FakeRunner)).await;
     state
         .deploy_check_refresh_worker
@@ -1297,13 +1300,10 @@ async fn deploy_check_report_returns_error_after_initial_refresh_failure_until_e
         )
         .await
         .unwrap();
-    assert_eq!(resp.status(), 500);
+    assert_eq!(resp.status(), 200);
     let body = response_json(resp).await;
-    assert_eq!(body["error"]["code"], "internal");
-    assert_eq!(
-        body["error"]["message"].as_str(),
-        Some("deploy-check refresh failed: boom")
-    );
+    assert_eq!(body["status"], "pending");
+    assert_eq!(body["lastError"], "boom");
     assert!(!state.deploy_check_refresh_worker.is_running());
 
     let refresh_resp = app
@@ -1344,6 +1344,12 @@ async fn deploy_check_report_serves_stale_cached_report_and_allows_explicit_refr
         },
         generated_at: checked_at.clone(),
         checks: Vec::new(),
+        server_boot_id: None,
+        report_boot_id: None,
+        report_revision: None,
+        startup_status: None,
+        startup_failure_key: None,
+        operation_impacts: Vec::new(),
     };
     state
         .db
@@ -1436,14 +1442,15 @@ services:
     let app = api::router(state.clone());
     let body = wait_for_deploy_check_report_ready(&app, None).await;
     assert_eq!(body["status"], "ready");
-    assert_eq!(body["report"]["overall"]["result"], "fail");
-    let blocking = body["report"]["overall"]["blockingCheckIds"]
+    assert_eq!(body["report"]["overall"]["result"], "pass");
+    assert_eq!(body["report"]["overall"]["blockingCheckIds"], serde_json::json!([]));
+    let webhook = body["report"]["checks"]
         .as_array()
         .unwrap()
         .iter()
-        .filter_map(|v| v.as_str())
-        .collect::<Vec<_>>();
-    assert!(blocking.contains(&"feature.notifications.webhook"));
+        .find(|c| c["id"] == "feature.notifications.webhook")
+        .unwrap();
+    assert_eq!(webhook["status"], "fail");
 }
 
 #[tokio::test]
@@ -1477,12 +1484,13 @@ services:
     let app = api::router(state.clone());
     let body = wait_for_deploy_check_report_ready(&app, None).await;
     assert_eq!(body["status"], "ready");
-    assert_eq!(body["report"]["overall"]["result"], "fail");
-    let blocking = body["report"]["overall"]["blockingCheckIds"]
+    assert_eq!(body["report"]["overall"]["result"], "pass");
+    assert_eq!(body["report"]["overall"]["blockingCheckIds"], serde_json::json!([]));
+    let webhook = body["report"]["checks"]
         .as_array()
         .unwrap()
         .iter()
-        .filter_map(|v| v.as_str())
-        .collect::<Vec<_>>();
-    assert!(blocking.contains(&"feature.notifications.webhook"));
+        .find(|c| c["id"] == "feature.notifications.webhook")
+        .unwrap();
+    assert_eq!(webhook["status"], "fail");
 }

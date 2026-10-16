@@ -17,6 +17,7 @@
 | Service accepted state consistency | active | not started | `service-accepted-state-consistency/SPEC.md` | - |
 | Brand media variants | active | dark/light posters delivered; social variants pending | `brand-media-variants/SPEC.md` | - |
 | CI duration optimization | superseded | historical candidate/readiness contract retained for context | `ci-duration-optimization/SPEC.md` | `docs/adr/0008-pr-label-release-identity.md` |
+| Server-owned self-checks | active | implementation and validation complete: server startup/periodic self-checks, non-blocking web entry, scoped core impacts and cross-tab diagnostic deduplication | `server-owned-self-checks/SPEC.md` | - |
 
 ## 快速新增一个规格
 

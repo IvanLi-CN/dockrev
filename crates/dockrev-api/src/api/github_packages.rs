@@ -75,6 +75,16 @@ pub(super) async fn put_github_packages_settings(
 ) -> Result<Json<PutGitHubPackagesSettingsResponse>, ApiError> {
     let _user = require_user(&state, &headers).await?;
     let now = now_rfc3339().map_err(map_internal)?;
+    let deploy_check_input = crate::deploy_check_refresh_worker::input_fingerprint(
+        "github-packages-settings",
+        &json!({
+            "enabled": req.enabled,
+            "callbackUrl": req.callback_url,
+            "targets": req.targets,
+            "repos": req.repos,
+            "patConfigured": req.pat.as_deref().is_some_and(|value| !value.trim().is_empty()),
+        }),
+    );
 
     let _ = Url::parse(&req.callback_url)
         .map_err(|_| ApiError::invalid_argument("invalid callbackUrl"))?;
@@ -160,6 +170,10 @@ pub(super) async fn put_github_packages_settings(
             "default",
             json!({ "operation": "settings_updated" }),
         )
+        .await;
+    let _ = state
+        .deploy_check_refresh_worker
+        .enqueue_for_change(deploy_check_input)
         .await;
 
     Ok(Json(PutGitHubPackagesSettingsResponse { ok: true }))
@@ -402,6 +416,13 @@ pub(super) async fn set_github_packages_repo_selected(
             }),
         )
         .await;
+    let _ = state
+        .deploy_check_refresh_worker
+        .enqueue_for_change(crate::deploy_check_refresh_worker::input_fingerprint(
+            "github-packages-repo",
+            &json!({"fullName": full_name, "selected": req.selected}),
+        ))
+        .await;
 
     let mut job_id: Option<String> = None;
     if req.selected {
@@ -473,6 +494,13 @@ pub(super) async fn delete_github_packages_repo(
             json!({ "operation": "repo_unregistration_queued", "jobId": job_id }),
         )
         .await;
+    let _ = state
+        .deploy_check_refresh_worker
+        .enqueue_for_change(crate::deploy_check_refresh_worker::input_fingerprint(
+            "github-packages-repo",
+            &json!({"fullName": format!("{owner}/{repo}"), "selected": false}),
+        ))
+        .await;
 
     Ok(Json(DeleteGitHubPackagesRepoResponse { ok: true, job_id }))
 }
@@ -484,6 +512,14 @@ pub(super) async fn bulk_set_github_packages_repos_selected(
 ) -> Result<Json<BulkSetGitHubPackagesReposSelectedResponse>, ApiError> {
     let _user = require_user(&state, &headers).await?;
     let now = now_rfc3339().map_err(map_internal)?;
+    let deploy_check_input = crate::deploy_check_refresh_worker::input_fingerprint(
+        "github-packages-repos",
+        &json!({
+            "query": req.q,
+            "selectedFilter": req.selected_filter,
+            "selected": req.selected,
+        }),
+    );
 
     let selected_filter = parse_selected_filter(req.selected_filter.as_deref())?;
     let affected = state
@@ -509,6 +545,10 @@ pub(super) async fn bulk_set_github_packages_repos_selected(
                     "affected": affected,
                 }),
             )
+            .await;
+        let _ = state
+            .deploy_check_refresh_worker
+            .enqueue_for_change(deploy_check_input.clone())
             .await;
     }
 
@@ -588,6 +628,13 @@ pub(super) async fn add_github_packages_target(
             }),
         )
         .await;
+    let _ = state
+        .deploy_check_refresh_worker
+        .enqueue_for_change(crate::deploy_check_refresh_worker::input_fingerprint(
+            "github-packages-target",
+            &req.input.trim().to_ascii_lowercase(),
+        ))
+        .await;
 
     Ok(Json(AddGitHubPackagesTargetResponse {
         ok: true,
@@ -618,6 +665,13 @@ pub(super) async fn remove_github_packages_target(
                 req.input.clone(),
                 json!({ "operation": "target_removed" }),
             )
+            .await;
+        let _ = state
+            .deploy_check_refresh_worker
+            .enqueue_for_change(crate::deploy_check_refresh_worker::input_fingerprint(
+                "github-packages-target",
+                &req.input.trim().to_ascii_lowercase(),
+            ))
             .await;
     }
 

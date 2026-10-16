@@ -24,6 +24,33 @@ pub async fn build_report_with_parts(
     db: &crate::db::Db,
     runner: std::sync::Arc<dyn crate::runner::CommandRunner>,
 ) -> anyhow::Result<DeployCheckReportResponse> {
+    let review = async {
+        let report = build_report_once(config, db, runner.clone()).await?;
+        if report_needs_runtime_confirmation(&report) {
+            tokio::time::sleep(Duration::from_secs(2)).await;
+            return build_report_once(config, db, runner).await;
+        }
+        Ok(report)
+    };
+    match tokio::time::timeout(
+        Duration::from_secs(crate::deploy_check_refresh_worker::DEPLOY_CHECK_REVIEW_BUDGET_SECONDS),
+        review,
+    )
+    .await
+    {
+        Ok(result) => result,
+        Err(_) => Err(anyhow::anyhow!(
+            "deploy check review exceeded {} seconds",
+            crate::deploy_check_refresh_worker::DEPLOY_CHECK_REVIEW_BUDGET_SECONDS
+        )),
+    }
+}
+
+async fn build_report_once(
+    config: &crate::config::Config,
+    db: &crate::db::Db,
+    runner: std::sync::Arc<dyn crate::runner::CommandRunner>,
+) -> anyhow::Result<DeployCheckReportResponse> {
     let context = collect_context_from_db(db).await?;
 
     let (docker_check, update_executor_check) = tokio::join!(
@@ -42,6 +69,30 @@ pub async fn build_report_with_parts(
     checks.push(check_github_packages_feature_with(db).await?);
 
     build_report_from_checks(checks)
+}
+
+fn report_needs_runtime_confirmation(report: &DeployCheckReportResponse) -> bool {
+    report.checks.iter().any(|item| {
+        item.group == DeployCheckGroup::Core
+            && item.status == DeployCheckStatus::Fail
+            && matches!(
+                item.id.as_str(),
+                "core.docker_engine" | "core.update_executor_ready"
+            )
+            && {
+                let detail = format!("{} {}", item.summary, item.evidence).to_lowercase();
+                [
+                    "timeout",
+                    "timed out",
+                    "unreachable",
+                    "connection",
+                    "probe failed",
+                    "daemon probe",
+                ]
+                .iter()
+                .any(|needle| detail.contains(needle))
+            }
+    })
 }
 
 fn build_report_from_checks(
@@ -71,6 +122,12 @@ fn build_report_from_checks(
         overall,
         generated_at: now_rfc3339()?,
         checks,
+        server_boot_id: None,
+        report_boot_id: None,
+        report_revision: None,
+        startup_status: None,
+        startup_failure_key: None,
+        operation_impacts: Vec::new(),
     })
 }
 
@@ -199,13 +256,12 @@ async fn check_docker_engine_with(
 
 fn check_compose_access(context: &PreflightContext) -> DeployCheckItem {
     if context.compose_paths.is_empty() {
-        return fail_core(
+        return pass_core(
             "core.compose_access",
             "Compose 配置可访问",
-            "no compose files discovered",
-            "服务解析不完整，更新目标不可信",
-            "未发现任何 compose 路径（active stack / discovered project）".to_string(),
-            "到概览页执行“发现扫描”；确保目标项目由 Docker Compose 启动（含 compose labels）；若 Dockrev 在容器内，按相同绝对路径只读挂载 compose 文件目录。",
+            "no managed compose project discovered; nothing to validate",
+            "发现到项目后会在对应范围内验证 Compose 路径",
+            "no active stack or discovered project".to_string(),
         );
     }
 
@@ -775,7 +831,7 @@ fn pass_feature(
         id: id.to_string(),
         title: title.to_string(),
         group: DeployCheckGroup::Feature,
-        required: true,
+        required: false,
         status: DeployCheckStatus::Pass,
         na_reason: None,
         summary: summary.to_string(),
@@ -797,7 +853,7 @@ fn fail_feature(
         id: id.to_string(),
         title: title.to_string(),
         group: DeployCheckGroup::Feature,
-        required: true,
+        required: false,
         status: DeployCheckStatus::Fail,
         na_reason: None,
         summary: summary.to_string(),

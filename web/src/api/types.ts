@@ -808,6 +808,15 @@ export type DeployCheckStatus = 'pass' | 'fail' | 'na'
 export type DeployCheckNaReason = 'disabled_by_switch' | 'missing_prerequisite' | 'not_applicable'
 
 export type DeployCheckGroup = 'core' | 'feature' | string
+export type DeployCheckStartupStatus = 'pass' | 'fail' | 'settled'
+
+export type DeployCheckOperationImpact = {
+  checkId: string
+  scope: string
+  objectIds: string[]
+  operations: string[]
+  reason: string
+}
 
 export type DeployCheckItem = {
   id: string
@@ -830,6 +839,12 @@ export type DeployCheckReportResponse = {
   }
   generatedAt: string
   checks: DeployCheckItem[]
+  serverBootId?: string | null
+  reportBootId?: string | null
+  reportRevision?: number | null
+  startupStatus?: DeployCheckStartupStatus | null
+  startupFailureKey?: string | null
+  operationImpacts?: DeployCheckOperationImpact[]
 }
 
 export type DeployCheckReportEnvelope = {

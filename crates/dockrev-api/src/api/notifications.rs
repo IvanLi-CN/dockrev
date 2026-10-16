@@ -148,6 +148,23 @@ pub(super) async fn put_notifications(
         merged.event_ghcr_webhook_anomaly_enabled = existing_event_ghcr_webhook_anomaly_enabled;
     }
 
+    let deploy_check_input = crate::deploy_check_refresh_worker::input_fingerprint(
+        "notifications",
+        &serde_json::json!({
+            "emailEnabled": merged.email_enabled,
+            "emailConfigured": merged.email_smtp_url.as_deref().is_some_and(|value| !value.trim().is_empty()),
+            "webhookEnabled": merged.webhook_enabled,
+            "webhookUrl": merged.webhook_url,
+            "telegramEnabled": merged.telegram_enabled,
+            "telegramTokenConfigured": merged.telegram_bot_token.as_deref().is_some_and(|value| !value.trim().is_empty()),
+            "telegramChatId": merged.telegram_chat_id,
+            "webPushEnabled": merged.webpush_enabled,
+            "webPushPublicKey": merged.webpush_vapid_public_key,
+            "webPushPrivateKeyConfigured": merged.webpush_vapid_private_key.as_deref().is_some_and(|value| !value.trim().is_empty()),
+            "webPushSubject": merged.webpush_vapid_subject,
+        }),
+    );
+
     state
         .db
         .put_notification_settings(&merged, &now)
@@ -161,6 +178,10 @@ pub(super) async fn put_notifications(
             "default",
             serde_json::json!({ "operation": "notifications_updated" }),
         )
+        .await;
+    let _ = state
+        .deploy_check_refresh_worker
+        .enqueue_for_change(deploy_check_input)
         .await;
     Ok(Json(PutNotificationsResponse { ok: true }))
 }

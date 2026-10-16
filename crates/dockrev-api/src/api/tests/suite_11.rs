@@ -36,14 +36,8 @@ services:
     let app = api::router(state.clone());
     let body = wait_for_deploy_check_report_ready(&app, None).await;
     assert_eq!(body["status"], "ready");
-    assert_eq!(body["report"]["overall"]["result"], "fail");
-    let blocking = body["report"]["overall"]["blockingCheckIds"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .filter_map(|v| v.as_str())
-        .collect::<Vec<_>>();
-    assert!(blocking.contains(&"feature.github_packages"));
+    assert_eq!(body["report"]["overall"]["result"], "pass");
+    assert_eq!(body["report"]["overall"]["blockingCheckIds"], serde_json::json!([]));
 
     let github_packages = body["report"]["checks"]
         .as_array()
@@ -93,14 +87,8 @@ services:
     let app = api::router(state.clone());
     let body = wait_for_deploy_check_report_ready(&app, None).await;
     assert_eq!(body["status"], "ready");
-    assert_eq!(body["report"]["overall"]["result"], "fail");
-    let blocking = body["report"]["overall"]["blockingCheckIds"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .filter_map(|v| v.as_str())
-        .collect::<Vec<_>>();
-    assert!(blocking.contains(&"feature.github_packages"));
+    assert_eq!(body["report"]["overall"]["result"], "pass");
+    assert_eq!(body["report"]["overall"]["blockingCheckIds"], serde_json::json!([]));
 
     let github_packages = body["report"]["checks"]
         .as_array()
