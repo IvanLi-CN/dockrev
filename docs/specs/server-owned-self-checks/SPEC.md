@@ -123,6 +123,7 @@
   evidence_surface: `page`
   sensitive_exclusion: `N/A`
   submission_gate: `owner-approved`
+  evidence_binding_sha: `ba6cdac9d1abbdc4edc0ab1acb0784d64fe1d4ca`
   story_id_or_title: `Pages/DeployWelcomePage/Default`
   state: `healthy report renders without a blocking wait`
   evidence_note: 本地 mock-only Storybook 证据；入口直接展示诊断清单与继续浏览入口，网页读取不排入服务端自检。
@@ -138,6 +139,7 @@
   evidence_surface: `page`
   sensitive_exclusion: `N/A`
   submission_gate: `owner-approved`
+  evidence_binding_sha: `ba6cdac9d1abbdc4edc0ab1acb0784d64fe1d4ca`
   story_id_or_title: `Pages/DeployWelcomePage/CoreFailureDiagnostic`
   state: `core failure keeps scoped diagnosis, repair and continue browsing reachable`
   evidence_note: 本地 mock-only Storybook 证据；核心故障只提示受影响操作，不再显示 BLOCKING 门禁或整页等待。
@@ -153,6 +155,7 @@
   evidence_surface: `page`
   sensitive_exclusion: `N/A`
   submission_gate: `owner-approved`
+  evidence_binding_sha: `ba6cdac9d1abbdc4edc0ab1acb0784d64fe1d4ca`
   story_id_or_title: `Pages/DeployWelcomePage/BlockedCoreFailureMobile`
   state: `core failure diagnosis stays readable on mobile`
   evidence_note: 本地 mock-only Storybook 证据；393x852 下故障提示、修复入口和继续浏览按钮无横向溢出或重叠。
