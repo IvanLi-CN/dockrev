@@ -307,6 +307,9 @@ export const DeployCheckAutoOpenClaimRace: Story = {
       claimDeployCheckAutoOpen(failureKey),
     ])
     expectStory(claims.filter(Boolean).length === 1, 'one concurrent tab must claim the failure key')
+    window.history.pushState({}, '', '/services')
+    const routeClaim = await claimDeployCheckAutoOpen(failureKey)
+    expectStory(!routeClaim, 'a route change must not create a second deployment claim')
   },
 }
 

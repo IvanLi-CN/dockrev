@@ -1,11 +1,12 @@
+import { appBasePath } from './appBase'
+
 const DATABASE_NAME = 'dockrev-deploy-check'
 const DATABASE_VERSION = 1
 const STORE_NAME = 'claims'
 
 function deploymentKey(): string {
   if (typeof window === 'undefined') return 'server'
-  const firstPathSegment = window.location.pathname.split('/').filter(Boolean)[0] ?? ''
-  return `${window.location.origin}|${firstPathSegment}`
+  return `${window.location.origin}|${appBasePath()}`
 }
 
 function openClaimsDatabase(): Promise<IDBDatabase> {
