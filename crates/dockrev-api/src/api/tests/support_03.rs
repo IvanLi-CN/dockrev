@@ -813,6 +813,22 @@ async fn wait_for_deploy_check_report_ready(
     app: &Router,
     user: Option<&str>,
 ) -> serde_json::Value {
+    let mut refresh_builder = Request::builder()
+        .method("POST")
+        .uri("/api/deploy-check/report/refresh")
+        .header("content-type", "application/json");
+    if let Some(user) = user {
+        refresh_builder = refresh_builder.header("X-Forwarded-User", user);
+    }
+    let refresh_resp = app
+        .clone()
+        .oneshot(refresh_builder.body(Body::from("{}")).unwrap())
+        .await
+        .unwrap();
+    assert_eq!(refresh_resp.status(), axum::http::StatusCode::OK);
+    let refresh_body = response_json(refresh_resp).await;
+    assert_eq!(refresh_body["status"], "pending");
+
     for _ in 0..300 {
         let mut builder = Request::builder().method("GET").uri("/api/deploy-check/report");
         if let Some(user) = user {

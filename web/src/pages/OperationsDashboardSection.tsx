@@ -45,6 +45,10 @@ import {
   stopRowLink,
 } from "./operationsDashboardShared";
 import { buildStackAggregateScope } from "./aggregateUpdateScope";
+import {
+  deployCheckOperationImpactReason,
+  useDeployCheckReport,
+} from "../deployCheck";
 import { useOverviewPageState } from "./useOverviewPageState";
 
 export function OperationsDashboardSection(props: {
@@ -58,6 +62,7 @@ export function OperationsDashboardSection(props: {
 export function OperationsDashboardSectionView(props: {
   state: ReturnType<typeof useOverviewPageState>;
 }) {
+  const deployCheckReport = useDeployCheckReport();
   const {
     activeDiscoveryIssue,
     busy,
@@ -524,6 +529,7 @@ export function OperationsDashboardSectionView(props: {
             const stackApplySubmitting = stackApplyActionKey
               ? isTargetSubmitting(stackApplyActionKey)
               : false;
+            const stackApplyDeployCheckReason = deployCheckOperationImpactReason(deployCheckReport, "update", scope.operationObjectIds);
 
             return (
               <div
@@ -565,7 +571,11 @@ export function OperationsDashboardSectionView(props: {
                         disabled={
                           stackApplyActiveJob
                             ? false
-                            : !stackApply.enabled || busy || stackApplySubmitting || readonlyOffline
+                            : !stackApply.enabled ||
+                              Boolean(stackApplyDeployCheckReason) ||
+                              busy ||
+                              stackApplySubmitting ||
+                              readonlyOffline
                         }
                         loading={
                           stackApplyActionKey
@@ -576,11 +586,13 @@ export function OperationsDashboardSectionView(props: {
                         title={
                           stackApplyActiveJob
                             ? "任务进行中，点击查看任务详情"
-                            : (stackApply.title ?? undefined)
+                            : (stackApplyDeployCheckReason ?? stackApply.title ?? undefined)
                         }
                         hint={
                           stackApplyActiveJob
                             ? "任务进行中，点击查看任务详情"
+                            : stackApplyDeployCheckReason
+                              ? stackApplyDeployCheckReason
                             : !stackApply.enabled
                               ? (stackApply.hint ?? undefined)
                               : undefined
@@ -680,6 +692,7 @@ export function OperationsDashboardSectionView(props: {
                           void triggerApply({
                             scope: "stack",
                             stackId: st.id,
+                            objectIds: scope.operationObjectIds,
                             targetLabel: `stack:${d.name}`,
                             buildRequest: async () => ({
                               scope: "stack",
@@ -771,6 +784,11 @@ export function OperationsDashboardSectionView(props: {
                       const svcApplySubmitting = svcApplyActionKey
                         ? isTargetSubmitting(svcApplyActionKey)
                         : false;
+                      const svcApplyDeployCheckReason = deployCheckOperationImpactReason(
+                        deployCheckReport,
+                        "update",
+                        [svc.id, st.id],
+                      );
                       return (
                         <div
                           key={svc.id}
@@ -1017,6 +1035,7 @@ export function OperationsDashboardSectionView(props: {
                                   svcApplyActiveJob
                                     ? false
                                     : !svcApply.enabled ||
+                                      Boolean(svcApplyDeployCheckReason) ||
                                       busy ||
                                       svcApplySubmitting ||
                                       readonlyOffline
@@ -1030,11 +1049,13 @@ export function OperationsDashboardSectionView(props: {
                                 title={
                                   svcApplyActiveJob
                                     ? "任务进行中，点击查看任务详情"
-                                    : (svcApply.title ?? undefined)
+                                    : (svcApplyDeployCheckReason ?? svcApply.title ?? undefined)
                                 }
                                 hint={
                                   svcApplyActiveJob
                                     ? "任务进行中，点击查看任务详情"
+                                    : svcApplyDeployCheckReason
+                                      ? svcApplyDeployCheckReason
                                     : undefined
                                 }
                                 onClick={() => {

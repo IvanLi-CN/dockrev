@@ -59,6 +59,13 @@ pub(super) async fn put_stack_settings(
     }
     crate::auto_update::validate_policy_for_scope(&req.auto_update_policy, "stack")?;
     let now = now_rfc3339().map_err(map_internal)?;
+    let deploy_check_input = crate::deploy_check_refresh_worker::input_fingerprint(
+        "stack-settings",
+        &serde_json::json!({
+            "stackId": stack_id,
+            "autoUpdatePolicy": req.auto_update_policy,
+        }),
+    );
     state
         .db
         .put_auto_update_policy("stack", &stack_id, &req.auto_update_policy, &now)
@@ -80,9 +87,13 @@ pub(super) async fn put_stack_settings(
         .publish_change(
             "stacks",
             "stack",
-            stack_id,
+            stack_id.clone(),
             serde_json::json!({ "operation": "settings_updated" }),
         )
+        .await;
+    let _ = state
+        .deploy_check_refresh_worker
+        .enqueue_for_change(deploy_check_input)
         .await;
 
     Ok(Json(PutStackSettingsResponse { ok: true }))
@@ -1050,9 +1061,16 @@ pub(super) async fn archive_stack(
         .publish_change(
             "stacks",
             "stack",
-            stack_id,
+            stack_id.clone(),
             json!({ "operation": "archived" }),
         )
+        .await;
+    let _ = state
+        .deploy_check_refresh_worker
+        .enqueue_for_change(crate::deploy_check_refresh_worker::input_fingerprint(
+            "stack-state",
+            &serde_json::json!({"stackId": stack_id, "archived": true}),
+        ))
         .await;
     Ok(StatusCode::NO_CONTENT)
 }
@@ -1077,9 +1095,16 @@ pub(super) async fn restore_stack(
         .publish_change(
             "stacks",
             "stack",
-            stack_id,
+            stack_id.clone(),
             json!({ "operation": "restored" }),
         )
+        .await;
+    let _ = state
+        .deploy_check_refresh_worker
+        .enqueue_for_change(crate::deploy_check_refresh_worker::input_fingerprint(
+            "stack-state",
+            &serde_json::json!({"stackId": stack_id, "archived": false}),
+        ))
         .await;
     Ok(StatusCode::NO_CONTENT)
 }
@@ -1116,6 +1141,13 @@ pub(super) async fn archive_service(
             }),
         )
         .await;
+    let _ = state
+        .deploy_check_refresh_worker
+        .enqueue_for_change(crate::deploy_check_refresh_worker::input_fingerprint(
+            "service-state",
+            &serde_json::json!({"serviceId": service_id, "archived": true}),
+        ))
+        .await;
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -1150,6 +1182,13 @@ pub(super) async fn restore_service(
                 "stackId": stack_id,
             }),
         )
+        .await;
+    let _ = state
+        .deploy_check_refresh_worker
+        .enqueue_for_change(crate::deploy_check_refresh_worker::input_fingerprint(
+            "service-state",
+            &serde_json::json!({"serviceId": service_id, "archived": false}),
+        ))
         .await;
     Ok(StatusCode::NO_CONTENT)
 }

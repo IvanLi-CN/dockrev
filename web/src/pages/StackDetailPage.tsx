@@ -30,6 +30,7 @@ import { navigate } from '../routes'
 import { publishServiceTreeRefresh } from '../serviceTreeRefresh'
 import { Button, Mono, Pill } from '../ui'
 import { serviceRowStatus } from '../updateStatus'
+import { deployCheckOperationImpactReason, useDeployCheckReport } from '../deployCheck'
 
 function errorMessage(e: unknown): string {
   if (e instanceof Error) return e.message
@@ -112,6 +113,7 @@ export function StackDetailPage(props: {
 }) {
   const { stackId, onLastScanHint, onTopActions } = props
   const { isOnline } = usePwaStatus()
+  const deployCheckReport = useDeployCheckReport()
   const confirm = useConfirm()
   const snapshotKey = buildReadonlySnapshotKey('stack-detail', stackId)
   const [stack, setStack] = useState<StackDetail | null>(null)
@@ -436,6 +438,7 @@ export function StackDetailPage(props: {
       const compatible = (action === 'start' && lifecycleState === 'stopped') ||
         ((action === 'stop' || action === 'restart') && lifecycleState === 'running')
       const activeAction = Boolean(lifecycleJob && lifecycleJob.action === action)
+      const deployCheckReason = deployCheckOperationImpactReason(deployCheckReport, action, stackId)
       const icon = action === 'start' ? Play : action === 'stop' ? Square : RotateCw
       return {
         id: `lifecycle-${action}`,
@@ -445,8 +448,8 @@ export function StackDetailPage(props: {
         description: lifecycleJob
           ? activeAction ? '任务进行中，点击查看任务详情' : '其他生命周期任务进行中'
           : hasOtherActiveJob ? lifecycleReasonLabel(lifecycleStatus?.unavailableReason) ?? '其他任务正在执行'
-            : lifecycleReason ?? (compatible ? undefined : '当前 Stack 状态不支持该操作'),
-        disabled: lifecycleJob ? !activeAction : hasOtherActiveJob || Boolean(lifecycleReason) || busy || lifecycleSubmitting || !compatible,
+            : deployCheckReason ?? lifecycleReason ?? (compatible ? undefined : '当前 Stack 状态不支持该操作'),
+        disabled: lifecycleJob ? !activeAction : hasOtherActiveJob || Boolean(lifecycleReason) || Boolean(deployCheckReason) || busy || lifecycleSubmitting || !compatible,
         onSelect: () => lifecycleJob && activeAction ? navigate({ name: 'job', jobId: lifecycleJob.id }) : requestLifecycleAction(action),
         loading: Boolean(lifecycleJob && activeAction),
         loadingClickable: Boolean(lifecycleJob && activeAction),
@@ -492,7 +495,7 @@ export function StackDetailPage(props: {
       </>,
     )
     return () => onTopActions(null)
-  }, [activeLifecycleJobAction, activeLifecycleJobId, activeLifecycleJobStatus, activeLifecycleJobType, busy, dataRefreshing, isOnline, lifecycleStatus?.state, lifecycleStatus?.unavailableReason, lifecycleStatusLoading, lifecycleSubmitting, onTopActions, refresh, refreshAll, requestLifecycleAction, stackArchived])
+  }, [activeLifecycleJobAction, activeLifecycleJobId, activeLifecycleJobStatus, activeLifecycleJobType, busy, dataRefreshing, deployCheckReport, isOnline, lifecycleStatus?.state, lifecycleStatus?.unavailableReason, lifecycleStatusLoading, lifecycleSubmitting, onTopActions, refresh, refreshAll, requestLifecycleAction, stackArchived, stackId])
 
   if (!stack) {
     if (!isOnline) {

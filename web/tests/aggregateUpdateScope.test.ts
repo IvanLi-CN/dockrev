@@ -72,6 +72,7 @@ describe('aggregateUpdateScope', () => {
     expect(scope.actionableCount).toBe(1)
     expect(scope.previewItems).toHaveLength(1)
     expect(scope.actionableServices.map((service) => service.id)).toEqual(['svc-api'])
+    expect(scope.operationObjectIds).toEqual(['stack-prod', 'svc-api'])
     expect(scope.counts.updatable).toBe(1)
     expect(scope.counts.blocked).toBe(0)
   })
@@ -133,6 +134,7 @@ describe('aggregateUpdateScope', () => {
     expect(scope.counts.updatable).toBe(1)
     expect(scope.counts.hint).toBe(0)
     expect(scope.counts.archMismatch).toBe(0)
+    expect(scope.operationObjectIds).toEqual(['stack-a', 'svc-api'])
   })
 
 })

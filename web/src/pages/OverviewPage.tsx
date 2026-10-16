@@ -36,6 +36,10 @@ import { navigate } from "../routes";
 import { buildUpdateServiceTarget } from "../updateTargets";
 import { isDockrevAppDemoRuntime } from "../demo/runtime";
 import {
+  deployCheckOperationImpactReason,
+  useDeployCheckReport,
+} from "../deployCheck";
+import {
   canRestorePersistedHomepageSnapshot,
   homepageSnapshotFromResponse,
   normalizeHomepageHref,
@@ -422,6 +426,7 @@ export function OverviewPage(props: {
   const pageRef = useRef<HTMLDivElement | null>(null);
   const isAppDemoRuntime = isDockrevAppDemoRuntime();
   const { isOnline } = usePwaStatus();
+  const deployCheckReport = useDeployCheckReport();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [resourceError, setResourceError] = useState<string | null>(null);
@@ -448,6 +453,13 @@ export function OverviewPage(props: {
   const [activeGroupName, setActiveGroupName] = useState<string | null>(null);
   const [updateDialogCard, setUpdateDialogCard] =
     useState<HomepageNavCard | null>(null);
+  const updateDialogDeployCheckReason = updateDialogCard
+    ? deployCheckOperationImpactReason(
+        deployCheckReport,
+        "update",
+        [updateDialogCard.serviceId, updateDialogCard.stackId],
+      )
+    : null;
   const [now, setNow] = useState(() => new Date());
   const [isNarrow, setIsNarrow] = useState(readOverviewMobileMediaMatches);
   const homepageColumnCount = useHomepageColumnCount();
@@ -1040,11 +1052,25 @@ export function OverviewPage(props: {
             </DialogClose>
             <Button
               variant="primary"
-              disabled={busy || !updateDialogCard?.service?.candidate}
+              disabled={
+                busy ||
+                !updateDialogCard?.service?.candidate ||
+                Boolean(updateDialogDeployCheckReason)
+              }
+              hint={updateDialogDeployCheckReason ?? undefined}
               onClick={() => {
                 const service = updateDialogCard?.service;
                 if (!updateDialogCard || !service?.candidate) return;
                 const card = updateDialogCard;
+                const currentDeployCheckReason = deployCheckOperationImpactReason(
+                  deployCheckReport,
+                  "update",
+                  [card.serviceId, card.stackId],
+                );
+                if (currentDeployCheckReason) {
+                  setError(currentDeployCheckReason);
+                  return;
+                }
                 void (async () => {
                   setBusy(true);
                   setError(null);

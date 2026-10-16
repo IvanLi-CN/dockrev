@@ -119,6 +119,18 @@ pub struct DeployCheckReportResponse {
     pub overall: DeployCheckOverall,
     pub generated_at: String,
     pub checks: Vec<DeployCheckItem>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub server_boot_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub report_boot_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub report_revision: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub startup_status: Option<DeployCheckStartupStatus>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub startup_failure_key: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub operation_impacts: Vec<DeployCheckOperationImpact>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
@@ -155,6 +167,25 @@ pub struct DeployCheckOverall {
 pub enum DeployCheckResult {
     Pass,
     Fail,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum DeployCheckStartupStatus {
+    Pass,
+    Fail,
+    Settled,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DeployCheckOperationImpact {
+    pub check_id: String,
+    pub scope: String,
+    #[serde(default)]
+    pub object_ids: Vec<String>,
+    pub operations: Vec<String>,
+    pub reason: String,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]

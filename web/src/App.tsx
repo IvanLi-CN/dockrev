@@ -38,20 +38,21 @@ import { usePwaStatus } from "./pwaStatus";
 import { useManagementEventBatch, useManagementEvents } from "./managementEvents";
 import { AppShellStatusBanner } from "./components/AppShellStatusBanner";
 import { IconButton } from "./ui";
-import { RefreshCw } from "lucide-react";
+import { ClipboardCheck, RefreshCw } from "lucide-react";
 import { shouldApplyUpdateOnPathnameNavigation } from "./pwaUpdateLifecycle";
 import {
   AUTH_RECOVERED_EVENT,
   AUTH_REQUIRED_EVENT,
-  getDeployWelcome,
   getSettings,
-  refreshDeployCheckReport,
   type AuthRequiredDetails,
 } from "./api";
 import {
-  hasBlockingDeployCheckFailure,
+  hasActiveCoreFailure,
+  hasCurrentStartupCoreFailure,
   loadDeployCheckReport,
+  DeployCheckProvider,
 } from "./deployCheck";
+import { claimDeployCheckAutoOpen } from "./deployCheckAutoOpen";
 import { TopbarUserIdentity } from "./components/TopbarUserIdentity";
 import { GitHubReleaseDrawer } from "./components/GitHubReleaseDrawer";
 import { NotificationCenter, NotificationProvider } from "./NotificationCenter";
@@ -169,6 +170,31 @@ function ManagementEventsStatusBanner() {
   )
 }
 
+function DeployCheckStatusBanner(props: {
+  report: import("./api").DeployCheckReportResponse | null;
+}) {
+  const report = props.report;
+  if (!report || !hasActiveCoreFailure(report)) return null;
+  const operationNames = Array.from(
+    new Set((report.operationImpacts ?? []).flatMap((impact) => impact.operations)),
+  );
+  const detail = operationNames.length
+    ? `核心能力异常；受影响操作：${operationNames.join("、")}。可继续浏览，打开诊断查看修复入口。`
+    : "核心能力异常；可继续浏览，打开诊断查看受影响范围和修复入口。";
+  return (
+    <AppShellStatusBanner
+      tone="warning"
+      title="部署能力需要处理"
+      detail={detail}
+      actions={
+        <IconButton title="查看部署诊断" onClick={() => navigate({ name: "deploy-check" })}>
+          <ClipboardCheck size={16} aria-hidden="true" />
+        </IconButton>
+      }
+    />
+  );
+}
+
 export default function App() {
   const route = useRoute();
   const { applyUpdateOnNavigation } = usePwaStatus();
@@ -182,16 +208,9 @@ export default function App() {
   const [lastScanHint, setLastScanHint] = useState<string | undefined>(
     undefined,
   );
-  const [deployWelcomeState, setDeployWelcomeState] = useState<{
-    loaded: boolean;
-    neverAutoOpen: boolean;
-  }>({
-    loaded: false,
-    neverAutoOpen: true,
-  });
-  const [deployCheckGate, setDeployCheckGate] = useState<
-    "loading" | "pass" | "fail"
-  >("loading");
+  const [deployCheckReport, setDeployCheckReport] = useState<
+    import("./api").DeployCheckReportResponse | null
+  >(null);
   const [authFailure, setAuthFailure] = useState<AuthRequiredDetails | null>(
     null,
   );
@@ -202,8 +221,12 @@ export default function App() {
   const authFailureVersionRef = useRef(0);
   const authIdentityRefreshInFlightRef = useRef(false);
   const suppressNextAuthRecoveredRef = useRef(false);
-  const deployCheckBackgroundRefreshInFlightRef = useRef(false);
   const deployCheckGateRequestIdRef = useRef(0);
+  const deployCheckFirstReadRef = useRef(false);
+  const deployCheckReportVersionRef = useRef<{ bootId: string | null; revision: number }>({
+    bootId: null,
+    revision: -1,
+  });
   const previousRoutePathRef = useRef<string | null>(null);
   const previousUpdateNavigationPathRef = useRef<string | null>(null);
 
@@ -263,98 +286,42 @@ export default function App() {
       suppressNextAuthRecoveredRef.current = false;
     }
   }, []);
-  const refreshDeployCheckGate = useCallback(async (requestBackgroundRefresh = false) => {
+  const refreshDeployCheckState = useCallback(async () => {
     const requestId = ++deployCheckGateRequestIdRef.current;
+    // A pending/error/old response consumes this entry's only automatic-display opportunity.
+    const isFirstRead = !deployCheckFirstReadRef.current;
+    deployCheckFirstReadRef.current = true;
     const envelope = await loadDeployCheckReport();
     if (requestId !== deployCheckGateRequestIdRef.current) return;
     const report = envelope.report;
-    if (!report) return;
-    const blocked = hasBlockingDeployCheckFailure(report);
-    setDeployCheckGate(blocked ? "fail" : "pass");
-    if (
-      requestBackgroundRefresh &&
-      !blocked &&
-      !envelope.refreshing &&
-      !deployCheckBackgroundRefreshInFlightRef.current
-    ) {
-      deployCheckBackgroundRefreshInFlightRef.current = true;
-      void refreshDeployCheckReport()
-        .catch(() => {})
-        .finally(() => {
-          deployCheckBackgroundRefreshInFlightRef.current = false;
-        });
+    if (report) {
+      const bootId = report.reportBootId ?? null;
+      const revision = report.reportRevision ?? 0;
+      const previous = deployCheckReportVersionRef.current;
+      if (bootId && previous.bootId === bootId && revision < previous.revision) return;
+      if (bootId) deployCheckReportVersionRef.current = { bootId, revision };
+    }
+    setDeployCheckReport(report ?? null);
+    if (isFirstRead && report && hasCurrentStartupCoreFailure(report)) {
+      const failureKey = report.startupFailureKey;
+      if (failureKey && (await claimDeployCheckAutoOpen(failureKey))) {
+        navigate({ name: "deploy-check" });
+      }
     }
   }, []);
 
   useEffect(() => {
-    const requestId = deployCheckGateRequestIdRef.current + 1;
-    void refreshDeployCheckGate(true).catch(() => {
-      if (requestId === deployCheckGateRequestIdRef.current) {
-        setDeployCheckGate("loading");
-      }
-    });
-  }, [refreshDeployCheckGate]);
+    void refreshDeployCheckState().catch(() => {});
+  }, [refreshDeployCheckState]);
 
   useManagementEventBatch(({ events, resyncRequired }) => {
     if (
       resyncRequired ||
       events.some((event) => event.domain === "deploy_check")
     ) {
-      void refreshDeployCheckGate(resyncRequired).catch(() => {});
+      void refreshDeployCheckState().catch(() => {});
     }
   });
-
-  useManagementEventBatch(({ events, resyncRequired }) => {
-    const deployWelcomeChanged = events.some(
-      (event) =>
-        event.domain === "settings" &&
-        event.summary.operation === "deploy_welcome_updated",
-    );
-    if (!resyncRequired && !deployWelcomeChanged) return;
-    void getDeployWelcome()
-      .then((settings) => {
-        setDeployWelcomeState({
-          loaded: true,
-          neverAutoOpen: settings.neverAutoOpen,
-        });
-      })
-      .catch(() => {});
-  });
-
-  useEffect(() => {
-    let cancelled = false;
-    void getDeployWelcome()
-      .then((settings) => {
-        if (cancelled) return;
-        setDeployWelcomeState({
-          loaded: true,
-          neverAutoOpen: settings.neverAutoOpen,
-        });
-      })
-      .catch(() => {
-        if (cancelled) return;
-        // Fail open to dashboard when the preference endpoint is unavailable.
-        setDeployWelcomeState({ loaded: true, neverAutoOpen: true });
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, []);
-
-  useEffect(() => {
-    if (deployCheckGate === "fail" && route.name !== "deploy-check") {
-      navigate({ name: "deploy-check" });
-      return;
-    }
-    if (deployCheckGate !== "pass") return;
-    if (!deployWelcomeState.loaded || deployWelcomeState.neverAutoOpen) return;
-    if (route.name !== "overview") return;
-    if (typeof window === "undefined") return;
-    const key = "dockrev:deployWelcome:redirected";
-    if (window.sessionStorage.getItem(key) === "1") return;
-    window.sessionStorage.setItem(key, "1");
-    navigate({ name: "deploy-check" });
-  }, [deployCheckGate, deployWelcomeState, route.name]);
 
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -496,59 +463,53 @@ export default function App() {
 
   if (authFailure) {
     return (
-      <NotificationProvider>
-        <AppShell
-          route={route}
-          title={resolvedHead.title}
-          pageSubtitle={resolvedHead.pageSubtitle}
-          topActions={null}
-          authIdentity={authIdentity}
-        >
-          <ManagementEventsStatusBanner />
-          <UnauthorizedPage authDetails={authFailure} />
-        </AppShell>
-      </NotificationProvider>
+      <DeployCheckProvider report={deployCheckReport}>
+        <NotificationProvider>
+          <AppShell
+            route={route}
+            title={resolvedHead.title}
+            pageSubtitle={resolvedHead.pageSubtitle}
+            topActions={null}
+            authIdentity={authIdentity}
+          >
+            <ManagementEventsStatusBanner />
+            <UnauthorizedPage authDetails={authFailure} />
+          </AppShell>
+        </NotificationProvider>
+      </DeployCheckProvider>
     );
   }
 
   if (route.name === "deploy-check") {
     return (
-      <NotificationProvider>
-        <>
-          <DeployWelcomePage />
-          <PwaUpdateBubble />
-        </>
-      </NotificationProvider>
-    );
-  }
-
-  if (deployCheckGate !== "pass") {
-    return (
-      <NotificationProvider>
-        <div className="deployGateLoading" role="status" aria-live="polite">
-          {deployCheckGate === "loading"
-            ? "正在验证部署检查…"
-            : "部署检查未通过，正在打开故障门禁…"}
-        </div>
-      </NotificationProvider>
+      <DeployCheckProvider report={deployCheckReport}>
+        <NotificationProvider>
+          <>
+            <DeployWelcomePage />
+            <PwaUpdateBubble />
+          </>
+        </NotificationProvider>
+      </DeployCheckProvider>
     );
   }
 
   return (
-    <NotificationProvider>
-      <>
-        <AppShell
-          route={route}
-          title={resolvedHead.title}
-          pageSubtitle={resolvedHead.pageSubtitle}
-          topActions={topActions}
-          notificationCenter={<NotificationCenter />}
-          topbarContent={topbarContent}
-          contextNavigation={contextNavigation}
-          contextNavigationTitle={route.name === "services" || route.name === "stack" || route.name === "service" ? "服务导航" : "页面内导航"}
-          authIdentity={authIdentity}
-        >
+    <DeployCheckProvider report={deployCheckReport}>
+      <NotificationProvider>
+        <>
+          <AppShell
+            route={route}
+            title={resolvedHead.title}
+            pageSubtitle={resolvedHead.pageSubtitle}
+            topActions={topActions}
+            notificationCenter={<NotificationCenter />}
+            topbarContent={topbarContent}
+            contextNavigation={contextNavigation}
+            contextNavigationTitle={route.name === "services" || route.name === "stack" || route.name === "service" ? "服务导航" : "页面内导航"}
+            authIdentity={authIdentity}
+          >
         <ManagementEventsStatusBanner />
+        <DeployCheckStatusBanner report={deployCheckReport} />
         {route.name === "overview" ? (
           <OverviewPage
             onLastScanHint={setLastScanHint}
@@ -614,17 +575,18 @@ export default function App() {
             onTopbarContent={setTopbarContent}
           />
         ) : null}
-        </AppShell>
-        <GitHubReleaseDrawer
-          open={releaseDrawerState.open}
-          serviceId={releaseDrawerState.serviceId}
-          version={releaseDrawerState.version}
-          onOpenChange={(open) => {
-            if (open) return;
-            closeGitHubReleaseDrawer("replace");
-          }}
-        />
-      </>
-    </NotificationProvider>
+          </AppShell>
+          <GitHubReleaseDrawer
+            open={releaseDrawerState.open}
+            serviceId={releaseDrawerState.serviceId}
+            version={releaseDrawerState.version}
+            onOpenChange={(open) => {
+              if (open) return;
+              closeGitHubReleaseDrawer("replace");
+            }}
+          />
+        </>
+      </NotificationProvider>
+    </DeployCheckProvider>
   );
 }

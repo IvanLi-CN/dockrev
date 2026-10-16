@@ -931,6 +931,12 @@ export function makeDefaultDeployCheckReport(): DeployCheckReportResponse {
       summary: 'All required capabilities are available',
     },
     generatedAt: nowIso(),
+    serverBootId: 'mock-server-boot',
+    reportBootId: 'mock-server-boot',
+    reportRevision: 1,
+    startupStatus: 'pass',
+    startupFailureKey: null,
+    operationImpacts: [],
     checks: [
       {
         id: 'core.docker_engine',

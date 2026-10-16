@@ -23,6 +23,7 @@ import { buildUpdateServiceTarget } from '../updateTargets'
 import { useManagementEventBatch } from '../managementEvents'
 import { usePageResumeRefresh } from '../usePageResumeRefresh'
 import { useSupervisorHealth } from '../useSupervisorHealth'
+import { deployCheckOperationImpactReason, useDeployCheckReport } from '../deployCheck'
 import { formatCandidateTagDisplay, formatCurrentTagDisplay as formatTagDisplay, inferResolvedTagsFromSnapshot, isStrictSemverTag } from '../versionDisplay'
 import { isRollbackTargetRefreshCurrent, retryRollbackTargetDigestMismatch } from './rollbackTargetRefresh'
 import { managementEventAffectsServiceDetail } from './serviceDetailManagement'
@@ -64,6 +65,7 @@ export function useServiceDetailPageState(props: {
   const lifecycleActiveJobIdRef = useRef<string | null>(null); const lifecycleStatusRequestIdRef = useRef(0); const rollbackActiveJobIdRef = useRef<string | null>(null)
   const submittingTokensRef = useRef(new Map<symbol, UpdateActionTargetKey>())
   const [lastSuccessfulRefreshAt, setLastSuccessfulRefreshAt] = useState<string | null>(null)
+  const deployCheckReport = useDeployCheckReport()
   const lifecycleJob = lifecycleStatus?.activeJob ?? null
   const lifecycleOwner = lifecycleJob && activeServiceOperation(lifecycleJob.status)
     ? serviceOperationOwner(lifecycleJob.type)
@@ -926,6 +928,8 @@ export function useServiceDetailPageState(props: {
           : service.candidate.archMatch === 'mismatch'
             ? '架构不匹配（仅提示，不允许更新）'
             : undefined
+    const deployCheckUpdateReason = deployCheckOperationImpactReason(deployCheckReport, 'update', [serviceId, stackId])
+    const deployCheckRollbackReason = deployCheckOperationImpactReason(deployCheckReport, 'rollback', [serviceId, stackId])
     const previewDisabled = busy || Boolean(candidateReason)
     const applyDisabled = applySubmitting && !applyActiveJob
       ? true
@@ -953,16 +957,16 @@ export function useServiceDetailPageState(props: {
         id: 'preview-update',
         label: '预览更新',
         icon: Eye,
-        description: activeOperationOwner ? operationBusyReason : candidateReason,
-        disabled: Boolean(activeOperationOwner) || previewDisabled,
+        description: activeOperationOwner ? operationBusyReason : deployCheckUpdateReason ?? candidateReason,
+        disabled: Boolean(activeOperationOwner) || previewDisabled || Boolean(deployCheckUpdateReason),
         onSelect: requestPreviewUpdate,
       },
       {
         id: 'execute-update',
         label: activeUpdateJob ? (activeUpdateJob.status === 'queued' ? '更新排队中…' : '更新中…') : '更新',
         icon: Download,
-        description: activeUpdateJob ? '任务进行中，点击查看任务详情' : activeOperationOwner ? operationBusyReason : applyDescription,
-        disabled: activeUpdateJob ? false : Boolean(activeOperationOwner) || applyDisabled,
+        description: activeUpdateJob ? '任务进行中，点击查看任务详情' : activeOperationOwner ? operationBusyReason : deployCheckUpdateReason ?? applyDescription,
+        disabled: activeUpdateJob ? false : Boolean(activeOperationOwner) || applyDisabled || Boolean(deployCheckUpdateReason),
         loading: Boolean(activeUpdateJob || applySubmitting),
         loadingClickable: Boolean(activeUpdateJob),
         onSelect: () => activeUpdateJob ? navigate({ name: 'job', jobId: activeUpdateJob.id }) : requestApplyUpdate(),
@@ -971,8 +975,8 @@ export function useServiceDetailPageState(props: {
         id: 'rollback',
         label: rollbackLabel,
         icon: RotateCcw,
-        description: activeRollbackJob ? '任务进行中，点击查看任务详情' : activeOperationOwner ? operationBusyReason : rollbackHint,
-        disabled: activeRollbackJob ? false : Boolean(activeOperationOwner) || rollbackDisabled,
+        description: activeRollbackJob ? '任务进行中，点击查看任务详情' : activeOperationOwner ? operationBusyReason : deployCheckRollbackReason ?? rollbackHint,
+        disabled: activeRollbackJob ? false : Boolean(activeOperationOwner) || rollbackDisabled || Boolean(deployCheckRollbackReason),
         loading: Boolean(activeRollbackJob),
         loadingClickable: Boolean(activeRollbackJob),
         onSelect: requestRollback,
@@ -988,9 +992,14 @@ export function useServiceDetailPageState(props: {
     const lifecycleItem = (action: ServiceLifecycleAction, label: string) => {
       const compatible = (action === 'start' && lifecycleState === 'stopped') || ((action === 'stop' || action === 'restart') && lifecycleState === 'running')
       const isActiveAction = Boolean(activeLifecycleJob && activeLifecycleJob.action === action)
+      const deployCheckLifecycleReason = deployCheckOperationImpactReason(
+        deployCheckReport,
+        action,
+        [serviceId, stackId],
+      )
       const description = activeLifecycleJob
         ? isActiveAction ? '任务进行中，点击查看任务详情' : '其他生命周期任务进行中'
-        : activeOperationOwner ? operationBusyReason : lifecycleReason ?? (compatible ? undefined : '当前服务状态不支持该操作')
+        : activeOperationOwner ? operationBusyReason : deployCheckLifecycleReason ?? lifecycleReason ?? (compatible ? undefined : '当前服务状态不支持该操作')
       const icon = action === 'start' ? Play : action === 'stop' ? Square : RotateCw
       return {
         id: `lifecycle-${action}`,
@@ -998,7 +1007,7 @@ export function useServiceDetailPageState(props: {
         icon,
         iconVariant: action === 'start' || action === 'stop' ? 'solid' as const : undefined,
         description,
-        disabled: activeLifecycleJob ? !isActiveAction : Boolean(activeOperationOwner) || busy || !compatible,
+        disabled: activeLifecycleJob ? !isActiveAction : Boolean(activeOperationOwner) || busy || !compatible || Boolean(deployCheckLifecycleReason),
         onSelect: () => activeLifecycleJob && isActiveAction ? navigate({ name: 'job', jobId: activeLifecycleJob.id }) : requestLifecycleAction(action),
       }
     }
@@ -1021,7 +1030,7 @@ export function useServiceDetailPageState(props: {
         ]} />
       </>
     )
-  }, [activeLifecycleJob, activeOperation, activeOperationOwner, activeRollbackJob, activeUpdateJob, applyActiveJob, applySubmitting, busy, dockrevSelfUpgradeAction, lifecycleStatus, requestApplyUpdate, requestLifecycleAction, requestPreviewUpdate, requestRollback, rollbackActiveJobStatus, rollbackHint, rollbackTarget?.available, rollbackTargetRefreshing, service, stackId])
+  }, [activeLifecycleJob, activeOperation, activeOperationOwner, activeRollbackJob, activeUpdateJob, applyActiveJob, applySubmitting, busy, deployCheckReport, dockrevSelfUpgradeAction, lifecycleStatus, requestApplyUpdate, requestLifecycleAction, requestPreviewUpdate, requestRollback, rollbackActiveJobStatus, rollbackHint, rollbackTarget?.available, rollbackTargetRefreshing, service, serviceId, stackId])
   const dangerousActions = useMemo(
     () => (
       <>

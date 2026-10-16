@@ -373,6 +373,9 @@ async fn main() -> anyhow::Result<()> {
         // an archive operation.
         tracing::warn!(error = %err, "startup discovery scan failed");
     }
+    // Discovery has returned (successfully or with a bounded startup error), so
+    // the self-check lifecycle can begin without delaying HTTP readiness.
+    state.deploy_check_refresh_worker.spawn_after_startup();
     discovery::spawn_task(state.clone());
     runtime_scan::spawn_task(state.clone());
     ghcr_webhook_jobs::spawn_tasks(state.clone());

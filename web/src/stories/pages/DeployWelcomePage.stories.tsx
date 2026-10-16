@@ -50,6 +50,18 @@ function makeRefreshingEnvelope(): DeployCheckReportEnvelope {
         summary: 'Compose config is temporarily unavailable',
       },
       generatedAt: '2026-06-26T14:22:00.000Z',
+      serverBootId: 'boot-story',
+      reportBootId: 'boot-story',
+      reportRevision: 1,
+      startupStatus: 'fail',
+      startupFailureKey: 'boot-story:core.compose_access',
+      operationImpacts: [{
+        checkId: 'core.compose_access',
+        scope: 'affected_projects',
+        objectIds: [],
+        operations: ['update', 'rollback', 'start', 'stop'],
+        reason: '服务解析不完整，更新目标不可信',
+      }],
       checks: [
         {
           id: 'core.docker_engine',
@@ -117,6 +129,9 @@ function makePassingEnvelope(): DeployCheckReportEnvelope {
             }
           : check,
       ),
+      startupStatus: 'pass',
+      startupFailureKey: null,
+      operationImpacts: [],
     },
   }
 }
@@ -129,29 +144,28 @@ export const Default: Story = {
   render: () => renderPage(),
   play: async ({ canvasElement }) => {
     await waitForCondition(() => canvasElement.textContent?.includes('整体结论') ?? false)
-    const dashboardButton = Array.from(canvasElement.querySelectorAll('button')).find((button) => button.textContent?.includes('进入 Dashboard'))
-    expectStory(dashboardButton && !dashboardButton.disabled, 'passing report should allow entering Dashboard')
+    const continueButton = Array.from(canvasElement.querySelectorAll('button')).find((button) => button.textContent?.includes('继续浏览'))
+    expectStory(continueButton && !continueButton.disabled, 'healthy report should allow continuing to browse')
   },
 }
 
-export const BlockedCoreFailure: Story = {
+export const CoreFailureDiagnostic: Story = {
   parameters: {
     dockrevApiScenario: 'settings-configured',
     dockrevDeployCheckReportOverride: makeBlockedEnvelope(),
-    dockrevDeployWelcomeOverride: { neverAutoOpen: true },
   },
-  render: () => renderPage('核心检查失败时必须停留在故障门禁页，不能绕过进入 Dashboard'),
+  render: () => renderPage('核心故障按影响范围提示，诊断与继续浏览入口保持可用'),
   play: async ({ canvasElement }) => {
-    await waitForCondition(() => canvasElement.textContent?.includes('BLOCKING') ?? false)
-    const dashboardButton = Array.from(canvasElement.querySelectorAll('button')).find((button) => button.textContent?.includes('进入 Dashboard'))
-    expectStory(Boolean(dashboardButton?.disabled), 'blocking report should disable Dashboard entry')
+    await waitForCondition(() => canvasElement.textContent?.includes('影响提示') ?? false)
+    const continueButton = Array.from(canvasElement.querySelectorAll('button')).find((button) => button.textContent?.includes('继续浏览'))
+    expectStory(Boolean(continueButton && !continueButton.disabled), 'core failure should keep continuing to browse available')
   },
 }
 
 export const BlockedCoreFailureMobile: Story = {
-  ...BlockedCoreFailure,
+  ...CoreFailureDiagnostic,
   parameters: {
-    ...BlockedCoreFailure.parameters,
+    ...CoreFailureDiagnostic.parameters,
     viewport: { defaultViewport: 'mobile1' },
   },
 }
@@ -161,11 +175,62 @@ export const CachedReportRefreshing: Story = {
     dockrevApiScenario: 'settings-configured',
     dockrevDeployCheckReportOverride: makeRefreshingEnvelope(),
   },
-  render: () => renderPage('验证 cached report 可先显示，后台 refresh 不阻塞首屏'),
+    render: () => renderPage('验证服务端复查期间诊断内容仍可使用，网页读取不触发复查'),
   play: async ({ canvasElement }) => {
     await waitForCondition(() => canvasElement.textContent?.includes('部署功能完整性检查清单') ?? false)
-    await waitForCondition(() => canvasElement.textContent?.includes('正在后台刷新最新检查结果…') ?? false)
+    await waitForCondition(() => canvasElement.textContent?.includes('服务端正在复查') ?? false)
     await waitForCondition(() => canvasElement.textContent?.includes('整体结论') ?? false)
+  },
+}
+
+export const OptionalFeatureFailure: Story = {
+  parameters: {
+    dockrevApiScenario: 'settings-configured',
+    dockrevDeployCheckReportOverride: {
+      ...makePassingEnvelope(),
+      report: {
+        ...makePassingEnvelope().report!,
+        checks: [
+          ...makePassingEnvelope().report!.checks,
+          {
+            id: 'feature.notifications.telegram',
+            title: '通知能力：Telegram',
+            group: 'feature',
+            required: false,
+            status: 'fail',
+            summary: 'telegram notification config is incomplete',
+            impact: '仅 Telegram 通知不可用',
+            evidence: 'missing botToken',
+            recommendation: '在设置中补齐 Telegram 配置',
+          },
+        ],
+      },
+    },
+  },
+  render: () => renderPage('可选通知故障只在清单中提示，不限制核心操作'),
+  play: async ({ canvasElement }) => {
+    await waitForCondition(() => canvasElement.textContent?.includes('Telegram') ?? false)
+    expectStory(!(canvasElement.textContent?.includes('影响提示') ?? false), 'optional feature failure should not show the core impact notice')
+  },
+}
+
+export const RecoveredBackgroundFailure: Story = {
+  parameters: {
+    dockrevApiScenario: 'settings-configured',
+    dockrevDeployCheckReportOverride: {
+      ...makePassingEnvelope(),
+      report: {
+        ...makePassingEnvelope().report!,
+        startupStatus: 'settled',
+        startupFailureKey: null,
+        operationImpacts: [],
+      },
+    },
+  },
+  render: () => renderPage('故障恢复后自动解除提示，保留当前诊断页'),
+  play: async ({ canvasElement }) => {
+    await waitForCondition(() => canvasElement.textContent?.includes('整体结论') ?? false)
+    expectStory(!(canvasElement.textContent?.includes('影响提示') ?? false), 'recovered report should clear core impact notice')
   },
 }
 
@@ -179,14 +244,13 @@ export const InitialPending: Story = {
       report: null,
     } satisfies Partial<DeployCheckReportEnvelope>,
   },
-  render: () => renderPage('验证首次无缓存时仅显示 pending shell，待 poll 后再进入 checklist'),
+  render: () => renderPage('无报告时仍保留设置、发现扫描与继续浏览入口'),
   play: async ({ canvasElement }) => {
     await waitForCondition(() => Boolean(canvasElement.querySelector('[data-async-data-phase="initial-loading"] .skeleton')))
-    await sleep(120)
-    expectStory(
-      !(canvasElement.textContent?.includes('无法加载检查报告') ?? false),
-      'initial pending should not flash the failure copy while the first report is still pending',
-    )
+    const buttons = Array.from(canvasElement.querySelectorAll('button')).map((button) => button.textContent ?? '')
+    expectStory(buttons.some((label) => label.includes('前往设置')), 'pending diagnostic should keep settings available')
+    expectStory(buttons.some((label) => label.includes('发现扫描')), 'pending diagnostic should keep discovery available')
+    expectStory(buttons.some((label) => label.includes('继续浏览')), 'pending diagnostic should keep browsing available')
   },
 }
 

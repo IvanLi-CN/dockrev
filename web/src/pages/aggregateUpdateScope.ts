@@ -19,6 +19,7 @@ export type AggregateScopeSummary = {
   visibleServices: StackDetail['services']
   previewItems: AggregateUpdatePreviewListItem[]
   actionableServices: StackDetail['services']
+  operationObjectIds: string[]
   counts: ReturnType<typeof partitionAggregateUpdateServices>['counts']
   guardedPreviewCount: number
 }
@@ -60,6 +61,7 @@ export function buildStackAggregateScope(
     ...withDisplayName(visiblePartition.actionable, detail.name, detail.id),
     ...withDisplayName(visiblePartition.guardedDockrevPreview, detail.name, detail.id),
   ]
+  const actionableServices = visiblePartition.actionable.map((item) => item.svc)
 
   return {
     totalServiceCount,
@@ -69,7 +71,11 @@ export function buildStackAggregateScope(
     rows,
     visibleServices,
     previewItems,
-    actionableServices: visiblePartition.actionable.map((item) => item.svc),
+    actionableServices,
+    operationObjectIds: [
+      ...(actionableServices.length > 0 ? [detail.id] : []),
+      ...actionableServices.map((service) => service.id),
+    ],
     counts: visiblePartition.counts,
     guardedPreviewCount: visiblePartition.guardedDockrevPreview.length,
   }
@@ -87,6 +93,7 @@ export function buildAllAggregateScope(input: {
   let guardedPreviewCount = 0
   const previewItems: AggregateUpdatePreviewListItem[] = []
   const actionableServices: StackDetail['services'] = []
+  const operationObjectIds: string[] = []
   const counts = {
     updatable: 0,
     hint: 0,
@@ -112,6 +119,7 @@ export function buildAllAggregateScope(input: {
     counts.blocked += scope.counts.blocked
     previewItems.push(...scope.previewItems)
     actionableServices.push(...scope.actionableServices)
+    operationObjectIds.push(...scope.operationObjectIds)
   }
 
   return {
@@ -121,6 +129,7 @@ export function buildAllAggregateScope(input: {
     isFilteredSubset: visibleServiceCount !== totalServiceCount,
     previewItems,
     actionableServices,
+    operationObjectIds,
     counts,
     guardedPreviewCount,
   }

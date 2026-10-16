@@ -1139,7 +1139,7 @@ async function main() {
       },
     },
     {
-      id: 'pages-deploywelcomepage--blocked-core-failure',
+      id: 'pages-deploywelcomepage--core-failure-diagnostic',
       file: 'deploy-check-blocked-desktop.png',
       setup: async (page) => {
         await page.locator('.deployBlockingNotice').waitFor({ timeout: STORY_TIMEOUT_MS })

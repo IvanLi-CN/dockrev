@@ -19,7 +19,7 @@
 - 所有 owner-facing HTTP 请求都不再依赖超过 15 秒的无字节等待。
 - `/cleanup` 首屏改为 snapshot-backed 读路径，旧 snapshot 可先显示，后台异步刷新。
 - cleanup confirm/apply 不再在请求链路里重扫 Docker，改为 fresh snapshot + fingerprint 校验。
-- `/deploy-check` 改为 cached read + async refresh。
+- `/deploy-check` 的读取与服务端自检调度遵循 [server-owned-self-checks](../server-owned-self-checks/SPEC.md)；本主题只保留其请求链路不等待长命令的 EdgeOne 约束。
 - 管理页面通过应用级 SSE 接收失效摘要，并以按实体 REST 读取恢复展示状态。
 - Web release drawer 不再依赖 `/github-releases/locate`。
 - 所有 SSE 路由统一改为 5 秒 heartbeat，并在连接建立时立即 flush 一次 keepalive comment。
@@ -55,8 +55,8 @@
 - deploy-check:
   - GET `/api/deploy-check/report` 必须支持 cached report ready 返回与 pending 返回。
   - POST `/api/deploy-check/report/refresh` 只 enqueue，不同步构建 report。
-  - 有缓存且 required core checks 全部 PASS 时，应用必须立即放行，并发起后台复核；复核失败前保留已通过的展示状态，只有新的确定 FAIL 才进入门禁。
-  - 无缓存、缓存 FAIL 或 required core check 非 PASS 时仍必须安全阻断。
+  - GET 只读取服务端拥有的自检快照，不能因缓存过期、缺失或读取而排入检查；启动调度、周期复查、核心故障自动展示和影响范围以 [server-owned-self-checks](../server-owned-self-checks/SPEC.md) 为准。
+  - 页面不得把 pending、读取异常或可选功能故障转换成整页等待、全站门禁或全局操作锁。
   - 启动后必须执行一次安全 discovery 扫描；Docker 枚举失败时不得写入 discovery、Stack 或归档状态。
   - 对未出现在运行容器列表中的已登记项目，保存的 Compose 文件全部可读且可解析时写入 `stopped`；全部为 `ENOENT` 时写入 `missing` 并以 `auto_archive_compose_files_missing` 自动归档；混合缺失、权限/I-O 或解析错误写入 `invalid` 且不归档。
   - 只有 `auto_archive_compose_files_missing` 与历史 `auto_archive_on_restart` 可由后续有效扫描解除。人工归档不得被 discovery 修改。该修复不得删除 Stack、服务、Compose 文件、容器或运行时资源。
@@ -77,7 +77,7 @@
   - EventSource 重连或前台恢复后，页面先读取 REST 快照；`open` 与 `visibilitychange=visible` 各只排入一次同步。后台标签页只累计失效实体，恢复前台再批量同步一次。不得使用定时轮询或轮询降级。
   - 前台恢复同步由管理事件 Provider 统一调度；页面级 resume refresh 不得为同一 `visibilitychange=visible` 再注册重复同步。每次新的可见性恢复都必须重新排入同步，即使上一次替换会话尚未打开。
   - 管理事件或心跳坏包先计入可观察活动，再记录 `protocol_invalid` 并只请求一次 REST 同步，保持传输 `connected`，不得把协议错误误报为断线。
-  - 回归测试必须验证 deploy-check 前台同步通过管理事件批次触发，而不是恢复页面级重复的 `visibilitychange` 监听。
+- 回归测试必须验证 deploy-check 只通过管理事件批次重读服务端快照，而不是由页面生命周期或重复的 `visibilitychange` 监听触发自检。
   - `GET /api/events/status` 提供连接数、重连、重同步、缓冲淘汰、事件合并与发布失败计数，供资源边界观测。
 
 ### SHOULD
@@ -90,11 +90,11 @@
 
 - 访问 `/cleanup` 时，不再因为首屏同步 Docker scan 触发 524。
 - cleanup confirm 在 snapshot stale 或 refresh in-flight 时只返回 pending，不直接给旧 confirm payload；过期只触发/等待新快照，绝不自动创建 cleanup job。
-- `/deploy-check` 有 cached report 时可立即展示，refresh 不阻塞首屏。
+- `/deploy-check` 立即展示诊断入口或目标管理页面；服务端自检进行中、无报告或读取异常不得阻塞首屏，手动 refresh 只在明确诊断动作中发生。
 - Given 一个未运行但保存 Compose 文件均健康的 discovery 项，When Dockrev 完成有效扫描，Then 项目与关联 Stack 必须保持未归档并显示 `stopped`，现有生命周期启动任务可执行。
 - Given 一个保存 Compose 文件全部为 `ENOENT` 的 discovery 项，When Dockrev 完成有效扫描，Then 项目与关联 Stack 必须以 `auto_archive_compose_files_missing` 自动归档，失效路径不得阻断 deploy-check。
 - Given 部分缺失、权限/I-O 或解析错误，When Dockrev 完成有效扫描，Then 项目必须显示 `invalid` 且保持未归档；人工归档在任何扫描结果下都不得解除。
-- Given 有上次通过的 deploy-check report 且后台复核中，When 应用首次加载或恢复前台，Then 必须立即显示管理页面；只有复核得到新的 required core FAIL 才强制进入 `/deploy-check`，`neverAutoOpen` 不得绕过该失败门禁。
+- Given 应用首次加载或恢复前台，When 服务端报告尚未完成、为旧启动、读取失败或后台复查中，Then 必须保留目标管理页面；只有入口首读拿到当前启动已确认的核心故障时，才按 [server-owned-self-checks](../server-owned-self-checks/SPEC.md) 的一次性规则自动展示诊断页。
 - Given `/api/events` 短暂断线，When 应用传输控制器关闭旧会话并按固定退避重建，Then 页面保留既有数据并显示 scoped 管理事件流重连诊断，使用最近 SSE 游标（`Last-Event-ID` 或 `afterId`）补发或 `resync_required` 后一次 REST 同步恢复；不得启动轮询。
 - Given 一个管理事件或心跳 payload 无法通过协议校验，When 客户端收到该 payload，Then 记录 `protocol_invalid`、保持 `connected`、只请求一次 REST 同步，并且不创建替代 EventSource。
 - Given 服务或 Stack 变更，When 服务页在前台，Then 只读取事件涉及的 Stack/Service；后台标签页不得读详情，恢复时只执行一次批量同步。
@@ -104,6 +104,8 @@
 
 ## Visual Evidence
 
+Current deploy-check lifecycle and entry evidence live in [server-owned-self-checks](../server-owned-self-checks/SPEC.md); the deploy-check images retained below are historical baselines and do not define the current entry contract.
+
 - source_type: `ui_demo`
   target_program: `mock-only`
   capture_scope: `page`
@@ -112,12 +114,11 @@
   margin_policy: `trim_only`
   evidence_surface: `page`
   sensitive_exclusion: `N/A`
-  submission_gate: `owner-approved`
+  submission_gate: `historical`
   evidence_binding_sha: `8909741219a80dd302c53ed095aec8fcd0e921f4`
-  state: `cached passing report`
-  evidence_note: 验证 cached PASS 立即显示部署检查页且“进入 Dashboard”可用；点击后进入 Dashboard。演示只使用本地 mock fixture，不访问线上服务。
+  state: `server-owned report with healthy target entry`
+  evidence_note: 旧 cached PASS 门禁证据仅保留历史背景；当前合同要求目标管理页面立即可用，演示只使用本地 mock fixture，不访问线上服务。
 
-PR: include
 
 ![Deploy check cached pass keeps Dashboard available](./assets/deploy-check-cached-pass-dashboard.png)
 
@@ -140,10 +141,10 @@ PR: include
   requested_viewport: `1440x960`
   viewport_strategy: `devtools-emulate`
   sensitive_exclusion: `N/A`
-  submission_gate: `pending-owner-approval`
+  submission_gate: `historical`
   story_id_or_title: `Pages/DeployWelcomePage/CachedReportRefreshing`
-  state: `cached report visible while background refresh runs`
-  evidence_note: 验证 `/deploy-check` 在已有 cached report 时直接展示 checklist，并额外标出“正在后台刷新最新检查结果…”，不再把 refresh 放进首屏阻塞链路。
+  state: `server-owned report visible while background review runs`
+  evidence_note: 验证 `/deploy-check` 直接展示诊断内容，后台复查只更新局部状态；网页读取不排入自检。
 
 ![Deploy check cached refreshing](./assets/deploy-check-cached-refreshing.png)
 
@@ -155,10 +156,10 @@ PR: include
 - margin_policy: `trim_only`
 - evidence_surface: `page`
 - sensitive_exclusion: `N/A`
-- submission_gate: `pending-owner-approval`
+- submission_gate: `historical`
 - story_id_or_title: `Pages/DeployWelcomePage/Default`
-- state: `all required checks pass`
-- evidence_note: 验证全部 required 核心检查通过时显示 PASS，且“进入 Dashboard”按钮可用。
+- state: `healthy report and continue browsing`
+- evidence_note: 验证健康报告不会生成成功欢迎页，目标管理页面与继续浏览入口可用。
 
 ![Deploy check pass](./assets/deploy-check-pass-desktop.png)
 
@@ -170,10 +171,10 @@ PR: include
 - margin_policy: `trim_only`
 - evidence_surface: `page`
 - sensitive_exclusion: `N/A`
-- submission_gate: `pending-owner-approval`
+- submission_gate: `historical`
 - story_id_or_title: `Pages/DeployWelcomePage/BlockedCoreFailure`
-- state: `required core failure blocks Dashboard entry`
-- evidence_note: 验证 required core FAIL 时进入 BLOCKING 门禁页，`neverAutoOpen` 仍不能绕过，Dashboard 入口保持禁用。
+- state: `core failure keeps diagnosis and repair reachable`
+- evidence_note: 旧 BLOCKING 门禁证据不再代表当前合同；当前自检页必须允许继续浏览、修复和手动复查，并按影响范围提示限制。
 
 ![Deploy check blocked](./assets/deploy-check-blocked-desktop.png)
 
@@ -215,10 +216,10 @@ PR: include
 - margin_policy: `trim_only`
 - evidence_surface: `page`
 - sensitive_exclusion: `N/A`
-- submission_gate: `pending-owner-approval`
+- submission_gate: `historical`
 - story_id_or_title: `Pages/DeployWelcomePage/BlockedCoreFailureMobile`
-- state: `required core failure on mobile`
-- evidence_note: 验证 `393x852` 移动视口下故障门禁、核心失败项和禁用 Dashboard 入口均不溢出或重叠。
+- state: `core failure diagnosis on mobile`
+- evidence_note: 验证 `393x852` 移动视口下故障提示、继续浏览和修复入口不溢出或重叠。
 
 ![Deploy check blocked mobile](./assets/deploy-check-blocked-mobile.png)
 
@@ -236,7 +237,6 @@ PR: include
   evidence_binding_sha: `a7f97501b36c983e962a3a8cd7738fb750d61b6d`
   evidence_note: 验证桌面端管理事件流重连状态显示 scoped 诊断、重试入口和既有服务摘要；证据使用本地 mock-only ui_demo，不访问生产服务。
 
-PR: include
 
 ![Management SSE reconnecting desktop](./assets/management-sse-reconnecting-desktop.png)
 
@@ -254,7 +254,6 @@ PR: include
   evidence_binding_sha: `a7f97501b36c983e962a3a8cd7738fb750d61b6d`
   evidence_note: 验证移动端重试按钮位于 Alert 整体右下角，与诊断文字同属一块 Alert 且无横向溢出；证据使用本地 mock-only ui_demo，不访问生产服务。
 
-PR: include
 
 ![Management SSE reconnecting mobile](./assets/management-sse-reconnecting-mobile.png)
 

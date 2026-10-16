@@ -4,7 +4,7 @@
 
 - Backend snapshot workers for cleanup inventory and deploy-check report refresh.
 - Cleanup API contract migration from synchronous scan to snapshot-backed `ready/pending` reads.
-- Deploy-check cached read + async refresh contract.
+- Legacy deploy-check cached read + async refresh notes; current lifecycle and entry behavior belongs to [server-owned-self-checks](../server-owned-self-checks/SPEC.md).
 - Persisted Compose-file reconciliation for stopped discovery projects and their linked Stack records.
 - GitHub release drawer fallback to service-level locate-first anchor windows.
 - Digest-tags owner-facing path removal of live manifest scan.
@@ -17,8 +17,8 @@
 - Reworked `POST /api/cleanups/scan` to serve cached snapshot payloads or `pending` envelopes instead of blocking on live Docker scans.
 - Reworked cleanup confirm/apply so confirm waits for a fresh snapshot and apply validates the latest fingerprint without re-scanning Docker inline.
 - Extended cleanup confirm/apply freshness to a fixed five-minute boundary, added explicit confirm-worker failure responses, and made CleanupPage polling visible, retryable, and stable-label based.
-- Added `POST /api/deploy-check/report/refresh` and converted `GET /api/deploy-check/report` to cached-read envelopes.
-- Changed the app-level deploy-check gate to immediately accept a cached PASS, request a background recheck, and only block after a newly confirmed failure. No cached report or an existing non-PASS remains blocking.
+- Added `POST /api/deploy-check/report/refresh` and converted `GET /api/deploy-check/report` to cached-read envelopes; the route and envelope remain compatible under [server-owned-self-checks](../server-owned-self-checks/SPEC.md).
+- Historical app-level gate behavior is superseded: the server now schedules startup and periodic reviews, GET never enqueues work, and the web entry renders immediately with scoped notices.
 - Added authenticated `GET /api/events` and `GET /api/events/status`. The event hub uses a per-process generation, `Last-Event-ID` replay, `resync_required`, 100ms entity coalescing, and a 60-second/1024-event in-memory ring without a database event table.
 - Published management invalidations from Stack/Service changes, job lifecycle and progress writes, deploy-check reports, cleanup scan terminal states, Discovery scan/archive/restore changes, GHCR configuration/repository/webhook-state and delivery updates, settings writes, and version-inference task state changes.
 - Replaced management-page jobs/version/GHCR/cleanup streams and refresh intervals with a single provider connection. Pages preserve stale data during reconnect, defer background-tab REST reads, and fetch only invalidated entities when foregrounded. Service logs and resource monitoring retain their dedicated streams.
@@ -29,21 +29,21 @@
 - Management SSE now emits a named, cursor-free heartbeat immediately and every five seconds. A per-tab application transport controller owns the single EventSource, closes stale sessions, rebuilds with bounded `1/2/5/10/15s` backoff, expires silent sessions after 15 seconds, and exposes connection diagnostics and manual retry.
 - Controlled replacement sessions carry the latest received SSE cursor through the endpoint's `afterId` query parameter, preserving bounded replay and `resync_required` behavior after the old EventSource is closed.
 - Cursor-free heartbeat frames are accepted with the browser-inherited `MessageEvent.lastEventId`; only management and resync events advance the replacement cursor.
-- Deploy-check gate reads are sequenced per App instance so a slower initial or stale refresh response cannot overwrite a newer gate result.
+- Historical deploy-check gate reads were sequenced per App instance; current report reads use the server-owned revision and preserve the target page during late results.
 - The InteractiveApp foreground-resume browser regression owns the visibility transition so the Story play hook cannot trigger a duplicate replacement session.
-- Deploy-check gate failures are also sequence-checked, so an older rejected request cannot reset a newer successful gate to loading.
+- Historical gate failure sequencing is retained only as compatibility context; current background failures update a scoped notice and operation impact state.
 - Foreground replacement sessions publish `reconnecting` until they open, keeping the scoped retry diagnostic visible during recovery.
 - The reconnect diagnostic distinguishes a zero-attempt foreground recovery from the initial connection instead of labeling both as first connect.
-- Provider-owned `resyncRequired` batches trigger a background deploy-check refresh while ordinary deploy-check invalidations read the updated REST report without duplicate enqueueing.
+- Provider-owned `resyncRequired` batches reread the server-owned deploy-check report; they never enqueue a review from the browser.
 - Management transport recovery is separate from page synchronization: open and foreground resume enqueue one REST resync, protocol-invalid management/heartbeat payloads keep the transport connected while requesting one resync, and service logs/resource streams retain their independent ownership.
 - Foreground management resync is provider-owned: page-level resume refreshes do not duplicate the same visibility synchronization, later visibility transitions re-arm recovery after failed opens, and malformed payloads refresh the activity deadline before protocol classification.
-- Updated the deploy-check source guard to assert Provider-owned foreground invalidation and to prevent the removed page-level visibility listener from returning.
+- Updated the deploy-check source guard to assert Provider-owned foreground invalidation and to prevent the removed page-level visibility listener or browser-triggered review from returning.
 - Management transport lifecycle coverage is deterministic: injectable EventSource/scheduler tests cover replacement, fixed backoff, deadlines, late callbacks, protocol-invalid payloads, foreground resume, and disposal; the mock-only recovery story verifies scoped diagnostics and accessible manual retry.
 - Owner-approved mock-only visual evidence covers the reconnecting management Alert at desktop and `393x852` mobile viewports; mobile actions use a two-column Alert layout with the retry control anchored to the lower-right edge.
-- Added Storybook coverage for cleanup pending state and deploy-check cached-refreshing / initial-pending states.
-- Added the application-level deploy-check gate: startup and foreground resume await a fresh report, required core failures force `/deploy-check`, and the failure page disables Dashboard entry regardless of `neverAutoOpen`.
-- Added deterministic mock-only Storybook pass/fail coverage for desktop and `393x852` mobile views; final smoke validation passes all 321 stories.
-- Tightened the deploy-check predicate so every required core item must be `pass`; added App-level mock stories proving startup failure redirects remain blocking even when `neverAutoOpen` is true, with 323-story smoke coverage.
+- Added Storybook coverage for cleanup pending state and deploy-check diagnostic states; the former cached-refreshing and blocking-gate stories are historical evidence only.
+- The former application-level deploy-check gate and `neverAutoOpen`-controlled redirect are superseded by ADR 0016 and the [server-owned-self-checks](../server-owned-self-checks/SPEC.md) contract.
+- Deterministic mock-only Storybook evidence now covers immediate target-page rendering, scoped notices, continue browsing and repair availability at desktop and `393x852` mobile views.
+- The final deploy-check compatibility cleanup is documented under the server-owned topic; this legacy topic retains the EdgeOne request-path constraints and its existing API references.
 - Replaced database-startup auto-archiving with a post-start safe discovery scan. Saved Compose files now classify unobserved projects as `stopped`, `missing`, or `invalid`; only every-file `ENOENT` receives `auto_archive_compose_files_missing`.
 - Restricted automatic restoration to `auto_archive_compose_files_missing` and the legacy `auto_archive_on_restart` reason. The reconciliation preserves Compose files, services, Docker runtime resources, and every user archive.
 - Updated the shared testbox Compose regression to verify stopped, missing, invalid, historical auto-archive recovery, manual archive protection, and deploy-check behavior within one isolated run.

@@ -1,8 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   getDeployCheckReport,
-  getDeployWelcome,
-  putDeployWelcome,
   refreshDeployCheckReport,
   type DeployCheckItem,
   type DeployCheckReportResponse,
@@ -12,7 +10,7 @@ import {
 } from '../deployCheck'
 import { useManagementEventBatch } from '../managementEvents'
 import { navigate } from '../routes'
-import { Button, Label, Switch } from '../ui'
+import { Button } from '../ui'
 import { AsyncDataRegion, AsyncDataSkeleton } from '../components/AsyncDataRegion'
 import type { AsyncDataPhase, AsyncDataTrigger } from '../asyncData'
 
@@ -116,8 +114,6 @@ function resolveRecommendation(item: DeployCheckItem, allChecks: DeployCheckItem
 
 export function DeployWelcomePage() {
   const [report, setReport] = useState<DeployCheckReportResponse | null>(null)
-  const [neverAutoOpen, setNeverAutoOpen] = useState(false)
-  const [welcomeLoaded, setWelcomeLoaded] = useState(false)
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -125,6 +121,19 @@ export function DeployWelcomePage() {
   const [reportRefreshError, setReportRefreshError] = useState<string | null>(null)
   const [reportTrigger, setReportTrigger] = useState<AsyncDataTrigger>('background')
   const refreshRequestIdRef = useRef(0)
+  const reportVersionRef = useRef<{ bootId: string | null; revision: number }>({
+    bootId: null,
+    revision: -1,
+  })
+
+  function isNewerReport(next: DeployCheckReportResponse): boolean {
+    const bootId = next.reportBootId ?? null
+    const revision = next.reportRevision ?? 0
+    const previous = reportVersionRef.current
+    if (bootId && previous.bootId === bootId && revision < previous.revision) return false
+    if (bootId) reportVersionRef.current = { bootId, revision }
+    return true
+  }
 
   const refresh = useCallback(async (trigger: AsyncDataTrigger = 'background') => {
     const requestId = ++refreshRequestIdRef.current
@@ -132,7 +141,7 @@ export function DeployWelcomePage() {
     setLoading(true)
     setError(null)
     setReportRefreshError(null)
-    const [reportResult, welcomeResult] = await Promise.allSettled([getDeployCheckReport(), getDeployWelcome()])
+    const [reportResult] = await Promise.allSettled([getDeployCheckReport()])
     if (requestId !== refreshRequestIdRef.current) return
     let reportError: string | null = null
 
@@ -140,7 +149,7 @@ export function DeployWelcomePage() {
       const envelope = reportResult.value
       reportError = envelope.lastError ?? null
       setReportRefreshError(reportError)
-      if (envelope.report) {
+      if (envelope.report && isNewerReport(envelope.report)) {
         setReport(envelope.report)
       }
       setReportRefreshing(Boolean(envelope.refreshing))
@@ -152,15 +161,7 @@ export function DeployWelcomePage() {
       return
     }
 
-    if (welcomeResult.status === 'fulfilled') {
-      setNeverAutoOpen(welcomeResult.value.neverAutoOpen)
-      setWelcomeLoaded(true)
-      setError(reportError)
-    } else {
-      // Keep the checklist visible even if the preference endpoint is temporarily unavailable.
-      setWelcomeLoaded(false)
-      setError(`检查报告已加载，但欢迎页偏好读取失败：${errorMessage(welcomeResult.reason)}`)
-    }
+    setError(reportError)
 
     setLoading(false)
   }, [])
@@ -176,7 +177,7 @@ export function DeployWelcomePage() {
       const settled = await refreshDeployCheckReport()
       if (requestId !== refreshRequestIdRef.current) return
       setReportRefreshError(null)
-      if (settled.report) {
+      if (settled.report && isNewerReport(settled.report)) {
         setReport(settled.report)
       }
       setReportRefreshing(Boolean(settled.refreshing))
@@ -222,9 +223,7 @@ export function DeployWelcomePage() {
     }
   }, [report])
 
-  const hasBlockingFailures = report
-    ? hasBlockingDeployCheckFailure(report)
-    : Boolean(reportRefreshError)
+  const hasBlockingFailures = report ? hasBlockingDeployCheckFailure(report) : false
   const reportPhase: AsyncDataPhase = reportRefreshError
     ? 'error'
     : !report
@@ -232,16 +231,9 @@ export function DeployWelcomePage() {
       : loading ? 'refreshing' : 'ready-data'
 
   async function enterDashboard() {
-    if (hasBlockingFailures) return
     setSaving(true)
     setError(null)
     try {
-      if (welcomeLoaded) {
-        await putDeployWelcome({ neverAutoOpen })
-      }
-      if (typeof window !== 'undefined') {
-        window.sessionStorage.setItem('dockrev:deployWelcome:redirected', '1')
-      }
       navigate({ name: 'overview' })
     } catch (e: unknown) {
       setError(errorMessage(e))
@@ -269,6 +261,22 @@ export function DeployWelcomePage() {
             }
             trigger={reportTrigger}
           />
+          <section className="deployWelcomePanel deployWelcomeActionPanel">
+            <div className="deployWelcomeActionCopy">
+              <p className="deployWelcomeActionHint">诊断结果暂不可用；可以继续浏览，或先进入设置与发现入口处理基础配置。</p>
+            </div>
+            <div className="deployWelcomeActions">
+              <Button variant="ghost" onClick={() => navigate({ name: 'settings' })}>
+                前往设置
+              </Button>
+              <Button variant="ghost" onClick={() => navigate({ name: 'overview' })}>
+                发现扫描
+              </Button>
+              <Button variant="primary" disabled={saving} onClick={() => void enterDashboard()}>
+                {saving ? '打开中…' : '继续浏览'}
+              </Button>
+            </div>
+          </section>
         </main>
       </div>
     )
@@ -299,7 +307,7 @@ export function DeployWelcomePage() {
               <span className="deployWelcomeOverallSummary">{report.overall.summary}</span>
             </div>
           </div>
-          {reportRefreshing ? <div className="deployWelcomeSubtitle">正在后台刷新最新检查结果…</div> : null}
+          {reportRefreshing ? <div className="deployWelcomeSubtitle">服务端正在复查，当前诊断结果仍可使用…</div> : null}
 
           <div className="deployWelcomeDefinitions" role="list" aria-label="状态说明">
             <div className="deployWelcomeDefinition" role="listitem">
@@ -308,7 +316,7 @@ export function DeployWelcomePage() {
             </div>
             <div className="deployWelcomeDefinition" role="listitem">
               <span className="deployBadge fail">FAIL</span>
-              <span>至少一个必需功能不可用（会阻塞功能完整性）</span>
+              <span>核心能力异常，按受影响范围限制操作</span>
             </div>
             <div className="deployWelcomeDefinition" role="listitem">
               <span className="deployBadge na">NA</span>
@@ -339,10 +347,15 @@ export function DeployWelcomePage() {
 
           {hasBlockingFailures ? (
             <div className="deployBlockingNotice" role="alert">
-              <span className="deployBadge fail">BLOCKING</span>
+              <span className="deployBadge fail">影响提示</span>
               <div>
-                <div className="deployBlockingTitle">以下检查项导致整体 FAIL（需先修复）：</div>
+                <div className="deployBlockingTitle">核心能力异常，受影响操作会按范围限制；仍可继续浏览和修复：</div>
                 <div className="mono">{report.overall.blockingCheckIds.join(', ')}</div>
+                {(report.operationImpacts ?? []).length > 0 ? (
+                  <div className="deployWelcomeSubtitle">
+                    受影响操作：{Array.from(new Set((report.operationImpacts ?? []).flatMap((impact) => impact.operations))).join('、')}
+                  </div>
+                ) : null}
               </div>
             </div>
           ) : null}
@@ -369,27 +382,24 @@ export function DeployWelcomePage() {
         <section className="deployWelcomePanel deployWelcomeActionPanel">
           <div className="deployWelcomeActionLayout">
             <div className="deployWelcomeActionCopy">
-              <div className="deployNeverAutoCheckbox">
-                <Switch
-                  id="deploy-never-auto-open"
-                  checked={neverAutoOpen}
-                  disabled={saving || !welcomeLoaded || hasBlockingFailures}
-                  onChange={setNeverAutoOpen}
-                />
-                <Label htmlFor="deploy-never-auto-open">不再自动显示此页面</Label>
-              </div>
-              <p className="deployWelcomeActionHint">勾选后，后续访问首页将直接进入 Dashboard；可在设置页手动重新打开本页面。</p>
+              <p className="deployWelcomeActionHint">这是诊断入口。继续浏览不会改变服务端自检调度，后续结果只按影响范围提示。</p>
             </div>
             <div className="deployWelcomeActions">
+              <Button variant="ghost" onClick={() => navigate({ name: 'settings' })}>
+                前往设置
+              </Button>
+              <Button variant="ghost" onClick={() => navigate({ name: 'overview' })}>
+                发现扫描
+              </Button>
               <Button variant="ghost" disabled={loading || saving} onClick={() => void refresh('user-action')}>
                 重新检查
               </Button>
               <Button
                 variant="primary"
-                disabled={saving || hasBlockingFailures}
+                disabled={saving}
                 onClick={() => void enterDashboard()}
               >
-                {saving ? '保存中…' : '进入 Dashboard'}
+                {saving ? '打开中…' : '继续浏览'}
               </Button>
             </div>
           </div>

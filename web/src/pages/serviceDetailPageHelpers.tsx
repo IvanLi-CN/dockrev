@@ -1,13 +1,45 @@
 import type {
   BackupTargetOverrides,
   BackupTargetPolicy,
+  JobListItem,
   Service,
+  ServiceBackupRecordItem,
   ServiceBackupTargetItem,
   ServiceBackupTargetsResponse,
+  ServiceResourceSnapshot,
   StackDetail,
 } from "../api";
 import { isDockrevImageRef } from "../runtimeConfig";
 import { serviceRowStatus } from "../updateStatus";
+
+export const SERVICE_DETAIL_SNAPSHOT_STALE_MS = 60_000;
+
+export type ServiceDetailSnapshotPayload = {
+  version: 2;
+  readiness: {
+    stack: boolean;
+    history: boolean;
+    backup: boolean;
+    monitoring: boolean;
+  };
+  committedQueryKey: string;
+  stack: StackDetail;
+  jobs: JobListItem[];
+  historyCursor?: string | null;
+  historyNextCursor?: string | null;
+  historyCursorStack?: (string | null)[];
+  backupTargets: ServiceBackupTargetsResponse | null;
+  backupRecords: ServiceBackupRecordItem[];
+  monitoring: ServiceResourceSnapshot | null;
+};
+
+export function isServiceDetailSnapshotPayload(value: unknown): value is ServiceDetailSnapshotPayload {
+  if (!value || typeof value !== "object") return false;
+  const payload = value as Record<string, unknown>;
+  if (payload.version !== 2 || typeof payload.committedQueryKey !== "string" || !payload.readiness || typeof payload.readiness !== "object") return false;
+  const readiness = payload.readiness as Record<string, unknown>;
+  return Boolean(payload.stack) && Array.isArray(payload.jobs) && Array.isArray(payload.backupRecords) && readiness.stack === true && readiness.history === true && readiness.backup === true && readiness.monitoring === true;
+}
 
 export function svcBadge(svc: Service): string {
   const st = serviceRowStatus(svc);
