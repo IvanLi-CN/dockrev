@@ -2,6 +2,7 @@ import type { Meta, StoryObj } from '@storybook/react'
 import { useEffect } from 'react'
 import App from '../../App'
 import type { DeployCheckReportEnvelope } from '../../api'
+import { claimDeployCheckAutoOpen } from '../../deployCheckAutoOpen'
 import { RELEASE_DRAWER_QUERY_KEYS } from '../../releaseDrawer'
 import { withDockrevMockApi } from '../mocks/withDockrevMockApi'
 
@@ -282,6 +283,30 @@ export const DeployCheckGateBlocked: Story = {
     await waitForCondition(() => canvasElement.textContent?.includes('影响提示') ?? false)
     const continueButton = Array.from(canvasElement.querySelectorAll('button')).find((button) => button.textContent?.includes('继续浏览'))
     expectStory(Boolean(continueButton && !continueButton.disabled), 'failed deploy-check must keep continuing to browse available')
+  },
+}
+
+export const DeployCheckAutoOpenClaimRace: Story = {
+  parameters: {
+    dockrevApiScenario: 'settings-configured',
+    dockrevDeployCheckReportOverride: makeDeployCheckEnvelope(true),
+  },
+  render: () => {
+    return (
+      <>
+        <LocationReset pathname="/" />
+        <App />
+      </>
+    )
+  },
+  play: async () => {
+    await waitForCondition(() => window.location.pathname === '/deploy-check')
+    const failureKey = `storybook-claim-race-${Date.now()}`
+    const claims = await Promise.all([
+      claimDeployCheckAutoOpen(failureKey),
+      claimDeployCheckAutoOpen(failureKey),
+    ])
+    expectStory(claims.filter(Boolean).length === 1, 'one concurrent tab must claim the failure key')
   },
 }
 

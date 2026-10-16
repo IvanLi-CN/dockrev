@@ -50,6 +50,7 @@ import {
   hasActiveCoreFailure,
   hasCurrentStartupCoreFailure,
   loadDeployCheckReport,
+  DeployCheckProvider,
 } from "./deployCheck";
 import { claimDeployCheckAutoOpen } from "./deployCheckAutoOpen";
 import { TopbarUserIdentity } from "./components/TopbarUserIdentity";
@@ -462,46 +463,51 @@ export default function App() {
 
   if (authFailure) {
     return (
-      <NotificationProvider>
-        <AppShell
-          route={route}
-          title={resolvedHead.title}
-          pageSubtitle={resolvedHead.pageSubtitle}
-          topActions={null}
-          authIdentity={authIdentity}
-        >
-          <ManagementEventsStatusBanner />
-          <UnauthorizedPage authDetails={authFailure} />
-        </AppShell>
-      </NotificationProvider>
+      <DeployCheckProvider report={deployCheckReport}>
+        <NotificationProvider>
+          <AppShell
+            route={route}
+            title={resolvedHead.title}
+            pageSubtitle={resolvedHead.pageSubtitle}
+            topActions={null}
+            authIdentity={authIdentity}
+          >
+            <ManagementEventsStatusBanner />
+            <UnauthorizedPage authDetails={authFailure} />
+          </AppShell>
+        </NotificationProvider>
+      </DeployCheckProvider>
     );
   }
 
   if (route.name === "deploy-check") {
     return (
-      <NotificationProvider>
-        <>
-          <DeployWelcomePage />
-          <PwaUpdateBubble />
-        </>
-      </NotificationProvider>
+      <DeployCheckProvider report={deployCheckReport}>
+        <NotificationProvider>
+          <>
+            <DeployWelcomePage />
+            <PwaUpdateBubble />
+          </>
+        </NotificationProvider>
+      </DeployCheckProvider>
     );
   }
 
   return (
-    <NotificationProvider>
-      <>
-        <AppShell
-          route={route}
-          title={resolvedHead.title}
-          pageSubtitle={resolvedHead.pageSubtitle}
-          topActions={topActions}
-          notificationCenter={<NotificationCenter />}
-          topbarContent={topbarContent}
-          contextNavigation={contextNavigation}
-          contextNavigationTitle={route.name === "services" || route.name === "stack" || route.name === "service" ? "服务导航" : "页面内导航"}
-          authIdentity={authIdentity}
-        >
+    <DeployCheckProvider report={deployCheckReport}>
+      <NotificationProvider>
+        <>
+          <AppShell
+            route={route}
+            title={resolvedHead.title}
+            pageSubtitle={resolvedHead.pageSubtitle}
+            topActions={topActions}
+            notificationCenter={<NotificationCenter />}
+            topbarContent={topbarContent}
+            contextNavigation={contextNavigation}
+            contextNavigationTitle={route.name === "services" || route.name === "stack" || route.name === "service" ? "服务导航" : "页面内导航"}
+            authIdentity={authIdentity}
+          >
         <ManagementEventsStatusBanner />
         <DeployCheckStatusBanner report={deployCheckReport} />
         {route.name === "overview" ? (
@@ -569,17 +575,18 @@ export default function App() {
             onTopbarContent={setTopbarContent}
           />
         ) : null}
-        </AppShell>
-        <GitHubReleaseDrawer
-          open={releaseDrawerState.open}
-          serviceId={releaseDrawerState.serviceId}
-          version={releaseDrawerState.version}
-          onOpenChange={(open) => {
-            if (open) return;
-            closeGitHubReleaseDrawer("replace");
-          }}
-        />
-      </>
-    </NotificationProvider>
+          </AppShell>
+          <GitHubReleaseDrawer
+            open={releaseDrawerState.open}
+            serviceId={releaseDrawerState.serviceId}
+            version={releaseDrawerState.version}
+            onOpenChange={(open) => {
+              if (open) return;
+              closeGitHubReleaseDrawer("replace");
+            }}
+          />
+        </>
+      </NotificationProvider>
+    </DeployCheckProvider>
   );
 }

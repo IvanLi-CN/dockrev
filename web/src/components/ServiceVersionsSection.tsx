@@ -24,6 +24,7 @@ import {
   releaseNotesViewLabel,
 } from '../releaseNotes'
 import { useServiceReleaseNotesSession } from '../useServiceReleaseNotesSession'
+import { deployCheckOperationImpactReason, useDeployCheckReport } from '../deployCheck'
 import { blockedReasonFor, serviceRowStatus } from '../updateStatus'
 import { candidateHydrationDetail, candidateSettlementDetail } from './AutoUpdatePolicyResultCard'
 import {
@@ -68,6 +69,7 @@ const EMPTY_VIRTUAL_ITEMS: VirtualItem[] = []
 
 type ServiceVersionsSectionProps = {
   service: Service
+  stackId?: string
   jobs: JobListItem[]
   backupRecords: ServiceBackupRecordItem[]
   rollbackTarget: ServiceRollbackTargetResponse | null
@@ -126,7 +128,12 @@ function resolveVirtualOffset(
 
 export function ServiceVersionsSection(props: ServiceVersionsSectionProps) {
   const confirm = useConfirm()
+  const deployCheckReport = useDeployCheckReport()
   const serviceId = props.service.id.trim()
+  const deployCheckTargetIds = useMemo(
+    () => (props.stackId ? [serviceId, props.stackId] : serviceId),
+    [props.stackId, serviceId],
+  )
   const sectionRef = useRef<HTMLElement | null>(null)
   const listScrollRef = useRef<HTMLDivElement | null>(null)
   const indexScrollRef = useRef<HTMLDivElement | null>(null)
@@ -715,6 +722,16 @@ export function ServiceVersionsSection(props: ServiceVersionsSectionProps) {
         : '当前镜像标签没有该版本的可信历史记录，将实时解析该 Release tag。'
       let updateActionVariant: 'primary' | 'ghost' = 'primary'
       let updateActionPresentation: 'default' | 'candidateOnly' = 'default'
+      const deployCheckUpdateReason = deployCheckOperationImpactReason(
+        deployCheckReport,
+        'update',
+        deployCheckTargetIds,
+      )
+      const deployCheckRollbackReason = deployCheckOperationImpactReason(
+        deployCheckReport,
+        'rollback',
+        deployCheckTargetIds,
+      )
       if (showUpdate) {
         if (dockrevService) {
           const dockrevAction = describeDockrevVersionCardAction({
@@ -744,12 +761,13 @@ export function ServiceVersionsSection(props: ServiceVersionsSectionProps) {
               : tagObservationsLoading
                 ? '正在读取当前标签的历史版本记录。'
                 : null)
+          updateDisabledReason = updateDisabledReason ?? deployCheckUpdateReason
           updateDisabled = updateDisabledReason != null
           updateActionHint = updateDisabledReason ?? updateActionHint
         }
       }
 
-      const rollbackDisabledReason = showRollback ? serviceActionLockReason : null
+      const rollbackDisabledReason = showRollback ? serviceActionLockReason ?? deployCheckRollbackReason : null
       const { body, missing } = releaseNotesBodyForView(item, viewMode)
       return {
         item,
@@ -777,6 +795,8 @@ export function ServiceVersionsSection(props: ServiceVersionsSectionProps) {
     candidateDisplayVersion,
     candidateVersion,
     currentVersion,
+    deployCheckReport,
+    deployCheckTargetIds,
     deployedHistoricalVersions,
     dockrevService,
     items,

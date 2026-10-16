@@ -1,4 +1,10 @@
-use std::{collections::BTreeSet, fs, net::Ipv4Addr, path::Path, time::Duration};
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    fs,
+    net::Ipv4Addr,
+    path::Path,
+    time::Duration,
+};
 
 use anyhow::Context as _;
 use serde_json::Value;
@@ -19,18 +25,33 @@ fn local_command_timeout_from_config(config: &crate::config::Config) -> Duration
     Duration::from_secs(config.deploy_check_local_command_timeout_seconds)
 }
 
+#[allow(dead_code)]
 pub async fn build_report_with_parts(
     config: &crate::config::Config,
     db: &crate::db::Db,
     runner: std::sync::Arc<dyn crate::runner::CommandRunner>,
 ) -> anyhow::Result<DeployCheckReportResponse> {
+    Ok(build_report_with_context(config, db, runner).await?.report)
+}
+
+pub(crate) struct PreflightReportParts {
+    pub report: DeployCheckReportResponse,
+    pub compose_project_ids: Vec<String>,
+    pub invalid_image_service_ids: Vec<String>,
+}
+
+pub(crate) async fn build_report_with_context(
+    config: &crate::config::Config,
+    db: &crate::db::Db,
+    runner: std::sync::Arc<dyn crate::runner::CommandRunner>,
+) -> anyhow::Result<PreflightReportParts> {
     let review = async {
-        let report = build_report_once(config, db, runner.clone()).await?;
-        if report_needs_runtime_confirmation(&report) {
+        let parts = build_report_once(config, db, runner.clone()).await?;
+        if report_needs_runtime_confirmation(&parts.report) {
             tokio::time::sleep(Duration::from_secs(2)).await;
             return build_report_once(config, db, runner).await;
         }
-        Ok(report)
+        Ok(parts)
     };
     match tokio::time::timeout(
         Duration::from_secs(crate::deploy_check_refresh_worker::DEPLOY_CHECK_REVIEW_BUDGET_SECONDS),
@@ -50,7 +71,7 @@ async fn build_report_once(
     config: &crate::config::Config,
     db: &crate::db::Db,
     runner: std::sync::Arc<dyn crate::runner::CommandRunner>,
-) -> anyhow::Result<DeployCheckReportResponse> {
+) -> anyhow::Result<PreflightReportParts> {
     let context = collect_context_from_db(db).await?;
 
     let (docker_check, update_executor_check) = tokio::join!(
@@ -68,7 +89,11 @@ async fn build_report_once(
     checks.extend(check_notification_features_with(db).await?);
     checks.push(check_github_packages_feature_with(db).await?);
 
-    build_report_from_checks(checks)
+    Ok(PreflightReportParts {
+        report: build_report_from_checks(checks)?,
+        compose_project_ids: context.compose_project_ids,
+        invalid_image_service_ids: context.invalid_image_service_ids,
+    })
 }
 
 fn report_needs_runtime_confirmation(report: &DeployCheckReportResponse) -> bool {
@@ -134,15 +159,19 @@ fn build_report_from_checks(
 #[derive(Default)]
 struct PreflightContext {
     compose_paths: Vec<String>,
+    compose_project_ids: Vec<String>,
     active_services_total: usize,
     invalid_image_refs: Vec<String>,
+    invalid_image_service_ids: Vec<String>,
     parsed_images: Vec<registry::ImageRef>,
 }
 
 async fn collect_context_from_db(db: &crate::db::Db) -> anyhow::Result<PreflightContext> {
     let stack_ids = db.list_stack_ids().await?;
     let mut compose_paths = BTreeSet::<String>::new();
+    let mut compose_paths_by_project = BTreeMap::<String, BTreeSet<String>>::new();
     let mut invalid_image_refs = Vec::<String>::new();
+    let mut invalid_image_service_ids = BTreeSet::<String>::new();
     let mut parsed_images = Vec::<registry::ImageRef>::new();
     let mut active_services_total = 0usize;
 
@@ -156,12 +185,20 @@ async fn collect_context_from_db(db: &crate::db::Db) -> anyhow::Result<Preflight
 
         for file in stack.compose.compose_files {
             if !file.trim().is_empty() {
+                compose_paths_by_project
+                    .entry(stack.id.clone())
+                    .or_default()
+                    .insert(file.clone());
                 compose_paths.insert(file);
             }
         }
         if let Some(env_file) = stack.compose.env_file
             && !env_file.trim().is_empty()
         {
+            compose_paths_by_project
+                .entry(stack.id.clone())
+                .or_default()
+                .insert(env_file.clone());
             compose_paths.insert(env_file);
         }
 
@@ -173,7 +210,8 @@ async fn collect_context_from_db(db: &crate::db::Db) -> anyhow::Result<Preflight
             match registry::ImageRef::parse(&service.image.reference) {
                 Ok(parsed) => parsed_images.push(parsed),
                 Err(err) => {
-                    invalid_image_refs.push(format!("{}/{} ({})", stack.name, service.name, err))
+                    invalid_image_refs.push(format!("{}/{} ({})", stack.name, service.name, err));
+                    invalid_image_service_ids.insert(service.id);
                 }
             }
         }
@@ -186,6 +224,16 @@ async fn collect_context_from_db(db: &crate::db::Db) -> anyhow::Result<Preflight
         .context("list discovered compose projects for deploy preflight")?;
     for project in discovered {
         if let Some(files) = project.config_files {
+            if let Some(stack_id) = project.stack_id {
+                for file in &files {
+                    if !file.trim().is_empty() {
+                        compose_paths_by_project
+                            .entry(stack_id.clone())
+                            .or_default()
+                            .insert(file.clone());
+                    }
+                }
+            }
             for file in files {
                 if !file.trim().is_empty() {
                     compose_paths.insert(file);
@@ -194,10 +242,34 @@ async fn collect_context_from_db(db: &crate::db::Db) -> anyhow::Result<Preflight
         }
     }
 
+    let compose_project_ids: Vec<String> = compose_paths_by_project
+        .into_iter()
+        .filter_map(|(project_id, paths)| {
+            paths
+                .iter()
+                .any(|path| {
+                    let p = Path::new(path);
+                    !p.is_absolute()
+                        || fs::metadata(p)
+                            .and_then(|m| {
+                                if m.is_file() {
+                                    Ok(())
+                                } else {
+                                    Err(std::io::Error::other("not a file"))
+                                }
+                            })
+                            .is_err()
+                })
+                .then_some(project_id)
+        })
+        .collect();
+
     Ok(PreflightContext {
         compose_paths: compose_paths.into_iter().collect(),
+        compose_project_ids: compose_project_ids.into_iter().collect(),
         active_services_total,
         invalid_image_refs,
+        invalid_image_service_ids: invalid_image_service_ids.into_iter().collect(),
         parsed_images,
     })
 }

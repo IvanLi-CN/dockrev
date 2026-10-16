@@ -55,6 +55,7 @@ import {
   type ServiceDetailSection,
 } from "./serviceDetailPageHelpers";
 import { useServiceDetailPageState } from "./useServiceDetailPageState";
+import { deployCheckOperationImpactReason, useDeployCheckReport } from "../deployCheck";
 function errorMessage(e: unknown): string { return e instanceof Error ? e.message : String(e); }
 const SERVICE_DETAIL_SNAPSHOT_STALE_MS = 60_000;
 type ServiceDetailSnapshotPayload = {
@@ -94,6 +95,7 @@ export function ServiceDetailPage(props: {
   const { onPageTitle, onTopActions, onTopbarContent } = props;
   const section = props.section ?? "overview";
   const { isOnline } = usePwaStatus();
+  const deployCheckReport = useDeployCheckReport();
   const snapshotKey = buildReadonlySnapshotKey("service-detail", `${props.stackId}:${props.serviceId}`);
   const {
     anomalyCandidateTag, anomalyCurrentTag, bannerClass, bannerDetail, bannerTitle,
@@ -152,6 +154,11 @@ export function ServiceDetailPage(props: {
     return () => { tabsViewport.removeEventListener("scroll", updateEdges); resizeObserver.disconnect(); };
   }, [tabsViewport]);
   const visibleRollbackTarget = rollbackTargetRefreshing ? null : rollbackTarget
+  const deployCheckRollbackReason = deployCheckOperationImpactReason(
+    deployCheckReport,
+    "rollback",
+    [props.serviceId, props.stackId],
+  );
   const [jobs, setJobs] = useState<JobListItem[]>([]);
   const [historyPhase, setHistoryPhase] = useState<AsyncDataPhase>("initial-loading");
   const [historySource, setHistorySource] = useState<AsyncDataSource>("none");
@@ -479,6 +486,7 @@ export function ServiceDetailPage(props: {
         serviceId={serviceId}
         onRollback={readonlyUi ? undefined : requestRollback}
         rollbackBusy={busy || rollbackTargetRefreshing}
+        rollbackDisabledReason={deployCheckRollbackReason}
         rollbackSourceJobId={readonlyUi || !visibleRollbackTarget?.available ? null : visibleRollbackTarget.sourceUpdateJobId}
         page={historyCursorStack.length + 1}
         hasPrevious={historyCursorStack.length > 0}
@@ -517,6 +525,7 @@ export function ServiceDetailPage(props: {
           rollbackTarget={visibleRollbackTarget}
           rollbackTargetRefreshing={rollbackTargetRefreshing}
           service={effectiveService}
+          stackId={props.stackId}
           updateActiveJob={applyActiveJob}
           updateSubmitting={applySubmitting}
         />

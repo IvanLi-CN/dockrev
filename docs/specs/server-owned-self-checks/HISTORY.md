@@ -20,6 +20,8 @@
 - ADR 0016 records the server-owned lifecycle and no-blocking browser contract.
 - The EdgeOne timeout topic retains cleanup snapshot, release drawer and SSE constraints, while its obsolete deploy-check gate wording now points here.
 - Owner-approved Storybook mock-only evidence now records healthy entry rendering, scoped core failure diagnosis and the 393x852 mobile layout under this topic's canonical assets.
+- Review hardening wires operation impacts into overview, batch-update, homepage, detail, context-menu, cleanup and version-history controls, preserves project/service object IDs in backend projections, and acknowledges recovery only after the report and event are durable.
+- The interactive app stories include a concurrent IndexedDB auto-open claim check so same-origin tabs have executable one-winner evidence.
 
 ## References
 

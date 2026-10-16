@@ -44,6 +44,10 @@ import { useManagementEventBatch } from '../managementEvents'
 import { usePwaStatus } from '../pwaStatus'
 import { buildReadonlySnapshotKey, readReadonlySnapshot, writeReadonlySnapshot } from '../readonlySnapshotCache'
 import { useSupervisorHealth } from '../useSupervisorHealth'
+import {
+  deployCheckOperationImpactReason,
+  useDeployCheckReport,
+} from '../deployCheck'
 import type { AsyncDataOrigin, AsyncDataPhase, AsyncDataSource, AsyncDataTrigger } from '../asyncData'
 import { buildAllAggregateScope } from './aggregateUpdateScope'
 import { selectOverviewJobsForCard,toOverviewJobCardItem } from './overviewJobsCard'
@@ -102,6 +106,7 @@ export function useOverviewPageState(props: {
   const { onLastScanHint, onTopActions } = props
   const { isOnline } = usePwaStatus()
   const confirm = useConfirm()
+  const deployCheckReport = useDeployCheckReport()
   const [filter, setFilter] = useState<UpdateCandidateFilter>(() => readUpdateCandidateFilterFromUrl() ?? 'all')
   const [candidateSearch, setCandidateSearch] = useState('')
   const [stacks, setStacks] = useState<StackListItem[]>([])
@@ -689,6 +694,7 @@ export function useOverviewPageState(props: {
       totalServiceCount: scope.totalServiceCount,
       isFilteredSubset: scope.isFilteredSubset,
       actionableServices: scope.actionableServices,
+      operationObjectIds: scope.operationObjectIds,
     }
   }, [candidateSearch, details, filter, stacks])
 
@@ -834,11 +840,28 @@ export function useOverviewPageState(props: {
       scope: 'all' | 'stack' | 'service'
       stackId?: string
       serviceId?: string
+      objectIds?: readonly string[]
       targetLabel: string
       buildRequest: () => Promise<TriggerUpdateInput>
       confirmBody?: ReactNode
       confirmTitle?: string
     }) => {
+      const deployCheckObjectIds =
+        input.scope === 'service'
+          ? [input.serviceId, input.stackId].filter((value): value is string => Boolean(value))
+          : input.scope === 'stack'
+            ? input.objectIds ?? input.stackId
+            : input.objectIds
+
+      const deployCheckReason = deployCheckOperationImpactReason(
+        deployCheckReport,
+        'update',
+        deployCheckObjectIds,
+      )
+      if (deployCheckReason) {
+        setError(deployCheckReason)
+        return
+      }
       const scopeLabel = input.scope === 'all' ? 'all' : input.scope === 'stack' ? 'stack' : 'service'
       const confirmVariant = input.scope === 'service' ? 'primary' : 'danger'
       const ok = await confirm({
@@ -878,6 +901,16 @@ export function useOverviewPageState(props: {
       })
       if (!ok) return
 
+      const currentDeployCheckReason = deployCheckOperationImpactReason(
+        deployCheckReport,
+        'update',
+        deployCheckObjectIds,
+      )
+      if (currentDeployCheckReason) {
+        setError(currentDeployCheckReason)
+        return
+      }
+
       const targetKey = resolveUpdateActionTargetKey(input.scope, input.stackId, input.serviceId)
 
       setError(null)
@@ -905,10 +938,15 @@ export function useOverviewPageState(props: {
         if (targetKey) endSubmitting(targetKey)
       }
     },
-    [beginSubmitting, confirm, endSubmitting, requestRefresh, trackJob],
+    [beginSubmitting, confirm, deployCheckReport, endSubmitting, requestRefresh, trackJob],
   )
 
   useEffect(() => {
+    const allApplyDeployCheckReason = deployCheckOperationImpactReason(
+      deployCheckReport,
+      'update',
+      aggregateAll.operationObjectIds,
+    )
     onTopActions(
       <>
         <Button
@@ -956,12 +994,16 @@ export function useOverviewPageState(props: {
             disabled={
               allApplyActiveJob
                 ? false
-                : !allApply.enabled || busy || allApplySubmitting || readonlyOffline
+                : !allApply.enabled || Boolean(allApplyDeployCheckReason) || busy || allApplySubmitting || readonlyOffline
             }
             loading={allApplyActionBusy}
             loadingClickable={Boolean(allApplyActiveJob)}
             title={allApplyActiveJob ? '任务进行中，点击查看任务详情' : (allApply.title ?? undefined)}
-            hint={allApplyActiveJob ? '任务进行中，点击查看任务详情' : (!allApply.enabled ? (allApply.hint ?? undefined) : undefined)}
+            hint={
+              allApplyActiveJob
+                ? '任务进行中，点击查看任务详情'
+                : allApplyDeployCheckReason ?? (!allApply.enabled ? (allApply.hint ?? undefined) : undefined)
+            }
             onClick={() => {
               if (allApplyActiveJob) {
                 navigate({ name: 'job', jobId: allApplyActiveJob.jobId })
@@ -1032,6 +1074,7 @@ export function useOverviewPageState(props: {
               )
               void triggerApply({
                 scope: 'all',
+                objectIds: aggregateAll.operationObjectIds,
                 targetLabel: '全部服务',
                 buildRequest: async () => ({
                   scope: 'all',
@@ -1058,19 +1101,20 @@ export function useOverviewPageState(props: {
         </div>
       </>,
     )
-	  }, [
-	    aggregateAll,
-	    allApply,
-	    allApplyActiveJob,
-	    allApplyActionBusy,
-	    allApplySubmitting,
-	    busy,
-	    onTopActions,
-	    patchServiceInStackDetails,
-      readonlyOffline,
-	    requestRefresh,
-	    triggerApply,
-	  ])
+  }, [
+    aggregateAll,
+    allApply,
+    allApplyActiveJob,
+    allApplyActionBusy,
+    allApplySubmitting,
+    busy,
+    deployCheckReport,
+    onTopActions,
+    patchServiceInStackDetails,
+    readonlyOffline,
+    requestRefresh,
+    triggerApply,
+  ])
   return {
     activeDiscoveryIssue,
     busy,

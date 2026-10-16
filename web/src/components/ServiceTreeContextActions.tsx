@@ -18,6 +18,7 @@ import { selfUpgradeBaseUrl, isDockrevImageRef } from '../runtimeConfig'
 import { navigate } from '../routes'
 import { buildUpdateServiceTarget, buildUpdateServiceTargets } from '../updateTargets'
 import { openSelfUpgradeUrl } from '../pages/serviceDetailUtils'
+import { deployCheckOperationImpactReason, useDeployCheckReport } from '../deployCheck'
 import { useConfirm } from '../confirm'
 import { UPDATE_JOB_SETTLED_EVENT, resolveUpdateActionTargetKey, useUpdateActionTracker, type UpdateJobSettledDetail } from '../updateActionTracking'
 import {
@@ -111,6 +112,7 @@ export function ServiceTreeContextActions(props: {
   const [serviceDetail, setServiceDetail] = useState<Service | null>(props.target.kind === 'service' ? props.target.service : null)
   const [notice, setNotice] = useState<Notice | null>(null)
   const [submitting, setSubmitting] = useState(false)
+  const deployCheckReport = useDeployCheckReport()
   const target = useMemo(
     () => props.target.kind === 'stack'
       ? { ...props.target, stack: stackDetail }
@@ -123,9 +125,11 @@ export function ServiceTreeContextActions(props: {
     : target.kind === 'service' && target.service.archived
       ? '归档服务不可操作'
     : reasonLabel(status?.unavailableReason ?? (!status ? 'lifecycle_status_loading' : null))
-  const lifecycleDisabled = Boolean(lifecycleReason)
   const showStart = lifecycleState === 'stopped'
-  const updateReason = updateDisabledReason(target)
+  const targetObjectId = target.kind === 'stack' ? target.stackId : [target.service.id, target.stackId]
+  const lifecycleReasonFor = (action: ServiceLifecycleAction) =>
+    lifecycleReason ?? deployCheckOperationImpactReason(deployCheckReport, action, targetObjectId) ?? undefined
+  const updateReason = updateDisabledReason(target) ?? deployCheckOperationImpactReason(deployCheckReport, 'update', targetObjectId)
   const isDockrevService = target.kind === 'service' && isDockrevImageRef(target.service.image.ref)
   const refreshStack = props.onRefresh
   const targetStackId = props.target.stackId
@@ -274,17 +278,17 @@ export function ServiceTreeContextActions(props: {
           {!isDockrevService ? (
             <>
               {showStart ? (
-                <ContextMenuItem disabled={lifecycleDisabled} title={lifecycleReason} onSelect={() => void submitLifecycle('start')}>
-                  <Play className="serviceSplitActionIconSolid" /><ActionLabel label="启动" reason={lifecycleReason} />
+                <ContextMenuItem disabled={Boolean(lifecycleReasonFor('start'))} title={lifecycleReasonFor('start')} onSelect={() => void submitLifecycle('start')}>
+                  <Play className="serviceSplitActionIconSolid" /><ActionLabel label="启动" reason={lifecycleReasonFor('start')} />
                 </ContextMenuItem>
               ) : (
-                <ContextMenuItem disabled={lifecycleDisabled} title={lifecycleReason} onSelect={() => void submitLifecycle('restart')}>
-                  <RotateCw /><ActionLabel label="重启" reason={lifecycleReason} />
+                <ContextMenuItem disabled={Boolean(lifecycleReasonFor('restart'))} title={lifecycleReasonFor('restart')} onSelect={() => void submitLifecycle('restart')}>
+                  <RotateCw /><ActionLabel label="重启" reason={lifecycleReasonFor('restart')} />
                 </ContextMenuItem>
               )}
               {!showStart ? (
-                <ContextMenuItem disabled={lifecycleDisabled} title={lifecycleReason} onSelect={() => void submitLifecycle('stop')}>
-                  <Square /><ActionLabel label="停止" reason={lifecycleReason} />
+                <ContextMenuItem disabled={Boolean(lifecycleReasonFor('stop'))} title={lifecycleReasonFor('stop')} onSelect={() => void submitLifecycle('stop')}>
+                  <Square /><ActionLabel label="停止" reason={lifecycleReasonFor('stop')} />
                 </ContextMenuItem>
               ) : null}
               <ContextMenuSeparator />

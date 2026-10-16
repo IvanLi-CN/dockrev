@@ -176,6 +176,7 @@ export function ServiceOperationHistory(props: {
   serviceId: string
   rollbackSourceJobId?: string | null
   rollbackBusy?: boolean
+  rollbackDisabledReason?: string | null
   onRollback?: () => void
   page: number
   hasPrevious: boolean
@@ -286,7 +287,8 @@ export function ServiceOperationHistory(props: {
                   <button
                     className="serviceOperationHistoryRollbackButton"
                     data-service-operation-action="rollback"
-                    disabled={props.rollbackBusy}
+                    disabled={props.rollbackBusy || Boolean(props.rollbackDisabledReason)}
+                    title={props.rollbackDisabledReason ?? undefined}
                     onClick={() => props.onRollback?.()}
                     type="button"
                   >

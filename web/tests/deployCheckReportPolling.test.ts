@@ -3,6 +3,7 @@ import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 
 import {
+  deployCheckOperationImpactReason,
   hasActiveCoreFailure,
   hasBlockingDeployCheckFailure,
   hasCurrentStartupCoreFailure,
@@ -108,5 +109,43 @@ describe('server-owned deploy-check entry', () => {
     expect(source).toContain("{saving ? '打开中…' : '继续浏览'}")
     expect(source).toContain('disabled={saving}')
     expect(source).not.toContain('disabled={saving || hasBlockingFailures}')
+  })
+
+  test('projects operation impacts onto matching targets without disabling unrelated objects', () => {
+    const report = {
+      overall: { result: 'fail' as const, blockingCheckIds: ['core.compose_access'], summary: 'compose unavailable' },
+      generatedAt: '2026-10-16T00:00:00.000Z',
+      checks: [],
+      operationImpacts: [
+        {
+          checkId: 'core.compose_access',
+          scope: 'affected_projects',
+          objectIds: ['stack-a'],
+          operations: ['update', 'restart'],
+          reason: 'Compose 配置不可访问',
+        },
+        {
+          checkId: 'core.docker_engine',
+          scope: 'global',
+          objectIds: [],
+          operations: ['cleanup'],
+          reason: 'Docker 引擎不可用',
+        },
+        {
+          checkId: 'core.service_image_ref_valid',
+          scope: 'affected_services',
+          objectIds: ['service-a'],
+          operations: ['update'],
+          reason: '服务镜像引用无效',
+        },
+      ],
+    }
+
+    expect(deployCheckOperationImpactReason(report, 'update', 'stack-a')).toBe('Compose 配置不可访问')
+    expect(deployCheckOperationImpactReason(report, 'update', 'stack-b')).toBeNull()
+    expect(deployCheckOperationImpactReason(report, 'restart', ['service-a', 'stack-a'])).toBe('Compose 配置不可访问')
+    expect(deployCheckOperationImpactReason(report, 'update', ['service-a', 'stack-a'])).toBe('Compose 配置不可访问')
+    expect(deployCheckOperationImpactReason(report, 'update', ['service-a', 'stack-b'])).toBe('服务镜像引用无效')
+    expect(deployCheckOperationImpactReason(report, 'cleanup')).toBe('Docker 引擎不可用')
   })
 })

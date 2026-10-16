@@ -197,8 +197,10 @@ impl DeployCheckRefreshWorker {
     }
 
     async fn refresh_once(&self) -> anyhow::Result<()> {
-        let mut report =
-            preflight::build_report_with_parts(&self.config, &self.db, self.runner.clone()).await?;
+        let parts =
+            preflight::build_report_with_context(&self.config, &self.db, self.runner.clone())
+                .await?;
+        let mut report = parts.report;
         let (startup_status, startup_failure_key, recovered) =
             self.startup_projection(&report).await;
         report.server_boot_id = Some(self.server_boot_id.to_string());
@@ -206,7 +208,11 @@ impl DeployCheckRefreshWorker {
         report.report_revision = Some(self.report_revision.fetch_add(1, Ordering::SeqCst) + 1);
         report.startup_status = Some(startup_status.clone());
         report.startup_failure_key = startup_failure_key.clone();
-        report.operation_impacts = operation_impacts(&report);
+        report.operation_impacts = operation_impacts(
+            &report,
+            &parts.compose_project_ids,
+            &parts.invalid_image_service_ids,
+        );
         let now = now_rfc3339()?;
         let checked_at = report.generated_at.clone();
         let report_json = serde_json::to_string(&report)?;
@@ -244,6 +250,9 @@ impl DeployCheckRefreshWorker {
                 .management_events()
                 .publish_change("deploy_check", "report", DEPLOY_CHECK_SNAPSHOT_KEY, summary)
                 .await;
+        }
+        if recovered {
+            self.acknowledge_recovery().await;
         }
         Ok(())
     }
@@ -296,8 +305,11 @@ impl DeployCheckRefreshWorker {
             );
         }
         let recovered = was_active && !state.initial_failure_active && state.recovery_pending;
-        state.recovery_pending = false;
         (DeployCheckStartupStatus::Settled, None, recovered)
+    }
+
+    async fn acknowledge_recovery(&self) {
+        self.startup_state.lock().await.recovery_pending = false;
     }
 
     async fn publish_error(&self, message: &str) {
@@ -322,6 +334,8 @@ impl DeployCheckRefreshWorker {
 
 fn operation_impacts(
     report: &crate::api::types::DeployCheckReportResponse,
+    compose_project_ids: &[String],
+    invalid_image_service_ids: &[String],
 ) -> Vec<DeployCheckOperationImpact> {
     report
         .checks
@@ -330,26 +344,33 @@ fn operation_impacts(
             item.group == DeployCheckGroup::Core && item.status == DeployCheckStatus::Fail
         })
         .map(|item| {
-            let (scope, operations) = match item.id.as_str() {
+            let (scope, object_ids, operations) = match item.id.as_str() {
                 "core.docker_engine" => (
                     "global",
+                    Vec::new(),
                     vec!["update", "rollback", "start", "stop", "restart", "cleanup"],
                 ),
                 "core.update_executor_ready" => (
                     "global",
+                    Vec::new(),
                     vec!["update", "rollback", "start", "stop", "restart"],
                 ),
                 "core.compose_access" => (
                     "affected_projects",
+                    compose_project_ids.to_vec(),
                     vec!["update", "rollback", "start", "stop", "restart"],
                 ),
-                "core.service_image_ref_valid" => ("affected_services", vec!["update"]),
-                _ => ("unknown", vec![]),
+                "core.service_image_ref_valid" => (
+                    "affected_services",
+                    invalid_image_service_ids.to_vec(),
+                    vec!["update"],
+                ),
+                _ => ("unknown", Vec::new(), vec![]),
             };
             DeployCheckOperationImpact {
                 check_id: item.id.clone(),
                 scope: scope.to_string(),
-                object_ids: Vec::new(),
+                object_ids,
                 operations: operations.into_iter().map(str::to_string).collect(),
                 reason: item.impact.clone(),
             }
@@ -607,5 +628,42 @@ mod tests {
         );
         assert!(replacement.1.is_none());
         assert!(replacement.2);
+    }
+
+    #[test]
+    fn operation_impacts_keep_project_and_service_scope_ids() {
+        let mut report = report_with_core_status(DeployCheckStatus::Fail, "core.compose_access");
+        report.checks.push(DeployCheckItem {
+            id: "core.service_image_ref_valid".to_string(),
+            title: "test".to_string(),
+            group: DeployCheckGroup::Core,
+            required: true,
+            status: DeployCheckStatus::Fail,
+            na_reason: None,
+            summary: "test".to_string(),
+            impact: "service impact".to_string(),
+            evidence: "test".to_string(),
+            recommendation: String::new(),
+        });
+
+        let impacts = operation_impacts(
+            &report,
+            &["stack-a".to_string()],
+            &["service-a".to_string()],
+        );
+
+        let compose = impacts
+            .iter()
+            .find(|impact| impact.check_id == "core.compose_access")
+            .expect("compose impact");
+        assert_eq!(compose.scope, "affected_projects");
+        assert_eq!(compose.object_ids, vec!["stack-a"]);
+
+        let image = impacts
+            .iter()
+            .find(|impact| impact.check_id == "core.service_image_ref_valid")
+            .expect("image impact");
+        assert_eq!(image.scope, "affected_services");
+        assert_eq!(image.object_ids, vec!["service-a"]);
     }
 }

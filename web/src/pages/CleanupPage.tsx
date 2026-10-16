@@ -19,6 +19,7 @@ import {
 } from '../api'
 import { useConfirm } from '../confirm'
 import { useManagementEventBatch } from '../managementEvents'
+import { deployCheckOperationImpactReason, useDeployCheckReport } from '../deployCheck'
 import { CleanupContextNavigation } from '../components/PageContextNavigation'
 import { navigate } from '../routes'
 import { Button, Mono, Pill, RefreshIcon, SectionTitle, Tabs, TabsList, TabsTrigger, TrashIcon } from '../ui'
@@ -305,6 +306,7 @@ function CleanupResponseView(props: {
   scanBusy?: boolean
   onStackAction?: (stack: CleanupStackGroup) => void
   onServiceAction?: (stack: CleanupStackGroup, serviceId: string, serviceName: string) => void
+  deployCheckReport?: import('../api').DeployCheckReportResponse | null
 }) {
   if (countRenderableResources(props.response) === 0) {
     return <div className="cleanupEmptyState">当前规则下没有可清理资源。</div>
@@ -322,7 +324,9 @@ function CleanupResponseView(props: {
         </div>
       ) : null}
 
-      {props.response.stackGroups.map((stack) => (
+      {props.response.stackGroups.map((stack) => {
+        const stackCleanupReason = deployCheckOperationImpactReason(props.deployCheckReport ?? null, 'cleanup', stack.stackId)
+        return (
         <section key={stack.stackId} className="tableGroup cleanupTableGroup">
           <div
             className={`groupHead cleanupGroupHead${
@@ -350,8 +354,8 @@ function CleanupResponseView(props: {
                 onKeyDown={(event) => event.stopPropagation()}
               >
                 <Button
-                  disabled={props.scanBusy || stack.estimatedReclaimableBytes <= 0 && stack.hasUnknownSize !== true}
-                  hint={actionHint('stack')}
+                  disabled={props.scanBusy || Boolean(stackCleanupReason) || stack.estimatedReclaimableBytes <= 0 && stack.hasUnknownSize !== true}
+                  hint={stackCleanupReason ?? actionHint('stack')}
                   loading={props.busyActionKey === `stack:${stack.stackId}`}
                   onClick={() => props.onStackAction?.(stack)}
                   variant="ghost"
@@ -393,8 +397,8 @@ function CleanupResponseView(props: {
               {row.actionScope === 'stack' && props.onStackAction ? (
                 <div className="actionCell">
                   <Button
-                    disabled={props.scanBusy || stack.estimatedReclaimableBytes <= 0 && stack.hasUnknownSize !== true}
-                    hint={actionHint('stack')}
+                    disabled={props.scanBusy || Boolean(stackCleanupReason) || stack.estimatedReclaimableBytes <= 0 && stack.hasUnknownSize !== true}
+                    hint={stackCleanupReason ?? actionHint('stack')}
                   loading={props.busyActionKey === `stack:${stack.stackId}`}
                   onClick={() => props.onStackAction?.(stack)}
                   variant="ghost"
@@ -405,8 +409,8 @@ function CleanupResponseView(props: {
               ) : row.actionScope === 'service' && props.onServiceAction && row.serviceId && row.serviceName ? (
                 <div className="actionCell">
                   <Button
-                    disabled={props.scanBusy}
-                    hint={actionHint('service')}
+                    disabled={props.scanBusy || Boolean(deployCheckOperationImpactReason(props.deployCheckReport ?? null, 'cleanup', [stack.stackId, row.serviceId]))}
+                    hint={deployCheckOperationImpactReason(props.deployCheckReport ?? null, 'cleanup', [stack.stackId, row.serviceId]) ?? actionHint('service')}
                     loading={props.busyActionKey === `service:${stack.stackId}:${row.serviceId}`}
                     onClick={() => props.onServiceAction?.(stack, row.serviceId!, row.serviceName!)}
                     variant="ghost"
@@ -420,7 +424,8 @@ function CleanupResponseView(props: {
             </div>
           ))}
         </section>
-      ))}
+        )
+      })}
 
       {props.response.unownedGroup?.resources.length ? (
         <section className="tableGroup cleanupTableGroup cleanupTableGroupUnowned">
@@ -588,6 +593,7 @@ export function CleanupPage(props: {
 }) {
   const { onLastScanHint, onTopActions, onContextNavigation } = props
   const confirm = useConfirm()
+  const deployCheckReport = useDeployCheckReport()
   const activeScanIdRef = useRef<string | null>(null)
   const activeScanEventsRef = useRef<EventSource | null>(null)
   const [activePreset, setActivePreset] = useState<CleanupPreset>('balanced')
@@ -623,6 +629,7 @@ export function CleanupPage(props: {
   const initialScanPending = loading && !pageScan
   const staleUsageBuckets = useMemo(() => staleBucketsForResponse(pageScan, staleResourceKeys), [pageScan, staleResourceKeys])
   const hasStaleResources = staleResourceKeys.size > 0 && refreshing
+  const deployCheckCleanupReason = deployCheckOperationImpactReason(deployCheckReport, 'cleanup')
 
   const fetchCleanupScan = useCallback(async (input: CleanupScanRequest) => scanCleanups(input), [])
 
@@ -916,13 +923,15 @@ export function CleanupPage(props: {
     return (
       <>
         <Button
-          disabled={!hasTargets || busyActionKey !== null || scanBusy}
+          disabled={!hasTargets || Boolean(deployCheckCleanupReason) || busyActionKey !== null || scanBusy}
           hint={
             allActionBusy
               ? '正在创建 cleanup 任务…'
               : scanBusy
                 ? '等待扫描完成后才可执行全部清理'
-                : hasTargets
+                : deployCheckCleanupReason
+                  ? deployCheckCleanupReason
+                  : hasTargets
                   ? actionHint('all')
                   : '当前规则下没有可清理项'
           }
@@ -964,7 +973,7 @@ export function CleanupPage(props: {
         </Button>
       </>
     )
-  }, [busyActionKey, initialScanPending, projected, refreshPageScan, refreshing, runCleanupFlow])
+  }, [busyActionKey, deployCheckCleanupReason, initialScanPending, projected, refreshPageScan, refreshing, runCleanupFlow])
 
   useEffect(() => {
     onTopActions(topActions)
@@ -1158,6 +1167,7 @@ export function CleanupPage(props: {
       {viewResponse ? (
         <CleanupResponseView
           busyActionKey={busyActionKey}
+          deployCheckReport={deployCheckReport}
           scanBusy={initialScanPending || refreshing}
           onServiceAction={(stack, serviceId, serviceName) =>
             void runCleanupFlow({
