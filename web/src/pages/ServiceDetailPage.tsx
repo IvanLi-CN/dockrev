@@ -9,10 +9,7 @@ import {
   putServiceBackupTargets,
   putServiceSettings,
   type JobListItem,
-  type ServiceBackupRecordItem,
-  type ServiceBackupTargetsResponse,
   type ServiceSettings,
-  type StackDetail,
 } from "../api";
 import { BackupPolicySegmentedControl } from "../components/BackupPolicySegmentedControl";
 import { BackupRecordList } from "../components/ServiceBackupRecords";
@@ -25,7 +22,6 @@ import { buildReadonlySnapshotKey, readReadonlySnapshot, writeReadonlySnapshot }
 import { serviceRowStatus } from "../updateStatus";
 import { ServiceResourcePanel } from "../components/ServiceResourcePanel";
 import { useServiceDetailResourceMonitor } from "./useServiceDetailResourceMonitor";
-import type { ServiceResourceSnapshot } from "../api";
 import { ServiceTopbarMonitorSummary } from "../components/ServiceTopbarMonitorSummary";
 import { ServiceLogsPanel } from "../components/ServiceLogsPanel";
 import { createDefaultAutoUpdatePolicy } from "../components/AutoUpdatePolicyEditor";
@@ -50,39 +46,16 @@ import {
   formatBackupRetentionSummary,
   isDockrevService,
   sanitizeReadonlyStackSnapshot,
+  SERVICE_DETAIL_SNAPSHOT_STALE_MS,
   ServiceDetailReadonlyBlocked,
+  isServiceDetailSnapshotPayload,
+  type ServiceDetailSnapshotPayload,
   type BackupTargetsDraft,
   type ServiceDetailSection,
 } from "./serviceDetailPageHelpers";
 import { useServiceDetailPageState } from "./useServiceDetailPageState";
 import { deployCheckOperationImpactReason, useDeployCheckReport } from "../deployCheck";
 function errorMessage(e: unknown): string { return e instanceof Error ? e.message : String(e); }
-const SERVICE_DETAIL_SNAPSHOT_STALE_MS = 60_000;
-type ServiceDetailSnapshotPayload = {
-  version: 2;
-  readiness: {
-    stack: boolean;
-    history: boolean;
-    backup: boolean;
-    monitoring: boolean;
-  };
-  committedQueryKey: string;
-  stack: StackDetail;
-  jobs: JobListItem[];
-  historyCursor?: string | null;
-  historyNextCursor?: string | null;
-  historyCursorStack?: (string | null)[];
-  backupTargets: ServiceBackupTargetsResponse | null;
-  backupRecords: ServiceBackupRecordItem[];
-  monitoring: ServiceResourceSnapshot | null;
-};
-function isServiceDetailSnapshotPayload(value: unknown): value is ServiceDetailSnapshotPayload {
-  if (!value || typeof value !== "object") return false;
-  const payload = value as Record<string, unknown>;
-  if (payload.version !== 2 || typeof payload.committedQueryKey !== "string" || !payload.readiness || typeof payload.readiness !== "object") return false;
-  const readiness = payload.readiness as Record<string, unknown>;
-  return Boolean(payload.stack) && Array.isArray(payload.jobs) && Array.isArray(payload.backupRecords) && readiness.stack === true && readiness.history === true && readiness.backup === true && readiness.monitoring === true;
-}
 export function ServiceDetailPage(props: {
   stackId: string;
   serviceId: string;
@@ -154,11 +127,7 @@ export function ServiceDetailPage(props: {
     return () => { tabsViewport.removeEventListener("scroll", updateEdges); resizeObserver.disconnect(); };
   }, [tabsViewport]);
   const visibleRollbackTarget = rollbackTargetRefreshing ? null : rollbackTarget
-  const deployCheckRollbackReason = deployCheckOperationImpactReason(
-    deployCheckReport,
-    "rollback",
-    [props.serviceId, props.stackId],
-  );
+  const deployCheckRollbackReason = deployCheckOperationImpactReason(deployCheckReport, "rollback", [props.serviceId, props.stackId]);
   const [jobs, setJobs] = useState<JobListItem[]>([]);
   const [historyPhase, setHistoryPhase] = useState<AsyncDataPhase>("initial-loading");
   const [historySource, setHistorySource] = useState<AsyncDataSource>("none");

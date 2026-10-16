@@ -529,11 +529,7 @@ export function OperationsDashboardSectionView(props: {
             const stackApplySubmitting = stackApplyActionKey
               ? isTargetSubmitting(stackApplyActionKey)
               : false;
-            const stackApplyDeployCheckReason = deployCheckOperationImpactReason(
-              deployCheckReport,
-              "update",
-              scope.operationObjectIds,
-            );
+            const stackApplyDeployCheckReason = deployCheckOperationImpactReason(deployCheckReport, "update", scope.operationObjectIds);
 
             return (
               <div

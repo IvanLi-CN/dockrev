@@ -928,16 +928,8 @@ export function useServiceDetailPageState(props: {
           : service.candidate.archMatch === 'mismatch'
             ? '架构不匹配（仅提示，不允许更新）'
             : undefined
-    const deployCheckUpdateReason = deployCheckOperationImpactReason(
-      deployCheckReport,
-      'update',
-      [serviceId, stackId],
-    )
-    const deployCheckRollbackReason = deployCheckOperationImpactReason(
-      deployCheckReport,
-      'rollback',
-      [serviceId, stackId],
-    )
+    const deployCheckUpdateReason = deployCheckOperationImpactReason(deployCheckReport, 'update', [serviceId, stackId])
+    const deployCheckRollbackReason = deployCheckOperationImpactReason(deployCheckReport, 'rollback', [serviceId, stackId])
     const previewDisabled = busy || Boolean(candidateReason)
     const applyDisabled = applySubmitting && !applyActiveJob
       ? true
