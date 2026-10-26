@@ -57,14 +57,6 @@ fn deserialize_service_update_guard(
 }
 
 impl Db {
-    pub async fn list_stacks(
-        &self,
-        archived: ArchivedFilter,
-    ) -> anyhow::Result<Vec<StackListItem>> {
-        self.list_stacks_with_state(archived, StackStateFilter::Present)
-            .await
-    }
-
     pub async fn list_stacks_with_state(
         &self,
         archived: ArchivedFilter,

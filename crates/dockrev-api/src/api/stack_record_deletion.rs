@@ -7,6 +7,7 @@ use std::{
 
 static STACK_RECORD_DELETION_GUARDS: OnceLock<Mutex<HashSet<String>>> = OnceLock::new();
 const STACK_RECORD_DELETION_INTENT_STALE_AFTER: time::Duration = time::Duration::minutes(10);
+const STACK_RECORD_DELETION_CLEANUP_ERROR: &str = "backup_artifact_cleanup_pending";
 
 struct StackRecordDeletionGuard(String);
 
@@ -442,6 +443,7 @@ pub(super) async fn delete_stack_record(
     // Discovery keeps a stack id across Compose I/O. Serialize record deletion
     // with the scan so a stale id cannot be written back after this transaction.
     let _discovery_guard = crate::discovery::acquire_scan_lock().await;
+    let _cleanup_snapshot_gate = state.cleanup_snapshot_worker.acquire_snapshot_gate().await;
     let now = now_rfc3339().map_err(map_internal)?;
     if let Some(intent_json) = state
         .db
@@ -484,12 +486,15 @@ pub(super) async fn delete_stack_record(
             .pending_stack_record_deletion_cleanup(&stack_id)
             .await
             .map_err(map_internal)?
-            && let Err(error) =
+            && let Err(_error) =
                 retry_pending_stack_record_artifact_cleanup(&state, &stack_id, &audit_json).await
         {
             state
                 .db
-                .mark_stack_record_deletion_cleanup_error(&stack_id, &error.to_string())
+                .mark_stack_record_deletion_cleanup_error(
+                    &stack_id,
+                    STACK_RECORD_DELETION_CLEANUP_ERROR,
+                )
                 .await
                 .map_err(map_internal)?;
             return Err(ApiError::internal(
@@ -672,11 +677,14 @@ pub(super) async fn delete_stack_record(
             .await
             .map_err(map_internal)?;
         if let Some(storage) = &storage
-            && let Err(error) = delete_staged_stack_record_artifacts(&state, storage, &moved).await
+            && let Err(_error) = delete_staged_stack_record_artifacts(&state, storage, &moved).await
         {
             state
                 .db
-                .mark_stack_record_deletion_cleanup_error(&stack_id, &error.to_string())
+                .mark_stack_record_deletion_cleanup_error(
+                    &stack_id,
+                    STACK_RECORD_DELETION_CLEANUP_ERROR,
+                )
                 .await
                 .map_err(map_internal)?;
             return Err(ApiError::internal(
@@ -833,12 +841,15 @@ pub(super) async fn delete_stack_record(
                 .await
                 .map_err(map_internal)?;
             if let Some(storage) = &storage
-                && let Err(error) =
+                && let Err(_error) =
                     delete_staged_stack_record_artifacts(&state, storage, &moved).await
             {
                 state
                     .db
-                    .mark_stack_record_deletion_cleanup_error(&stack_id, &error.to_string())
+                    .mark_stack_record_deletion_cleanup_error(
+                        &stack_id,
+                        STACK_RECORD_DELETION_CLEANUP_ERROR,
+                    )
                     .await
                     .map_err(map_internal)?;
                 return Err(ApiError::internal(
@@ -858,26 +869,32 @@ pub(super) async fn delete_stack_record(
         }
         crate::db::StackRecordDeletionCommit::Deleted => {
             if let Some(storage) = &storage
-                && let Err(error) =
+                && let Err(_error) =
                     delete_staged_stack_record_artifacts(&state, storage, &moved).await
             {
                 state
                     .db
-                    .mark_stack_record_deletion_cleanup_error(&stack_id, &error.to_string())
+                    .mark_stack_record_deletion_cleanup_error(
+                        &stack_id,
+                        STACK_RECORD_DELETION_CLEANUP_ERROR,
+                    )
                     .await
                     .map_err(map_internal)?;
                 return Err(ApiError::internal(
                     "Stack record deleted; backup artifact cleanup is pending",
                 ));
             }
-            if let Err(error) = state
+            if let Err(_error) = state
                 .db
                 .complete_stack_record_deletion_cleanup(&stack_id)
                 .await
             {
                 state
                     .db
-                    .mark_stack_record_deletion_cleanup_error(&stack_id, &error.to_string())
+                    .mark_stack_record_deletion_cleanup_error(
+                        &stack_id,
+                        STACK_RECORD_DELETION_CLEANUP_ERROR,
+                    )
                     .await
                     .map_err(map_internal)?;
                 return Err(ApiError::internal(

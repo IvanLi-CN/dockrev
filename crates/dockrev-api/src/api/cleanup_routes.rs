@@ -383,6 +383,10 @@ async fn run_cleanup_scan_stream(state: Arc<AppState>, req: CleanupScanRequest, 
         }
     });
 
+    // Keep the full scan and its final upsert in the same critical section as
+    // Stack-record deletion so an in-flight scan cannot resurrect a stale
+    // ownership snapshot after deletion invalidates it.
+    let _snapshot_gate = state.cleanup_snapshot_worker.acquire_snapshot_gate().await;
     let result = state
         .cleanup_snapshot_worker
         .build_inventory_snapshot_with_progress(move |snapshot| {

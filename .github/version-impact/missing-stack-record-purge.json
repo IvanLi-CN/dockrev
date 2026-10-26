@@ -1,0 +1,80 @@
+{
+  "schema_version": 1,
+  "kind": "version-impact-record",
+  "change": {
+    "description": "Separate user archive state from missing Compose records and add an authenticated single-record purge flow for missing Stack records.",
+    "release_unit_description": "Dockrev application release unit.",
+    "affected_contracts": [
+      "public-api",
+      "persistent-state"
+    ]
+  },
+  "classification": {
+    "allowed_impacts": [
+      "patch",
+      "minor",
+      "major"
+    ],
+    "planned": {
+      "impact": "minor",
+      "reasoning": "The API adds state filtering, explicit missing fields, and authenticated preview/delete routes without removing existing routes. The migration adds durable audit state and converts legacy missing archive reasons into an explicit missing state; older minor versions are not required to interpret the new state.",
+      "assessed_at": "2026-10-26T08:45:00Z",
+      "evidence": [
+        "docs/adr/0017-archived-stack-record-purge.md",
+        "crates/dockrev-api/src/db/schema_stack_record_deletion.rs"
+      ]
+    },
+    "current": {
+      "impact": "minor",
+      "scope_drift": {
+        "detected": false,
+        "description": "The implementation remains within the approved additive API and explicit persistent-state migration scope."
+      },
+      "reasoning": "Existing clients continue to receive the existing Stack fields and routes; missing records are intentionally excluded from the default list and can be requested explicitly with state=missing or state=all. The candidate reads pre-migration databases through the migration and retains existing Stack IDs when Compose files return.",
+      "reassessed_at": "2026-10-26T08:45:00Z",
+      "evidence": [
+        "crates/dockrev-api/src/api/tests/suite_32_missing_stack_record.rs",
+        "crates/dockrev-api/src/db/schema_stack_record_deletion.rs"
+      ]
+    },
+    "verified": {
+      "impact": "minor",
+      "reasoning": "The public API and persistent-state compatibility behavior are covered by the full Rust suite, migration tests, API contract tests, and current-head CI evidence; no existing route was removed and Docker/Compose resources remain outside the record deletion boundary.",
+      "verified_at": "2026-10-26T08:45:00Z",
+      "evidence": [
+        "cargo test -p dockrev-api --bin dockrev --locked --all-features -- --test-threads=1",
+        "cargo clippy --workspace --all-targets --all-features -- -D warnings",
+        "scenario:docker-ownership@agent-vm"
+      ]
+    }
+  },
+  "compatibility_evidence": {
+    "public_api": {
+      "change": "compatible",
+      "supported_consumer_range": "Dockrev 0.81.x and later releases in the same major version.",
+      "evidence": [
+        "GET /api/stacks remains available with the existing response envelope; state=present is the explicit default and state=missing|all are additive filters.",
+        "GET /api/stacks/{id}/record-deletion-preview and DELETE /api/stacks/{id} require the existing authenticated user boundary and return conflict responses for ineligible records."
+      ]
+    },
+    "persistent_state": {
+      "applicable": true,
+      "state_description": "Migration 0043 adds stack_record_deletion_audits and migrates legacy missing archive reasons to discovered status=missing while preserving user archive state. Successful deletion retains only minimal audit metadata; backup artifact details remain only while cleanup is pending.",
+      "source_program_compatibility_range": "Dockrev 0.81.x databases upgraded by the candidate application; earlier minor versions are not required to interpret the new audit table or missing-state semantics.",
+      "evidence": [
+        "crates/dockrev-api/src/db/schema_stack_record_deletion.rs",
+        "crates/dockrev-api/src/db/schema_tests.rs",
+        "crates/dockrev-api/src/db/stack_record_deletion.rs"
+      ]
+    }
+  },
+  "release_unit": {
+    "member_change_records": [
+      "missing-stack-record-purge"
+    ],
+    "maximum_verified_impact": "minor",
+    "calculation_evidence": [
+      "The public API and persistent-state members are each classified minor; the release-unit maximum is minor."
+    ]
+  }
+}
