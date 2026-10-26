@@ -61,8 +61,18 @@ impl Db {
         &self,
         archived: ArchivedFilter,
     ) -> anyhow::Result<Vec<StackListItem>> {
+        self.list_stacks_with_state(archived, StackStateFilter::Present)
+            .await
+    }
+
+    pub async fn list_stacks_with_state(
+        &self,
+        archived: ArchivedFilter,
+        state: StackStateFilter,
+    ) -> anyhow::Result<Vec<StackListItem>> {
         self.call(move |conn| {
             let filter_clause = archived.where_clause("s.archived");
+            let state_clause = state.where_clause();
             let sql = format!(
                 r#"
 SELECT
@@ -70,6 +80,13 @@ SELECT
   s.name,
   s.last_check_at,
   s.archived,
+  CASE WHEN EXISTS (
+    SELECT 1 FROM discovered_compose_projects d
+    WHERE d.stack_id = s.id AND d.status = 'missing'
+  ) AND NOT EXISTS (
+    SELECT 1 FROM discovered_compose_projects d
+    WHERE d.stack_id = s.id AND d.status <> 'missing'
+  ) THEN 1 ELSE 0 END AS missing,
   (SELECT COUNT(1) FROM services sv WHERE sv.stack_id = s.id) AS services,
   (SELECT COUNT(1) FROM services sv WHERE sv.stack_id = s.id AND sv.archived = 1) AS archived_services,
   (
@@ -84,6 +101,7 @@ SELECT
 FROM stacks s
 WHERE 1=1
 {filter_clause}
+{state_clause}
 ORDER BY s.created_at DESC
 "#,
             );
@@ -95,9 +113,10 @@ ORDER BY s.created_at DESC
                     status: StackStatus::Unknown,
                     last_check_at: row.get(2)?,
                     archived: Some(row.get::<_, i64>(3)? != 0),
-                    services: row.get::<_, i64>(4)? as u32,
-                    archived_services: Some(row.get::<_, i64>(5)? as u32),
-                    updates: row.get::<_, i64>(6)? as u32,
+                    missing: row.get::<_, i64>(4)? != 0,
+                    services: row.get::<_, i64>(5)? as u32,
+                    archived_services: Some(row.get::<_, i64>(6)? as u32),
+                    updates: row.get::<_, i64>(7)? as u32,
                 })
             })?;
 
@@ -106,6 +125,7 @@ ORDER BY s.created_at DESC
         .await
         .context("list stacks")
     }
+
     pub async fn get_stack(&self, stack_id: &str) -> anyhow::Result<Option<StackRecord>> {
         let stack_id = stack_id.to_string();
         self.call(move |conn| {
@@ -1167,33 +1187,6 @@ ORDER BY name ASC
         })
         .await
         .context("list services for runtime scan")
-    }
-
-    pub async fn get_stack_compose_project(
-        &self,
-        stack_id: &str,
-    ) -> anyhow::Result<Option<String>> {
-        let stack_id = stack_id.to_string();
-        self.call(move |conn| {
-            Ok(conn
-                .query_row(
-                    r#"
-SELECT project
-FROM discovered_compose_projects
-WHERE
-  stack_id = ?1
-  AND status != 'missing'
-  AND archived = 0
-ORDER BY last_scan_at DESC
-LIMIT 1
-"#,
-                    params![stack_id],
-                    |row| row.get::<_, String>(0),
-                )
-                .optional()?)
-        })
-        .await
-        .context("get stack compose project")
     }
 
     pub async fn get_service_stack_id(&self, service_id: &str) -> anyhow::Result<Option<String>> {

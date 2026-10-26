@@ -654,31 +654,27 @@ pub async fn run_cleanup_job(
 }
 
 async fn load_managed_context_from_db(db: &Db) -> anyhow::Result<ManagedContext> {
-    let stack_rows = db.list_stacks(ArchivedFilter::Exclude).await?;
+    let stack_rows = db
+        .list_stacks_with_state(ArchivedFilter::Include, crate::db::StackStateFilter::All)
+        .await?;
     let mut context = ManagedContext::default();
 
     for stack_row in stack_rows {
         let Some(stack) = db.get_stack(&stack_row.id).await? else {
             continue;
         };
-        if stack.archived {
-            continue;
-        }
-        let compose_project = db.get_stack_compose_project(&stack.id).await?;
+        let compose_projects = db.get_stack_compose_projects_for_cleanup(&stack.id).await?;
         let stack_ref = ManagedStackRef {
             stack_id: stack.id.clone(),
             stack_name: stack.name.clone(),
         };
-        if let Some(project) = compose_project.clone() {
+        for project in &compose_projects {
             context
                 .compose_project_to_stack
-                .insert(project, stack_ref.clone());
+                .insert(project.clone(), stack_ref.clone());
         }
 
         for service in stack.services {
-            if service.archived.unwrap_or(false) {
-                continue;
-            }
             let service_ref = ManagedServiceRef {
                 stack_id: stack.id.clone(),
                 stack_name: stack.name.clone(),
@@ -688,10 +684,10 @@ async fn load_managed_context_from_db(db: &Db) -> anyhow::Result<ManagedContext>
                     &service.image.reference,
                 ),
             };
-            if let Some(project) = compose_project.clone() {
+            for project in &compose_projects {
                 context
                     .compose_project_service_to_service
-                    .insert((project, service.name.clone()), service_ref.clone());
+                    .insert((project.clone(), service.name.clone()), service_ref.clone());
             }
             if let Some(repo) = service_ref.image_repo.clone() {
                 context

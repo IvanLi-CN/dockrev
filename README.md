@@ -195,8 +195,8 @@ Notes:
 - A deleted historical `/tmp/dockrev-override-*.yml` remains a visible `warning:config_files_stale_dockrev_temp_override`. An administrator can explicitly reconcile it from the UI; reconciliation resolves the running image RepoDigest, uses `--pull never --no-deps --force-recreate`, verifies image IDs/health, and rescans discovery. It never guesses a tag or pulls an image.
 - A readable, strictly image-only managed override is the canonical Compose superset. User overrides, unreadable managed files, unsafe content, and self-upgrade state mount failures remain visible warnings or invalid projects.
 - A discovered project that is absent from the running Docker container list is reconciled from its saved Compose files. Readable, valid files produce `stopped`, which keeps the Stack visible and startable through its existing lifecycle action.
-- Dockrev automatically archives only when every saved Compose file is absent (`ENOENT`), using `auto_archive_compose_files_missing`. Partial absence, permission or I/O failures, and parse failures remain visible as `invalid` and are never auto-archived.
-- A later healthy scan can restore only system archives created by `auto_archive_compose_files_missing` or the legacy `auto_archive_on_restart` reason. A user archive is never changed by discovery.
+- Dockrev marks a Stack as `missing` only when every saved Compose file is absent (`ENOENT`). This discovery state is independent from user archive state: missing records stay available in the dedicated missing Stack view, while partial absence, permission or I/O failures, and parse failures remain visible as non-deletable discovery states.
+- A later healthy scan clears the `missing` state and preserves the Stack ID; a user archive is never changed by discovery. Permanently deleted records are rediscovered with a new Stack ID.
 
 ## Deploy (minimal)
 

@@ -1360,13 +1360,6 @@ async fn run_scan_inner(
                         unarchive_if_active: false,
                     })
                     .await?;
-                state
-                    .db
-                    .archive_discovered_compose_project_for_missing_compose_files(
-                        &persisted.project,
-                        &now,
-                    )
-                    .await?;
                 if previous_status != "missing" {
                     summary.stacks_marked_missing = summary.stacks_marked_missing.saturating_add(1);
                     actions.push(DiscoveryAction {

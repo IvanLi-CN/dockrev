@@ -272,6 +272,31 @@ export function buildMultiStackMixed(): Fixture {
   return f
 }
 
+export function buildMissingStackRecordWorkflow(): Fixture {
+  const f = baseEmpty()
+  const stackId = 'stack-missing-record'
+  const detail = {
+    id: stackId,
+    name: 'legacy-media',
+    missing: true,
+    compose: { type: 'path', composeFiles: ['/srv/legacy-media/compose.yml'], envFile: null },
+    services: [],
+  } satisfies StackDetail
+  f.stacks = [{
+    id: stackId,
+    name: detail.name,
+    status: 'unknown',
+    services: 0,
+    updates: 0,
+    lastCheckAt: nowIso(-86_400_000),
+    missing: true,
+    archived: false,
+    archivedServices: 0,
+  } satisfies StackListItem]
+  f.stackById = { [stackId]: detail }
+  return f
+}
+
 export function buildArchivedStackDetailNavigation(): Fixture {
   const f = buildMultiStackMixed()
   const stackId = 'stack-lab'
@@ -664,6 +689,7 @@ export function buildFixture(scenario: Exclude<DockrevApiScenario, 'error'>): Fi
   }
   if (scenario === 'settings-notification-channel-errors') return buildSettingsNotificationChannelErrors()
   if (scenario === 'multi-stack-mixed') return buildMultiStackMixed()
+  if (scenario === 'missing-stack-record-workflow') return buildMissingStackRecordWorkflow()
   if (scenario === 'overview-discovery-readable') return buildOverviewDiscoveryReadable()
   if (scenario === 'overview-discovery-stale-temp-reconcile') return buildOverviewDiscoveryStaleTempReconcile()
   if (scenario === 'aggregate-dockrev-guard') return buildAggregateDockrevGuard()

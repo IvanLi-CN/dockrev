@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
   getStack,
+  listStacksMissing,
   listStacksArchived,
   type StackDetail,
   type StackListItem,
@@ -8,7 +9,7 @@ import {
 import { useManagementEventBatch } from "../managementEvents";
 import type { AsyncDataPhase, AsyncDataTrigger } from "../asyncData";
 
-export function useArchivedStacksState() {
+export function useStackStateStacksState(scope: "archived" | "missing") {
   const [archivedStacks, setArchivedStacks] = useState<StackListItem[]>([]);
   const [archivedDetails, setArchivedDetails] = useState<
     Record<string, StackDetail | undefined>
@@ -26,7 +27,9 @@ export function useArchivedStacksState() {
     setPhase(hasCommittedDataRef.current ? "refreshing" : "initial-loading");
     setError(null);
     try {
-      const stacks = await listStacksArchived("only");
+      const stacks = scope === "missing"
+        ? await listStacksMissing("include")
+        : await listStacksArchived("only");
       const results = await Promise.all(stacks.map(async (stack) => [stack.id, await getStack(stack.id)] as const));
       if (requestId !== requestIdRef.current) return;
       setArchivedStacks(stacks);
@@ -41,7 +44,7 @@ export function useArchivedStacksState() {
       setPhase("error");
       throw reason;
     }
-  }, []);
+  }, [scope]);
 
   useEffect(() => {
     void Promise.resolve().then(() => requestRefresh()).catch(() => {});
@@ -51,7 +54,7 @@ export function useArchivedStacksState() {
     const archiveStateChanged = events.some((event) => {
       if (event.domain !== "stacks" && event.domain !== "services") return false;
       const operation = event.summary.operation;
-      return operation === "archived" || operation === "restored";
+      return operation === "archived" || operation === "restored" || operation === "record_deleted";
     });
     if (resyncRequired || archiveStateChanged) {
       void requestRefresh().catch(() => {});
@@ -67,4 +70,12 @@ export function useArchivedStacksState() {
     requestRefresh,
     trigger,
   };
+}
+
+export function useArchivedStacksState() {
+  return useStackStateStacksState("archived");
+}
+
+export function useMissingStacksState() {
+  return useStackStateStacksState("missing");
 }

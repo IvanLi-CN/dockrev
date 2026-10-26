@@ -183,69 +183,6 @@ LEFT JOIN stacks s ON s.id = d.stack_id
         .context("list persisted discovered compose projects")
     }
 
-    pub async fn archive_discovered_compose_project_for_missing_compose_files(
-        &self,
-        project: &str,
-        now: &str,
-    ) -> anyhow::Result<()> {
-        let project = project.to_string();
-        let now = now.to_string();
-        self.call(move |conn| {
-            let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
-            tx.execute(
-                r#"
-UPDATE discovered_compose_projects
-SET archived = 1,
-    archived_at = ?2,
-    archived_reason = 'auto_archive_compose_files_missing'
-WHERE project = ?1
-  AND (
-    archived = 0
-    OR archived_reason IN (
-      'auto_archive_on_restart',
-      'auto_archive_compose_files_missing'
-    )
-  )
-"#,
-                params![project, now],
-            )?;
-            tx.execute(
-                r#"
-UPDATE stacks
-SET archived = 1,
-    archived_at = ?2,
-    archived_reason = 'auto_archive_compose_files_missing',
-    updated_at = ?2
-WHERE id = (
-  SELECT stack_id
-  FROM discovered_compose_projects
-  WHERE project = ?1
-)
-  AND (
-    SELECT archived_reason IN (
-      'auto_archive_on_restart',
-      'auto_archive_compose_files_missing'
-    )
-    FROM discovered_compose_projects
-    WHERE project = ?1
-  )
-  AND (
-    archived = 0
-    OR archived_reason IN (
-      'auto_archive_on_restart',
-      'auto_archive_compose_files_missing'
-    )
-  )
-"#,
-                params![project, now],
-            )?;
-            tx.commit()?;
-            Ok(())
-        })
-        .await
-        .context("archive discovered compose project with missing compose files")
-    }
-
     pub async fn list_discovered_compose_projects(
         &self,
         archived: ArchivedFilter,
@@ -474,22 +411,30 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn missing_compose_files_archive_only_system_discovery_records() {
+    async fn missing_status_does_not_change_archive_state() {
         let path = temp_db_path();
         let db = Db::open(&path).await.unwrap();
         let automatic_stack = seed_project(&db, "automatic", None).await;
         let user_stack = seed_project(&db, "manual", Some("user_archive")).await;
         let now = now();
 
-        db.archive_discovered_compose_project_for_missing_compose_files("automatic", &now)
+        for project in ["automatic", "manual"] {
+            db.upsert_discovered_compose_project(DiscoveredComposeProjectUpsert {
+                project: project.to_string(),
+                stack_id: None,
+                status: "missing".to_string(),
+                last_seen_at: None,
+                last_scan_at: now.clone(),
+                last_error: Some("compose_files_missing".to_string()),
+                last_config_files: None,
+                unarchive_if_active: true,
+            })
             .await
             .unwrap();
-        db.archive_discovered_compose_project_for_missing_compose_files("manual", &now)
-            .await
-            .unwrap();
+        }
 
         assert!(
-            db.get_stack(&automatic_stack)
+            !db.get_stack(&automatic_stack)
                 .await
                 .unwrap()
                 .unwrap()
@@ -508,11 +453,7 @@ mod tests {
             })
             .await
             .unwrap();
-        assert!(
-            archive_reasons
-                .iter()
-                .any(|(_, reason)| reason.as_deref() == Some("auto_archive_compose_files_missing"))
-        );
+        assert!(archive_reasons.iter().any(|(_, reason)| reason.is_none()));
         assert!(
             archive_reasons
                 .iter()
@@ -522,7 +463,7 @@ mod tests {
             .list_discovered_compose_projects(ArchivedFilter::Only)
             .await
             .unwrap();
-        assert_eq!(archived.len(), 2);
+        assert_eq!(archived.len(), 1);
 
         drop(db);
         let _ = std::fs::remove_file(&path);

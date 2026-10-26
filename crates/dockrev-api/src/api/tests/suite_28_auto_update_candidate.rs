@@ -141,6 +141,7 @@ fn candidate_provenance_serializes_in_service_stack_and_overview_contracts() {
                 lifecycle_state: crate::api::types::ServiceLifecycleState::Unknown,
             }],
             archived: Some(false),
+            missing: false,
         },
     })
     .unwrap();

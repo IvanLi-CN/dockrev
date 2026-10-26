@@ -15,7 +15,7 @@ use crate::runner::{CommandRunner, CommandSpec};
 mod backup_artifact;
 #[path = "backup_cleanup.rs"]
 mod backup_cleanup;
-use backup_artifact::{
+pub(crate) use backup_artifact::{
     ArtifactCleanupOutcome, artifact_exists, delete_artifact_if_present, find_artifact_tombstone,
     legacy_artifact_key, move_artifact_to_tombstone,
 };

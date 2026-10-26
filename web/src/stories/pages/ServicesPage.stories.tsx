@@ -1,4 +1,5 @@
 import type { Meta, StoryObj } from "@storybook/react";
+import { userEvent, within } from "storybook/test";
 import { ServicesPage } from "../../pages/ServicesPage";
 import { PageHarness } from "../mocks/PageHarness";
 import { withDockrevMockApi } from "../mocks/withDockrevMockApi";
@@ -116,6 +117,90 @@ export const DiscoveryStopped: Story = {
     expectStory(
       window.location.pathname.endsWith("/services/stack-prod"),
       "expected stopped stack row to navigate to the existing stack detail route",
+    );
+  },
+};
+
+export const MissingStackRecordWorkflow: Story = {
+  parameters: {
+    dockrevApiScenario: "missing-stack-record-workflow",
+    viewport: { defaultViewport: "dockrevWide" },
+  },
+  render: renderServices("缺失记录与用户归档状态分离，并支持单条清理"),
+  play: async ({ canvasElement }) => {
+    await sleep(260);
+    const body = within(canvasElement.ownerDocument.body);
+    const findMissingSection = () =>
+      Array.from(canvasElement.querySelectorAll<HTMLElement>(".card")).find(
+        (section) => section.textContent?.includes("缺失 Stack"),
+      );
+
+    const missingSection = findMissingSection();
+    expectStory(missingSection, "expected a separate missing stack section");
+    expectStory(
+      missingSection?.textContent?.includes("legacy-media") &&
+        missingSection.textContent.includes("missing"),
+      "expected the missing stack to carry an explicit missing state",
+    );
+    const archiveSection = Array.from(
+      canvasElement.querySelectorAll<HTMLElement>(".card"),
+    ).find((section) => section.textContent?.includes("已归档"));
+    expectStory(archiveSection, "expected the ordinary archive section");
+    expectStory(
+      !archiveSection?.textContent?.includes("legacy-media"),
+      "missing stacks should not be duplicated in the ordinary archive section",
+    );
+
+    const archiveButton = within(missingSection!).getByRole("button", {
+      name: "归档 Stack",
+    });
+    expectStory(archiveButton, "expected missing stack archive action");
+    await userEvent.click(archiveButton);
+    await body.findByRole("button", { name: "恢复归档" });
+    const archivedMissingSection = findMissingSection();
+    expectStory(
+      archivedMissingSection?.textContent?.includes("archived"),
+      "archiving a missing stack should only add its archive marker",
+    );
+
+    const restoreButton = body.getByRole("button", { name: "恢复归档" });
+    expectStory(restoreButton, "expected missing stack restore action");
+    await userEvent.click(restoreButton);
+    await body.findByRole("button", { name: "永久删除缺失记录" });
+
+    const deleteButton = body.getByRole("button", {
+      name: "永久删除缺失记录",
+    });
+    expectStory(deleteButton, "expected single-record deletion action");
+    deleteButton.click();
+    await sleep(50);
+
+    const dialog = canvasElement.ownerDocument.querySelector<HTMLElement>(
+      '[role="alertdialog"]',
+    );
+    expectStory(dialog, "expected the missing stack deletion confirmation dialog");
+    expectStory(
+      dialog?.textContent?.includes("永久删除缺失记录：legacy-media") &&
+        dialog.textContent.includes("不会停止、删除或修改") &&
+        dialog.textContent.includes("Docker") &&
+        dialog.textContent.includes("Compose 文件"),
+      "deletion confirmation should disclose the Docker and Compose safety boundary",
+    );
+    const confirmButton = Array.from(
+      dialog?.querySelectorAll<HTMLButtonElement>("button") ?? [],
+    ).find((button) => button.textContent?.trim() === "永久删除记录");
+    expectStory(confirmButton, "expected the deletion confirmation action");
+    confirmButton?.click();
+    await sleep(50);
+    await body.findByText("暂无缺失 Stack");
+
+    expectStory(
+      !canvasElement.textContent?.includes("legacy-media"),
+      "deleted missing stack should disappear from the record views",
+    );
+    expectStory(
+      canvasElement.textContent?.includes("暂无缺失 Stack"),
+      "missing stack section should settle to its empty state",
     );
   },
 };

@@ -521,6 +521,28 @@ async fn reconcile_local_artifact_marks_missing_without_delete() {
 }
 
 #[tokio::test]
+async fn missing_local_backup_root_counts_as_absent_artifact() {
+    let root = std::env::temp_dir().join(format!(
+        "dockrev-cleanup-missing-root-{}",
+        ulid::Ulid::new()
+    ));
+    let storage = crate::backup_storage::BackupStorage::Local {
+        logical_root: root.clone(),
+    };
+
+    assert!(
+        !artifact_exists(
+            &FakeRunner::default(),
+            &storage,
+            "unused",
+            Path::new("stack/backup.tar.zst"),
+        )
+        .await
+        .unwrap()
+    );
+}
+
+#[tokio::test]
 async fn local_cleanup_moves_artifact_to_managed_tombstone() {
     let root =
         std::env::temp_dir().join(format!("dockrev-cleanup-tombstone-{}", ulid::Ulid::new()));

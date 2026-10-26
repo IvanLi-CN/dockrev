@@ -15,6 +15,7 @@ pub struct StackListItem {
     pub services: u32,
     pub updates: u32,
     pub last_check_at: String,
+    pub missing: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub archived: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -44,6 +45,44 @@ pub struct StackResponse {
     pub services: Vec<StackServiceResponse>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub archived: Option<bool>,
+    pub missing: bool,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct StackRecordDeletionPreviewResponse {
+    pub stack_id: String,
+    pub stack_name: String,
+    pub missing: bool,
+    pub can_delete: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub blocking_reason: Option<String>,
+    pub backup_artifacts: Vec<StackRecordDeletionArtifactPreview>,
+    pub docker_resources: StackRecordDeletionDockerResources,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct StackRecordDeletionArtifactPreview {
+    pub artifact_path: String,
+    pub present: bool,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct StackRecordDeletionDockerResources {
+    pub status: String,
+    pub containers: u32,
+    pub images: u32,
+    pub volumes: u32,
+    pub networks: u32,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct StackRecordDeletionResponse {
+    pub stack_id: String,
+    pub outcome: String,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]

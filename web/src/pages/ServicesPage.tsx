@@ -1,5 +1,13 @@
 import { useMemo, useState, type ReactNode } from "react";
-import { restoreService, restoreStack, type Service } from "../api";
+import {
+  ApiError,
+  archiveStack,
+  deleteMissingStack,
+  getStackRecordDeletionPreview,
+  restoreService,
+  restoreStack,
+  type Service,
+} from "../api";
 import { ReadonlySnapshotNotice } from "../components/ReadonlySnapshotNotice";
 import { navigate } from "../routes";
 import { Button, Mono, Pill } from "../ui";
@@ -9,8 +17,12 @@ import { formatCurrentTagDisplay as formatTagDisplay } from "../versionDisplay";
 import {
   OperationsDashboardSectionView,
 } from "./OperationsDashboardSection";
-import { useArchivedStacksState } from "./useArchivedStacksState";
+import {
+  useArchivedStacksState,
+  useMissingStacksState,
+} from "./useArchivedStacksState";
 import { useOverviewPageState } from "./useOverviewPageState";
+import { useConfirm } from "../confirm";
 
 function formatShort(ts: string) {
   const d = new Date(ts);
@@ -40,8 +52,25 @@ export function ServicesPage(props: {
     requestRefresh: requestArchivedRefresh,
     trigger: archivedTrigger,
   } = useArchivedStacksState();
+  const {
+    archivedDetails: missingDetails,
+    archivedStacks: missingStacks,
+    error: missingError,
+    loaded: missingLoaded,
+    phase: missingPhase,
+    requestRefresh: requestMissingRefresh,
+    trigger: missingTrigger,
+  } = useMissingStacksState();
+  const confirm = useConfirm();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const refreshRecordViews = async () => {
+    await Promise.all([
+      requestRefresh({ source: "memory", trigger: "user-action" }),
+      requestArchivedRefresh("user-action"),
+      requestMissingRefresh("user-action"),
+    ]);
+  };
   const archivedServices = useMemo(() => {
     const out: Array<{ stackId: string; stackName: string; svc: Service }> =
       [];
@@ -76,7 +105,7 @@ export function ServicesPage(props: {
               setBusy(true);
               setError(null);
               try {
-                await Promise.all([requestRefresh({ source: "memory", trigger: "user-action" }), requestArchivedRefresh("user-action")]);
+                await refreshRecordViews();
               } catch (value: unknown) {
                 setError(
                   value instanceof Error
@@ -97,6 +126,126 @@ export function ServicesPage(props: {
         />
       ) : null}
       <OperationsDashboardSectionView state={state} />
+
+      <AsyncDataRegion
+        className="card"
+        error={missingError}
+        hasData={missingLoaded}
+        label="正在刷新缺失 Stack"
+        onRetry={() => void requestMissingRefresh("user-action").catch(() => undefined)}
+        phase={missingPhase}
+        skeleton={<AsyncDataSkeleton className="archivedStacksLoadingSkeleton" lines={3} />}
+        trigger={missingTrigger}
+      >
+        <div className="sectionRow">
+          <div>
+            <div className="title">缺失 Stack</div>
+            <div className="muted">
+              Compose 文件均已确认不存在。这里的删除只清理 Dockrev 记录和备份文件，不修改宿主文件或 Docker 资源。
+            </div>
+          </div>
+        </div>
+        {missingPhase === "ready-empty" && missingStacks.length === 0 ? (
+          <div className="muted">暂无缺失 Stack</div>
+        ) : null}
+        {missingStacks.length > 0 ? (
+          <div className="svcGrid" style={{ marginTop: 10 }}>
+            {missingStacks.map((stack) => {
+              const detail = missingDetails[stack.id];
+              const title = detail ? detail.name : stack.name;
+              const archived = Boolean(stack.archived);
+              return (
+                <div key={stack.id} className="svcCard" style={{ cursor: "default" }}>
+                  <div className="svcCardTop">
+                    <div className="svcCardName">{title}</div>
+                    <div style={{ display: "flex", gap: 6 }}>
+                      <Pill tone="bad">missing</Pill>
+                      {archived ? <Pill tone="muted">archived</Pill> : null}
+                    </div>
+                  </div>
+                  <div className="svcCardMeta">
+                    <div className="muted">id <Mono>{stack.id}</Mono></div>
+                    <div className="muted">
+                      services <Mono>{stack.services}</Mono> · last scan <Mono>{formatShort(stack.lastCheckAt)}</Mono>
+                    </div>
+                    <div style={{ display: "flex", gap: 8, marginTop: 8, flexWrap: "wrap" }}>
+                      <Button
+                        variant="primary"
+                        disabled={busy || readonlyOffline}
+                        onClick={() => {
+                          void (async () => {
+                            setBusy(true);
+                            setError(null);
+                            try {
+                              if (archived) {
+                                await restoreStack(stack.id);
+                              } else {
+                                await archiveStack(stack.id);
+                              }
+                              await refreshRecordViews();
+                            } catch (value: unknown) {
+                              setError(value instanceof Error ? value.message : String(value));
+                            } finally {
+                              setBusy(false);
+                            }
+                          })();
+                        }}
+                      >
+                        {archived ? "恢复归档" : "归档 Stack"}
+                      </Button>
+                      <Button
+                        variant="ghost"
+                        disabled={busy || readonlyOffline}
+                        onClick={() => {
+                          void (async () => {
+                            setBusy(true);
+                            setError(null);
+                            try {
+                              const preview = await getStackRecordDeletionPreview(stack.id);
+                              if (!preview.canDelete) {
+                                throw new Error(`当前不可删除：${preview.blockingReason ?? "状态已变化"}`);
+                              }
+                              const approved = await confirm({
+                                title: `永久删除缺失记录：${title}`,
+                                body: (
+                                  <div>
+                                    <p>将删除 Dockrev 中的 Stack、服务、历史元数据和备份文件。</p>
+                                    <p>不会停止、删除或修改宿主机 Compose 文件、容器、镜像、卷、网络或构建缓存。</p>
+                                    <p>删除后若 Compose 文件重新出现，Discovery 会创建新的 Stack 记录。</p>
+                                  </div>
+                                ),
+                                confirmText: "永久删除记录",
+                                confirmVariant: "danger",
+                                badgeText: "不可撤销",
+                                badgeTone: "bad",
+                              });
+                              if (!approved) return;
+                              await deleteMissingStack(stack.id);
+                              await refreshRecordViews();
+                            } catch (value: unknown) {
+                              const message = value instanceof ApiError && value.status === 409
+                                ? `删除冲突：${value.message}`
+                                : value instanceof Error
+                                  ? value.message
+                                  : String(value);
+                              setError(message);
+                              await refreshRecordViews().catch(() => undefined);
+                            } finally {
+                              setBusy(false);
+                            }
+                          })();
+                        }}
+                      >
+                        永久删除缺失记录
+                      </Button>
+                    </div>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        ) : null}
+      </AsyncDataRegion>
 
       <AsyncDataRegion
         className="card"
