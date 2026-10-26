@@ -135,6 +135,7 @@ fn deleted_compose_project_labels_do_not_fallback_to_another_stack_by_image() {
             stack_name: "retained".to_string(),
             service_id: "retained-service".to_string(),
             service_name: "web".to_string(),
+            image_references: BTreeSet::from(["ghcr.io/acme/shared:retained".to_string()]),
             image_repo: Some("ghcr.io/acme/shared".to_string()),
         }],
     );
@@ -154,6 +155,31 @@ fn deleted_compose_project_labels_do_not_fallback_to_another_stack_by_image() {
 
     assert_eq!(
         resolve_container_ownership(&container, &managed),
+        CleanupOwnership::Unowned
+    );
+}
+
+#[test]
+fn unused_image_with_unmatched_tag_does_not_fallback_to_another_stack_by_repo() {
+    let mut managed = ManagedContext::default();
+    managed.image_reference_to_services.insert(
+        "ghcr.io/acme/shared:retained".to_string(),
+        vec![ManagedServiceRef {
+            stack_id: "retained-stack".to_string(),
+            stack_name: "retained".to_string(),
+            service_id: "retained-service".to_string(),
+            service_name: "web".to_string(),
+            image_references: BTreeSet::from(["ghcr.io/acme/shared:retained".to_string()]),
+            image_repo: Some("ghcr.io/acme/shared".to_string()),
+        }],
+    );
+    let image = DockerImageInspect {
+        repo_tags: vec!["ghcr.io/acme/shared:deleted".to_string()],
+        ..Default::default()
+    };
+
+    assert_eq!(
+        resolve_image_ownership(&image, &managed),
         CleanupOwnership::Unowned
     );
 }

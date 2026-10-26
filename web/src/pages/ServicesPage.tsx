@@ -128,6 +128,7 @@ export function ServicesPage(props: {
       <OperationsDashboardSectionView state={state} />
 
       <AsyncDataRegion
+        ariaLabelledBy="missing-stacks-title"
         className="card"
         error={missingError}
         hasData={missingLoaded}
@@ -139,7 +140,13 @@ export function ServicesPage(props: {
       >
         <div className="sectionRow">
           <div>
-            <div className="title">缺失 Stack</div>
+            <h2
+              id="missing-stacks-title"
+              className="title"
+              style={{ margin: 0 }}
+            >
+              缺失 Stack
+            </h2>
             <div className="muted">
               Compose 文件均已确认不存在。这里的删除只清理 Dockrev 记录和备份文件，不修改宿主文件或 Docker 资源。
             </div>

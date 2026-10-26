@@ -16,6 +16,34 @@ fn summary_artifact_path(summary_json: &str, stack_id: &str) -> Option<String> {
         .map(ToOwned::to_owned)
 }
 
+fn load_backup_artifact_paths(
+    conn: &rusqlite::Connection,
+    stack_id: &str,
+) -> rusqlite::Result<Vec<String>> {
+    let mut stmt = conn.prepare(
+        r#"
+SELECT b.artifact_path, COALESCE(j.summary_json, '{}')
+FROM backups b
+LEFT JOIN jobs j ON j.id = b.job_id
+WHERE b.stack_id = ?1
+ORDER BY b.created_at DESC, b.id DESC
+"#,
+    )?;
+    stmt.query_map(params![stack_id], |row| {
+        let path = row
+            .get::<_, Option<String>>(0)?
+            .filter(|value| !value.trim().is_empty())
+            .or_else(|| {
+                row.get::<_, String>(1)
+                    .ok()
+                    .and_then(|summary| summary_artifact_path(&summary, stack_id))
+            });
+        Ok(path)
+    })?
+    .collect::<Result<Vec<Option<String>>, _>>()
+    .map(|paths| paths.into_iter().flatten().collect())
+}
+
 #[derive(Clone, Debug)]
 pub(crate) struct StackRecordDeletionBackupArtifact {
     pub artifact_path: String,
@@ -336,31 +364,9 @@ WHERE s.id = ?1
 
             let compose_files = serde_json::from_str::<Vec<String>>(&compose_files_json)
                 .map_err(|error| anyhow::anyhow!("decode stack compose files: {error}"))?;
-            let mut stmt = conn.prepare(
-                r#"
-SELECT b.artifact_path, COALESCE(j.summary_json, '{}')
-FROM backups b
-LEFT JOIN jobs j ON j.id = b.job_id
-WHERE b.stack_id = ?1
-ORDER BY b.created_at DESC, b.id DESC
-"#,
-            )?;
-            let artifacts = stmt
-                .query_map(params![stack_id.clone()], |row| {
-                    let path = row
-                        .get::<_, Option<String>>(0)?
-                        .filter(|value| !value.trim().is_empty())
-                        .or_else(|| {
-                            row.get::<_, String>(1)
-                                .ok()
-                                .and_then(|summary| summary_artifact_path(&summary, &stack_id))
-                        });
-                    Ok(path
-                        .map(|artifact_path| StackRecordDeletionBackupArtifact { artifact_path }))
-                })?
-                .collect::<Result<Vec<_>, _>>()?
+            let artifacts = load_backup_artifact_paths(conn, &stack_id)?
                 .into_iter()
-                .flatten()
+                .map(|artifact_path| StackRecordDeletionBackupArtifact { artifact_path })
                 .collect();
 
             Ok(Some(StackRecordDeletionSnapshot {
@@ -382,12 +388,14 @@ ORDER BY b.created_at DESC, b.id DESC
         actor_principal: &str,
         deleted_at: &str,
         backup_artifacts_json: &str,
+        expected_backup_artifact_paths: &[String],
         pending_artifact_cleanup: bool,
     ) -> anyhow::Result<StackRecordDeletionCommit> {
         let stack_id = stack_id.to_string();
         let actor_principal = actor_principal.to_string();
         let deleted_at = deleted_at.to_string();
         let backup_artifacts_json = backup_artifacts_json.to_string();
+        let expected_backup_artifact_paths = expected_backup_artifact_paths.to_vec();
         self.call(move |conn| {
             if conn
                 .query_row(
@@ -473,6 +481,22 @@ WHERE s.id = ?1
                 tx.commit()?;
                 return Ok(StackRecordDeletionCommit::Conflict(
                     "stack has a pending operation".to_string(),
+                ));
+            }
+
+            if load_backup_artifact_paths(&tx, &stack_id)? != expected_backup_artifact_paths {
+                insert_stack_record_deletion_audit_tx(
+                    &tx,
+                    &stack_id,
+                    &actor_principal,
+                    "conflict",
+                    &deleted_at,
+                    "[]",
+                    false,
+                )?;
+                tx.commit()?;
+                return Ok(StackRecordDeletionCommit::Conflict(
+                    "backup artifacts changed".to_string(),
                 ));
             }
 
@@ -857,6 +881,7 @@ mod tests {
                 "ivan",
                 &timestamp,
                 r#"[{"artifactPath":"/srv/dockrev/backups/stack-record-delete/backup.tar.zst","present":false}]"#,
+                &["/srv/dockrev/backups/stack-record-delete/backup.tar.zst".to_string()],
                 false,
             )
             .await
@@ -927,7 +952,7 @@ mod tests {
         assert_eq!(delivery, (None, "[\"job-unrelated\"]".to_string()));
 
         assert_eq!(
-            db.commit_stack_record_deletion(&stack_id, "ivan", &timestamp, "[]", false)
+            db.commit_stack_record_deletion(&stack_id, "ivan", &timestamp, "[]", &[], false)
                 .await
                 .unwrap(),
             StackRecordDeletionCommit::AlreadyAbsent
@@ -991,29 +1016,118 @@ mod tests {
         .unwrap();
 
         assert!(matches!(
-            db.commit_stack_record_deletion(&non_missing, "ivan", &now(), "[]", false)
+            db.commit_stack_record_deletion(&non_missing, "ivan", &now(), "[]", &[], false)
                 .await
                 .unwrap(),
             StackRecordDeletionCommit::Conflict(reason) if reason == "stack is no longer missing"
         ));
         assert!(matches!(
-            db.commit_stack_record_deletion(&invalid, "ivan", &now(), "[]", false)
+            db.commit_stack_record_deletion(&invalid, "ivan", &now(), "[]", &[], false)
                 .await
                 .unwrap(),
             StackRecordDeletionCommit::Conflict(reason) if reason == "stack is no longer missing"
         ));
         assert!(matches!(
-            db.commit_stack_record_deletion(&pending, "ivan", &now(), "[]", false)
+            db.commit_stack_record_deletion(&pending, "ivan", &now(), "[]", &[], false)
                 .await
                 .unwrap(),
             StackRecordDeletionCommit::Conflict(reason) if reason == "stack has a pending operation"
         ));
         assert!(matches!(
-            db.commit_stack_record_deletion(&target_pending, "ivan", &now(), "[]", false)
+            db.commit_stack_record_deletion(&target_pending, "ivan", &now(), "[]", &[], false)
                 .await
                 .unwrap(),
             StackRecordDeletionCommit::Conflict(reason) if reason == "stack has a pending operation"
         ));
+
+        drop(db);
+        let _ = std::fs::remove_file(&path);
+        let _ = std::fs::remove_file(path.with_extension("sqlite3-wal"));
+        let _ = std::fs::remove_file(path.with_extension("sqlite3-shm"));
+    }
+
+    #[tokio::test]
+    async fn deletion_conflicts_when_backup_inventory_changes_after_snapshot() {
+        let path = temp_db_path();
+        let db = Db::open(&path).await.unwrap();
+        let stack_id = seed_stack(&db, "stack-backup-race", "service-backup-race", "missing").await;
+        let timestamp = now();
+        db.insert_job(JobListItem {
+            id: "job-backup-race".to_string(),
+            r#type: JobType::StackLifecycle,
+            scope: JobScope::Stack,
+            stack_id: Some(stack_id.clone()),
+            service_id: None,
+            status: "success".to_string(),
+            created_by: "test".to_string(),
+            reason: "test".to_string(),
+            created_at: timestamp.clone(),
+            started_at: Some(timestamp.clone()),
+            finished_at: Some(timestamp.clone()),
+            allow_arch_mismatch: false,
+            backup_mode: "none".to_string(),
+            summary_json: json!({}),
+        })
+        .await
+        .unwrap();
+        db.insert_backup("backup-race-1", &stack_id, "job-backup-race", &timestamp)
+            .await
+            .unwrap();
+        db.finish_backup(
+            "backup-race-1",
+            "success",
+            &timestamp,
+            Some("/srv/dockrev/backups/stack-backup-race/one.tar.zst"),
+            Some(1),
+            None,
+        )
+        .await
+        .unwrap();
+
+        let snapshot = db
+            .stack_record_deletion_snapshot(&stack_id)
+            .await
+            .unwrap()
+            .unwrap();
+        let expected_paths = snapshot
+            .backup_artifacts
+            .iter()
+            .map(|artifact| artifact.artifact_path.clone())
+            .collect::<Vec<_>>();
+
+        db.insert_backup("backup-race-2", &stack_id, "job-backup-race", &timestamp)
+            .await
+            .unwrap();
+        db.finish_backup(
+            "backup-race-2",
+            "success",
+            &timestamp,
+            Some("/srv/dockrev/backups/stack-backup-race/two.tar.zst"),
+            Some(1),
+            None,
+        )
+        .await
+        .unwrap();
+
+        assert!(matches!(
+            db.commit_stack_record_deletion(
+                &stack_id,
+                "ivan",
+                &timestamp,
+                "[]",
+                &expected_paths,
+                false,
+            )
+            .await
+            .unwrap(),
+            StackRecordDeletionCommit::Conflict(reason) if reason == "backup artifacts changed"
+        ));
+        let after = db
+            .stack_record_deletion_snapshot(&stack_id)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(after.backup_artifacts.len(), 2);
 
         drop(db);
         let _ = std::fs::remove_file(&path);

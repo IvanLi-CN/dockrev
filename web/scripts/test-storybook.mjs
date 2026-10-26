@@ -1787,7 +1787,8 @@ async function runInteractive({ baseUrl, browser }) {
             window.matchMedia("(max-width: 960px)").matches &&
             button?.getAttribute("aria-expanded") === "false" &&
             drawer instanceof HTMLElement &&
-            drawer.hidden
+            drawer.hidden &&
+            !document.querySelector(".topbar .homepageHeaderContent")
           );
         },
         null,

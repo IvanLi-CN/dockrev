@@ -40,6 +40,7 @@ export function AsyncDataRegion(props: {
   origin?: AsyncDataOrigin
   hasData?: boolean
   className?: string
+  ariaLabelledBy?: string
   label?: string
   error?: string | null
   onRetry?: () => void
@@ -55,6 +56,7 @@ export function AsyncDataRegion(props: {
     origin,
     hasData = false,
     className,
+    ariaLabelledBy,
     label = '正在加载数据',
     error,
     onRetry,
@@ -108,6 +110,7 @@ export function AsyncDataRegion(props: {
 
   return (
     <section
+      aria-labelledby={ariaLabelledBy}
       aria-busy={busy || undefined}
       className={`asyncDataRegion ${initialError ? 'asyncDataInitialErrorRegion' : ''} ${className ?? ''}`}
       data-async-data-phase={phase}

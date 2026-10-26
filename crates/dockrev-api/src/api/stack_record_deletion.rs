@@ -43,6 +43,14 @@ struct StagedStackRecordArtifact {
     present: bool,
 }
 
+fn backup_artifact_paths(snapshot: &crate::db::StackRecordDeletionSnapshot) -> Vec<String> {
+    snapshot
+        .backup_artifacts
+        .iter()
+        .map(|artifact| artifact.artifact_path.clone())
+        .collect()
+}
+
 #[derive(serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct StackRecordDeletionAuditArtifact {
@@ -562,6 +570,7 @@ pub(super) async fn delete_stack_record(
         };
         (Some(storage), staged)
     };
+    let expected_backup_artifact_paths = backup_artifact_paths(&snapshot);
 
     let artifact_audit = serde_json::to_string(
         &staged
@@ -681,6 +690,28 @@ pub(super) async fn delete_stack_record(
             outcome: "already_absent".to_string(),
         }));
     };
+    if backup_artifact_paths(&final_snapshot) != expected_backup_artifact_paths {
+        if let Some(storage) = &storage {
+            restore_staged_stack_record_artifacts(&state, storage, &moved)
+                .await
+                .map_err(map_internal)?;
+        }
+        state
+            .db
+            .finish_stack_record_deletion_intent(
+                &stack_id,
+                "conflict",
+                false,
+                Some("backup artifacts changed during deletion"),
+            )
+            .await
+            .map_err(map_internal)?;
+        record_stack_record_deletion_attempt(&state, &stack_id, &user.principal, "conflict")
+            .await?;
+        return Err(ApiError::conflict(
+            "backup artifacts changed during deletion",
+        ));
+    }
     if !final_snapshot.missing || final_snapshot.has_pending_job {
         if let Some(storage) = &storage {
             restore_staged_stack_record_artifacts(&state, storage, &moved)
@@ -761,6 +792,7 @@ pub(super) async fn delete_stack_record(
             &user.principal,
             &now,
             &artifact_audit,
+            &expected_backup_artifact_paths,
             !moved.is_empty(),
         )
         .await

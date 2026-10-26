@@ -138,6 +138,11 @@ export const MissingStackRecordWorkflow: Story = {
     const missingSection = findMissingSection();
     expectStory(missingSection, "expected a separate missing stack section");
     expectStory(
+      missingSection?.getAttribute("aria-labelledby") === "missing-stacks-title" &&
+        missingSection?.querySelector("h2#missing-stacks-title")?.textContent === "缺失 Stack",
+      "expected the missing stack region to expose a navigable heading",
+    );
+    expectStory(
       missingSection?.textContent?.includes("legacy-media") &&
         missingSection.textContent.includes("missing"),
       "expected the missing stack to carry an explicit missing state",

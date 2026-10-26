@@ -313,7 +313,9 @@ export function AppShell(props: {
                 </div>
               </div>
               {serviceTopbarContext}
-              {props.route.name !== "service" && props.topbarContent ? (
+              {props.route.name !== "service" &&
+              !mobileMenuMediaMatches &&
+              props.topbarContent ? (
                 <div className="topbarGlobalContent">{props.topbarContent}</div>
               ) : null}
               <div className="topbarRight">
