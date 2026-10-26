@@ -1,5 +1,7 @@
 use super::*;
 
+const CLEANUP_INVENTORY_SNAPSHOT_KEY: &str = "aggressive_all";
+
 fn summary_artifact_path(summary_json: &str, stack_id: &str) -> Option<String> {
     let summary = serde_json::from_str::<serde_json::Value>(summary_json).ok()?;
     summary
@@ -261,6 +263,11 @@ impl Db {
                 r#"
 UPDATE stack_record_deletion_audits
 SET outcome = ?2, pending_artifact_cleanup = ?3, cleanup_error = ?4
+    , backup_artifacts_json = CASE
+        WHEN ?3 = 1 AND ?2 IN ('deleted', 'already_absent')
+          THEN backup_artifacts_json
+        ELSE '[]'
+      END
 WHERE id = (
   SELECT id
   FROM stack_record_deletion_audits
@@ -302,7 +309,7 @@ WHERE id = (
         let stack_id = stack_id.to_string();
         self.call(move |conn| {
             conn.execute(
-                "UPDATE stack_record_deletion_audits SET pending_artifact_cleanup = 0, cleanup_error = NULL WHERE stack_id = ?1 AND outcome IN ('deleted', 'already_absent')",
+                "UPDATE stack_record_deletion_audits SET backup_artifacts_json = '[]', pending_artifact_cleanup = 0, cleanup_error = NULL WHERE stack_id = ?1 AND outcome IN ('deleted', 'already_absent')",
                 params![stack_id],
             )?;
             Ok(())
@@ -521,9 +528,20 @@ WHERE j.stack_id = ?1
                 ),
                 params![stack_id.clone()],
             )?;
+            let fully_owned_delivery_condition = format!(
+                "(job_id IN ({related_jobs}) OR EXISTS (SELECT 1 FROM json_each(CASE WHEN json_valid(github_packages_deliveries.job_ids_json) THEN github_packages_deliveries.job_ids_json ELSE '[]' END) ids WHERE ids.value IN ({related_jobs}))) AND (job_id IN ({related_jobs}) OR job_id IS NULL) AND NOT EXISTS (SELECT 1 FROM json_each(CASE WHEN json_valid(github_packages_deliveries.job_ids_json) THEN github_packages_deliveries.job_ids_json ELSE '[]' END) ids WHERE ids.value NOT IN ({related_jobs}))"
+            );
+            // Compatibility databases may have delivery events without an FK
+            // cascade, so remove events for deliveries before deleting them.
             tx.execute(
                 &format!(
-                    "DELETE FROM github_packages_deliveries WHERE (job_id IN ({related_jobs}) OR EXISTS (SELECT 1 FROM json_each(CASE WHEN json_valid(github_packages_deliveries.job_ids_json) THEN github_packages_deliveries.job_ids_json ELSE '[]' END) ids WHERE ids.value IN ({related_jobs}))) AND (job_id IN ({related_jobs}) OR job_id IS NULL) AND NOT EXISTS (SELECT 1 FROM json_each(CASE WHEN json_valid(github_packages_deliveries.job_ids_json) THEN github_packages_deliveries.job_ids_json ELSE '[]' END) ids WHERE ids.value NOT IN ({related_jobs}))"
+                    "DELETE FROM github_packages_delivery_events WHERE delivery_id IN (SELECT delivery_id FROM github_packages_deliveries WHERE {fully_owned_delivery_condition})"
+                ),
+                params![stack_id.clone()],
+            )?;
+            tx.execute(
+                &format!(
+                    "DELETE FROM github_packages_deliveries WHERE {fully_owned_delivery_condition}"
                 ),
                 params![stack_id.clone()],
             )?;
@@ -578,6 +596,17 @@ WHERE j.stack_id = ?1
                 params![stack_id],
             )?;
             tx.execute("DELETE FROM stacks WHERE id = ?1", params![stack_id.clone()])?;
+            // A cleanup apply must not trust an ownership snapshot generated
+            // before this Stack record was removed.
+            tx.execute(
+                "DELETE FROM cleanup_inventory_snapshots WHERE snapshot_key = ?1",
+                params![CLEANUP_INVENTORY_SNAPSHOT_KEY],
+            )?;
+            let persisted_backup_artifacts_json = if pending_artifact_cleanup {
+                backup_artifacts_json.as_str()
+            } else {
+                "[]"
+            };
             let updated_intent = tx.execute(
                 r#"
 UPDATE stack_record_deletion_audits
@@ -599,7 +628,7 @@ WHERE id = (
                     stack_id,
                     actor_principal,
                     deleted_at,
-                    backup_artifacts_json,
+                    persisted_backup_artifacts_json,
                     pending_artifact_cleanup as i64,
                 ],
             )?;
@@ -610,7 +639,7 @@ WHERE id = (
                     &actor_principal,
                     "deleted",
                     &deleted_at,
-                    &backup_artifacts_json,
+                    persisted_backup_artifacts_json,
                     pending_artifact_cleanup,
                 )?;
             }
@@ -863,11 +892,23 @@ mod tests {
                 [],
             )?;
             conn.execute(
+                "INSERT INTO github_packages_deliveries (delivery_id, received_at, first_received_at, decision, job_id, job_ids_json) VALUES ('delivery-record-delete-only', 'now', 'now', 'processed', 'job-record-delete', '[\"job-record-delete\"]')",
+                [],
+            )?;
+            conn.execute(
+                "INSERT INTO github_packages_delivery_events (delivery_id, received_at, payload_json) VALUES ('delivery-record-delete-only', 'now', '{}')",
+                [],
+            )?;
+            conn.execute(
                 "INSERT INTO service_new_version_discoveries (service_id, source_job_id, discovered_at, candidate_digest) VALUES (?1, 'job-record-delete', 'now', 'sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd')",
                 rusqlite::params![service_id],
             )?;
             conn.execute(
                 "INSERT INTO cleanup_inventory_snapshots (snapshot_key, snapshot_json, checked_at, updated_at) VALUES ('global-record-delete', '{}', 'now', 'now')",
+                [],
+            )?;
+            conn.execute(
+                "INSERT INTO cleanup_inventory_snapshots (snapshot_key, snapshot_json, checked_at, updated_at) VALUES ('aggressive_all', '{}', 'now', 'now')",
                 [],
             )?;
             Ok(())
@@ -937,6 +978,17 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(audit, ("ivan".to_string(), "deleted".to_string(), 0));
+        let audit_artifacts = db
+            .call(|conn| {
+                Ok(conn.query_row(
+                    "SELECT backup_artifacts_json FROM stack_record_deletion_audits WHERE outcome = 'deleted'",
+                    [],
+                    |row| row.get::<_, String>(0),
+                )?)
+            })
+            .await
+            .unwrap();
+        assert_eq!(audit_artifacts, "[]");
         let delivery = db
             .call(|conn| {
                 Ok(conn.query_row(
@@ -950,6 +1002,23 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(delivery, (None, "[\"job-unrelated\"]".to_string()));
+        let event_deliveries = db
+            .call(|conn| {
+                let mut stmt = conn.prepare(
+                    "SELECT delivery_id FROM github_packages_delivery_events ORDER BY delivery_id",
+                )?;
+                let rows = stmt.query_map([], |row| row.get::<_, String>(0))?;
+                Ok(rows.collect::<Result<Vec<_>, _>>()?)
+            })
+            .await
+            .unwrap();
+        assert_eq!(event_deliveries, vec!["delivery-record-delete".to_string()]);
+        assert!(
+            db.get_cleanup_inventory_snapshot(CLEANUP_INVENTORY_SNAPSHOT_KEY)
+                .await
+                .unwrap()
+                .is_none()
+        );
 
         assert_eq!(
             db.commit_stack_record_deletion(&stack_id, "ivan", &timestamp, "[]", &[], false)

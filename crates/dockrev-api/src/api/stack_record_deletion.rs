@@ -439,6 +439,9 @@ pub(super) async fn delete_stack_record(
 ) -> Result<Json<StackRecordDeletionResponse>, ApiError> {
     let user = require_user(&state, &headers).await?;
     let _guard = acquire_stack_record_deletion_guard(&stack_id)?;
+    // Discovery keeps a stack id across Compose I/O. Serialize record deletion
+    // with the scan so a stale id cannot be written back after this transaction.
+    let _discovery_guard = crate::discovery::acquire_scan_lock().await;
     let now = now_rfc3339().map_err(map_internal)?;
     if let Some(intent_json) = state
         .db
@@ -685,6 +688,7 @@ pub(super) async fn delete_stack_record(
             .complete_stack_record_deletion_cleanup(&stack_id)
             .await
             .map_err(map_internal)?;
+        let _ = state.cleanup_snapshot_worker.enqueue().await;
         return Ok(Json(StackRecordDeletionResponse {
             stack_id,
             outcome: "already_absent".to_string(),
@@ -846,6 +850,7 @@ pub(super) async fn delete_stack_record(
                 .complete_stack_record_deletion_cleanup(&stack_id)
                 .await
                 .map_err(map_internal)?;
+            let _ = state.cleanup_snapshot_worker.enqueue().await;
             Ok(Json(StackRecordDeletionResponse {
                 stack_id,
                 outcome: "already_absent".to_string(),
@@ -879,6 +884,7 @@ pub(super) async fn delete_stack_record(
                     "Stack record deleted; backup artifact cleanup is pending",
                 ));
             }
+            let _ = state.cleanup_snapshot_worker.enqueue().await;
             state
                 .management_events
                 .publish_change(
