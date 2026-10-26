@@ -486,7 +486,11 @@ export function OverviewPage(props: {
     const sync = () => setIsNarrow(media.matches);
     sync();
     media.addEventListener("change", sync);
-    return () => media.removeEventListener("change", sync);
+    window.addEventListener("resize", sync);
+    return () => {
+      media.removeEventListener("change", sync);
+      window.removeEventListener("resize", sync);
+    };
   }, []);
 
   useEffect(() => {

@@ -21,6 +21,8 @@ const STORIES_REQUIRING_PLAY_SUCCESS = [
   "pages-servicedetailpage--versions-section-forced-update-submission",
   "pages-cleanuppage--confirm-dialog-latest-scan",
   "pages-cleanuppage--confirm-dialog-scrollable-latest-scan",
+  "pages-servicespage--missing-stack-record-workflow",
+  "pages-servicespage--missing-stack-record-conflict-refresh",
 ];
 
 function parsePort(value, fallback) {
@@ -1786,7 +1788,8 @@ async function runInteractive({ baseUrl, browser }) {
             window.matchMedia("(max-width: 960px)").matches &&
             button?.getAttribute("aria-expanded") === "false" &&
             drawer instanceof HTMLElement &&
-            drawer.hidden
+            drawer.hidden &&
+            !document.querySelector(".topbar .homepageHeaderContent")
           );
         },
         null,

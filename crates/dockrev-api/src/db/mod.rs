@@ -31,6 +31,8 @@ mod schema_path;
 mod service_operations;
 mod settings;
 mod snapshots;
+mod stack_compose_projects;
+mod stack_record_deletion;
 mod stacks;
 mod stacks_accepted_state;
 mod stacks_backup_targets;
@@ -156,6 +158,7 @@ pub(crate) use service_operations::{
     ServiceAcceptedState, ServiceAcceptedStateSettlement, ServiceOperationAcquireOutcome,
     ServiceOperationTarget,
 };
+pub(crate) use stack_record_deletion::{StackRecordDeletionCommit, StackRecordDeletionSnapshot};
 pub(crate) use update_stops::UpdateStopRequestOutcome;
 
 pub(crate) const BACKUP_CLEANUP_DELETE_INTENT_PREFIX: &str = "__dockrev_cleanup_delete_intent__:";
@@ -800,6 +803,27 @@ pub enum ArchivedFilter {
     Exclude,
     Include,
     Only,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum StackStateFilter {
+    Present,
+    Missing,
+    All,
+}
+
+impl StackStateFilter {
+    pub(crate) fn where_clause(self) -> &'static str {
+        match self {
+            Self::Present => {
+                "AND NOT (EXISTS (SELECT 1 FROM discovered_compose_projects d WHERE d.stack_id = s.id AND d.status = 'missing') AND NOT EXISTS (SELECT 1 FROM discovered_compose_projects d WHERE d.stack_id = s.id AND d.status <> 'missing'))"
+            }
+            Self::Missing => {
+                "AND EXISTS (SELECT 1 FROM discovered_compose_projects d WHERE d.stack_id = s.id AND d.status = 'missing') AND NOT EXISTS (SELECT 1 FROM discovered_compose_projects d WHERE d.stack_id = s.id AND d.status <> 'missing')"
+            }
+            Self::All => "",
+        }
+    }
 }
 
 fn parse_github_packages_delivery_job_ids(

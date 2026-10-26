@@ -295,7 +295,8 @@ jobs:
 
   frontend-storybook-test:
     name: Frontend Storybook test
-    runs-on: ubuntu-latest
+    # Playwright 1.57 does not support the Ubuntu 26.04 image currently used by ubuntu-latest.
+    runs-on: ubuntu-24.04
     needs: [release-identity-guard, frontend-storybook-build]
     if: needs.release-identity-guard.outputs.skip != 'true'
     timeout-minutes: 25

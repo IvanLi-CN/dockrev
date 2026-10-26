@@ -37,8 +37,19 @@ WHERE project = ?1
                 .as_ref()
                 .map(serde_json::to_string)
                 .transpose()?;
-
             let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
+            let stack_id = match input.stack_id.as_deref() {
+                Some(stack_id)
+                    if tx.query_row(
+                        "SELECT EXISTS (SELECT 1 FROM stacks WHERE id = ?1)",
+                        params![stack_id],
+                        |row| Ok(row.get::<_, i64>(0)? != 0),
+                    )? =>
+                {
+                    Some(stack_id.to_string())
+                }
+                _ => None,
+            };
             tx.execute(
                 r#"
 INSERT INTO discovered_compose_projects (
@@ -54,7 +65,15 @@ INSERT INTO discovered_compose_projects (
   archived_reason
 ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)
 ON CONFLICT(project) DO UPDATE SET
-  stack_id = COALESCE(excluded.stack_id, discovered_compose_projects.stack_id),
+  stack_id = CASE
+    WHEN excluded.stack_id IS NOT NULL
+      AND EXISTS (SELECT 1 FROM stacks WHERE id = excluded.stack_id)
+      THEN excluded.stack_id
+    WHEN excluded.stack_id IS NULL
+      AND EXISTS (SELECT 1 FROM stacks WHERE id = discovered_compose_projects.stack_id)
+      THEN discovered_compose_projects.stack_id
+    ELSE NULL
+  END,
   status = excluded.status,
   last_seen_at = COALESCE(excluded.last_seen_at, discovered_compose_projects.last_seen_at),
   last_scan_at = excluded.last_scan_at,
@@ -66,7 +85,7 @@ ON CONFLICT(project) DO UPDATE SET
 "#,
                 params![
                     input.project,
-                    input.stack_id,
+                    stack_id,
                     input.status,
                     input.last_seen_at,
                     input.last_scan_at,
@@ -181,69 +200,6 @@ LEFT JOIN stacks s ON s.id = d.stack_id
         })
         .await
         .context("list persisted discovered compose projects")
-    }
-
-    pub async fn archive_discovered_compose_project_for_missing_compose_files(
-        &self,
-        project: &str,
-        now: &str,
-    ) -> anyhow::Result<()> {
-        let project = project.to_string();
-        let now = now.to_string();
-        self.call(move |conn| {
-            let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
-            tx.execute(
-                r#"
-UPDATE discovered_compose_projects
-SET archived = 1,
-    archived_at = ?2,
-    archived_reason = 'auto_archive_compose_files_missing'
-WHERE project = ?1
-  AND (
-    archived = 0
-    OR archived_reason IN (
-      'auto_archive_on_restart',
-      'auto_archive_compose_files_missing'
-    )
-  )
-"#,
-                params![project, now],
-            )?;
-            tx.execute(
-                r#"
-UPDATE stacks
-SET archived = 1,
-    archived_at = ?2,
-    archived_reason = 'auto_archive_compose_files_missing',
-    updated_at = ?2
-WHERE id = (
-  SELECT stack_id
-  FROM discovered_compose_projects
-  WHERE project = ?1
-)
-  AND (
-    SELECT archived_reason IN (
-      'auto_archive_on_restart',
-      'auto_archive_compose_files_missing'
-    )
-    FROM discovered_compose_projects
-    WHERE project = ?1
-  )
-  AND (
-    archived = 0
-    OR archived_reason IN (
-      'auto_archive_on_restart',
-      'auto_archive_compose_files_missing'
-    )
-  )
-"#,
-                params![project, now],
-            )?;
-            tx.commit()?;
-            Ok(())
-        })
-        .await
-        .context("archive discovered compose project with missing compose files")
     }
 
     pub async fn list_discovered_compose_projects(
@@ -474,22 +430,30 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn missing_compose_files_archive_only_system_discovery_records() {
+    async fn missing_status_does_not_change_archive_state() {
         let path = temp_db_path();
         let db = Db::open(&path).await.unwrap();
         let automatic_stack = seed_project(&db, "automatic", None).await;
         let user_stack = seed_project(&db, "manual", Some("user_archive")).await;
         let now = now();
 
-        db.archive_discovered_compose_project_for_missing_compose_files("automatic", &now)
+        for project in ["automatic", "manual"] {
+            db.upsert_discovered_compose_project(DiscoveredComposeProjectUpsert {
+                project: project.to_string(),
+                stack_id: None,
+                status: "missing".to_string(),
+                last_seen_at: None,
+                last_scan_at: now.clone(),
+                last_error: Some("compose_files_missing".to_string()),
+                last_config_files: None,
+                unarchive_if_active: true,
+            })
             .await
             .unwrap();
-        db.archive_discovered_compose_project_for_missing_compose_files("manual", &now)
-            .await
-            .unwrap();
+        }
 
         assert!(
-            db.get_stack(&automatic_stack)
+            !db.get_stack(&automatic_stack)
                 .await
                 .unwrap()
                 .unwrap()
@@ -508,11 +472,7 @@ mod tests {
             })
             .await
             .unwrap();
-        assert!(
-            archive_reasons
-                .iter()
-                .any(|(_, reason)| reason.as_deref() == Some("auto_archive_compose_files_missing"))
-        );
+        assert!(archive_reasons.iter().any(|(_, reason)| reason.is_none()));
         assert!(
             archive_reasons
                 .iter()
@@ -522,7 +482,68 @@ mod tests {
             .list_discovered_compose_projects(ArchivedFilter::Only)
             .await
             .unwrap();
-        assert_eq!(archived.len(), 2);
+        assert_eq!(archived.len(), 1);
+
+        drop(db);
+        let _ = std::fs::remove_file(&path);
+        let _ = std::fs::remove_file(path.with_extension("sqlite3-wal"));
+        let _ = std::fs::remove_file(path.with_extension("sqlite3-shm"));
+    }
+
+    #[tokio::test]
+    async fn upsert_does_not_retain_a_stack_id_that_was_deleted() {
+        let path = temp_db_path();
+        let db = Db::open(&path).await.unwrap();
+        let timestamp = now();
+
+        db.upsert_discovered_compose_project(DiscoveredComposeProjectUpsert {
+            project: "new-dangling".to_string(),
+            stack_id: Some("deleted-stack".to_string()),
+            status: "active".to_string(),
+            last_seen_at: Some(timestamp.clone()),
+            last_scan_at: timestamp.clone(),
+            last_error: None,
+            last_config_files: None,
+            unarchive_if_active: false,
+        })
+        .await
+        .unwrap();
+        assert_eq!(
+            db.get_discovered_compose_project("new-dangling")
+                .await
+                .unwrap()
+                .and_then(|record| record.stack_id),
+            None
+        );
+
+        db.call(|conn| {
+            conn.execute(
+                "INSERT INTO discovered_compose_projects (project, stack_id, status, last_scan_at) VALUES ('existing-dangling', 'deleted-stack', 'missing', 'now')",
+                [],
+            )?;
+            Ok(())
+        })
+        .await
+        .unwrap();
+        db.upsert_discovered_compose_project(DiscoveredComposeProjectUpsert {
+            project: "existing-dangling".to_string(),
+            stack_id: None,
+            status: "active".to_string(),
+            last_seen_at: Some(timestamp.clone()),
+            last_scan_at: timestamp,
+            last_error: None,
+            last_config_files: None,
+            unarchive_if_active: false,
+        })
+        .await
+        .unwrap();
+        assert_eq!(
+            db.get_discovered_compose_project("existing-dangling")
+                .await
+                .unwrap()
+                .and_then(|record| record.stack_id),
+            None
+        );
 
         drop(db);
         let _ = std::fs::remove_file(&path);

@@ -116,6 +116,10 @@ impl CleanupSnapshotWorker {
         self.running.load(Ordering::SeqCst)
     }
 
+    pub(crate) async fn acquire_snapshot_gate(&self) -> tokio::sync::MutexGuard<'_, ()> {
+        self.snapshot_gate.lock().await
+    }
+
     pub async fn last_error(&self) -> Option<String> {
         self.last_error.lock().await.clone()
     }
@@ -155,6 +159,7 @@ impl CleanupSnapshotWorker {
     }
 
     async fn refresh_once(&self) -> anyhow::Result<()> {
+        let _snapshot_gate = self.snapshot_gate.lock().await;
         let snapshot = self.build_inventory_snapshot_with_progress(|_| {}).await?;
         let now = now_rfc3339()?;
         let checked_at = snapshot.scanned_at.clone();

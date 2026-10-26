@@ -100,6 +100,8 @@ export type DockrevApiScenario =
   | 'version-tags-popover-snapshot-missing'
   | 'archived-stack-detail-navigation'
   | 'multi-stack-mixed'
+  | 'missing-stack-record-workflow'
+  | 'missing-stack-record-conflict'
   | 'overview-discovery-readable'
   | 'overview-discovery-stale-temp-reconcile'
   | 'overview-resource-monitor-error'

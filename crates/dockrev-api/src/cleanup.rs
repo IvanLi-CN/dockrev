@@ -12,15 +12,20 @@ use crate::api::types::{
     CleanupScanRequest, CleanupScanResponse, CleanupScanStatus, CleanupScope,
     CleanupServerDiskUsage, CleanupStackGroup, CleanupUnownedGroup, JobLogLine, JobProgress,
 };
-use crate::db::{ArchivedFilter, Db};
+use crate::db::Db;
 use crate::runner::{CommandOutput, CommandSpec};
 use crate::state::AppState;
 
 const DOCKER_TIMEOUT: Duration = Duration::from_secs(15);
 
+mod ownership;
 mod parse;
 mod planning;
 
+use ownership::{
+    load_managed_context_from_db, resolve_container_ownership, resolve_image_ownership,
+    resolve_network_ownership, resolve_volume_ownership, snapshot_ownership,
+};
 use parse::{
     ensure_success, fingerprint_hint_from_buildx_text_output, fingerprint_hint_from_output,
     parse_buildx_du_json_lines, parse_buildx_du_text_summary,
@@ -140,6 +145,7 @@ struct ManagedServiceRef {
     stack_name: String,
     service_id: String,
     service_name: String,
+    image_references: BTreeSet<String>,
     image_repo: Option<String>,
 }
 
@@ -147,6 +153,7 @@ struct ManagedServiceRef {
 struct ManagedContext {
     compose_project_to_stack: BTreeMap<String, ManagedStackRef>,
     compose_project_service_to_service: BTreeMap<(String, String), ManagedServiceRef>,
+    image_reference_to_services: BTreeMap<String, Vec<ManagedServiceRef>>,
     repo_to_services: BTreeMap<String, Vec<ManagedServiceRef>>,
 }
 
@@ -653,59 +660,6 @@ pub async fn run_cleanup_job(
     Ok(())
 }
 
-async fn load_managed_context_from_db(db: &Db) -> anyhow::Result<ManagedContext> {
-    let stack_rows = db.list_stacks(ArchivedFilter::Exclude).await?;
-    let mut context = ManagedContext::default();
-
-    for stack_row in stack_rows {
-        let Some(stack) = db.get_stack(&stack_row.id).await? else {
-            continue;
-        };
-        if stack.archived {
-            continue;
-        }
-        let compose_project = db.get_stack_compose_project(&stack.id).await?;
-        let stack_ref = ManagedStackRef {
-            stack_id: stack.id.clone(),
-            stack_name: stack.name.clone(),
-        };
-        if let Some(project) = compose_project.clone() {
-            context
-                .compose_project_to_stack
-                .insert(project, stack_ref.clone());
-        }
-
-        for service in stack.services {
-            if service.archived.unwrap_or(false) {
-                continue;
-            }
-            let service_ref = ManagedServiceRef {
-                stack_id: stack.id.clone(),
-                stack_name: stack.name.clone(),
-                service_id: service.id.clone(),
-                service_name: service.name.clone(),
-                image_repo: crate::snapshot_worker::image_repo_from_image_ref(
-                    &service.image.reference,
-                ),
-            };
-            if let Some(project) = compose_project.clone() {
-                context
-                    .compose_project_service_to_service
-                    .insert((project, service.name.clone()), service_ref.clone());
-            }
-            if let Some(repo) = service_ref.image_repo.clone() {
-                context
-                    .repo_to_services
-                    .entry(repo)
-                    .or_default()
-                    .push(service_ref.clone());
-            }
-        }
-    }
-
-    Ok(context)
-}
-
 async fn scan_candidates_with_progress(
     runner: &std::sync::Arc<dyn crate::runner::CommandRunner>,
     db: &Db,
@@ -799,9 +753,8 @@ async fn scan_candidates_with_progress(
             ],
         )
         .await?;
-        let repos = image_repo_candidates(&inspect);
         let dangling = image_is_dangling(&inspect);
-        let ownership = resolve_image_ownership(&inspect, &repos, managed);
+        let ownership = resolve_image_ownership(&inspect, managed);
         let category = if dangling {
             CleanupInventoryCategory::DanglingImage
         } else if matches!(ownership, CleanupOwnership::Unowned) {
@@ -1055,144 +1008,6 @@ async fn scan_builder_cache_text_summary(
     })
 }
 
-fn resolve_container_ownership(
-    container: &DockerContainerInspect,
-    managed: &ManagedContext,
-) -> CleanupOwnership {
-    if let Some(labels) = container.config.labels.as_ref()
-        && let Some(owner) = resolve_ownership_from_labels(labels, managed, true)
-    {
-        return owner;
-    }
-
-    let mut repos = BTreeSet::new();
-    if let Some(image_ref) = container.config.image.as_deref()
-        && let Some(repo) = crate::snapshot_worker::image_repo_from_image_ref(image_ref)
-    {
-        repos.insert(repo);
-    }
-    resolve_ownership_from_image_repos(&repos, managed)
-}
-
-fn resolve_image_ownership(
-    image: &DockerImageInspect,
-    repos: &BTreeSet<String>,
-    managed: &ManagedContext,
-) -> CleanupOwnership {
-    if let Some(labels) = image.config.labels.as_ref()
-        && let Some(owner) = resolve_ownership_from_labels(labels, managed, true)
-    {
-        return owner;
-    }
-    resolve_ownership_from_image_repos(repos, managed)
-}
-
-fn resolve_volume_ownership(
-    volume: &DockerVolumeInspect,
-    managed: &ManagedContext,
-) -> CleanupOwnership {
-    volume
-        .labels
-        .as_ref()
-        .and_then(|labels| resolve_ownership_from_labels(labels, managed, true))
-        .unwrap_or(CleanupOwnership::Unowned)
-}
-
-fn resolve_network_ownership(
-    network: &DockerNetworkInspect,
-    managed: &ManagedContext,
-) -> CleanupOwnership {
-    network
-        .labels
-        .as_ref()
-        .and_then(|labels| resolve_ownership_from_labels(labels, managed, false))
-        .unwrap_or(CleanupOwnership::Unowned)
-}
-
-fn resolve_ownership_from_labels(
-    labels: &BTreeMap<String, String>,
-    managed: &ManagedContext,
-    allow_service: bool,
-) -> Option<CleanupOwnership> {
-    let project = labels
-        .get("com.docker.compose.project")
-        .map(|value| value.trim())
-        .filter(|value| !value.is_empty())?;
-    let stack = managed.compose_project_to_stack.get(project)?;
-    if allow_service
-        && let Some(service_name) = labels
-            .get("com.docker.compose.service")
-            .map(|value| value.trim())
-            .filter(|value| !value.is_empty())
-        && let Some(service) = managed
-            .compose_project_service_to_service
-            .get(&(project.to_string(), service_name.to_string()))
-    {
-        return Some(CleanupOwnership::Service {
-            stack_id: service.stack_id.clone(),
-            stack_name: service.stack_name.clone(),
-            service_id: service.service_id.clone(),
-            service_name: service.service_name.clone(),
-        });
-    }
-    Some(CleanupOwnership::StackOrphan {
-        stack_id: stack.stack_id.clone(),
-        stack_name: stack.stack_name.clone(),
-    })
-}
-
-fn resolve_ownership_from_image_repos(
-    repos: &BTreeSet<String>,
-    managed: &ManagedContext,
-) -> CleanupOwnership {
-    let mut services = Vec::<ManagedServiceRef>::new();
-    for repo in repos {
-        if let Some(matches) = managed.repo_to_services.get(repo) {
-            services.extend(matches.iter().cloned());
-        }
-    }
-
-    services.sort_by(|a, b| {
-        (a.stack_id.as_str(), a.service_id.as_str())
-            .cmp(&(b.stack_id.as_str(), b.service_id.as_str()))
-    });
-    services.dedup_by(|a, b| a.stack_id == b.stack_id && a.service_id == b.service_id);
-
-    if services.len() == 1 {
-        let service = services.remove(0);
-        return CleanupOwnership::Service {
-            stack_id: service.stack_id,
-            stack_name: service.stack_name,
-            service_id: service.service_id,
-            service_name: service.service_name,
-        };
-    }
-
-    let unique_stack_ids = services
-        .iter()
-        .map(|service| service.stack_id.clone())
-        .collect::<BTreeSet<_>>();
-    if unique_stack_ids.len() == 1
-        && let Some(service) = services.first()
-    {
-        return CleanupOwnership::StackOrphan {
-            stack_id: service.stack_id.clone(),
-            stack_name: service.stack_name.clone(),
-        };
-    }
-
-    CleanupOwnership::Unowned
-}
-
-fn image_repo_candidates(image: &DockerImageInspect) -> BTreeSet<String> {
-    image
-        .repo_tags
-        .iter()
-        .chain(image.repo_digests.iter())
-        .filter_map(|value| crate::snapshot_worker::image_repo_from_image_ref(value))
-        .collect::<BTreeSet<_>>()
-}
-
 fn command_spec_for_action(action: &CleanupCommandAction) -> CommandSpec {
     let args = match action.kind {
         CleanupResourceKind::Container => vec![
@@ -1226,40 +1041,6 @@ fn command_spec_for_action(action: &CleanupCommandAction) -> CommandSpec {
         program: "docker".to_string(),
         args,
         env: Vec::new(),
-    }
-}
-
-fn snapshot_ownership(ownership: CleanupOwnership) -> CleanupInventoryOwnership {
-    match ownership {
-        CleanupOwnership::Service {
-            stack_id,
-            stack_name,
-            service_id,
-            service_name,
-        } => CleanupInventoryOwnership {
-            kind: CleanupInventoryOwnershipType::Service,
-            stack_id: Some(stack_id),
-            stack_name: Some(stack_name),
-            service_id: Some(service_id),
-            service_name: Some(service_name),
-        },
-        CleanupOwnership::StackOrphan {
-            stack_id,
-            stack_name,
-        } => CleanupInventoryOwnership {
-            kind: CleanupInventoryOwnershipType::StackOrphan,
-            stack_id: Some(stack_id),
-            stack_name: Some(stack_name),
-            service_id: None,
-            service_name: None,
-        },
-        CleanupOwnership::Unowned => CleanupInventoryOwnership {
-            kind: CleanupInventoryOwnershipType::Unowned,
-            stack_id: None,
-            stack_name: None,
-            service_id: None,
-            service_name: None,
-        },
     }
 }
 

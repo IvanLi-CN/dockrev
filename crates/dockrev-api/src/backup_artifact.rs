@@ -1,9 +1,17 @@
 use std::{
     path::{Path, PathBuf},
+    sync::LazyLock,
     time::Duration,
 };
 
 use crate::runner::{CommandRunner, CommandSpec};
+
+static BACKUP_ARTIFACT_LIFECYCLE_LOCK: LazyLock<tokio::sync::Mutex<()>> =
+    LazyLock::new(|| tokio::sync::Mutex::new(()));
+
+pub(crate) async fn acquire_lifecycle_lock() -> tokio::sync::MutexGuard<'static, ()> {
+    BACKUP_ARTIFACT_LIFECYCLE_LOCK.lock().await
+}
 
 pub(crate) fn legacy_artifact_key(
     storage: &crate::backup_storage::BackupStorage,
@@ -115,7 +123,11 @@ pub(crate) async fn artifact_exists(
 ) -> anyhow::Result<bool> {
     match storage {
         crate::backup_storage::BackupStorage::Local { logical_root } => {
-            let root = tokio::fs::canonicalize(logical_root).await?;
+            let root = match tokio::fs::canonicalize(logical_root).await {
+                Ok(root) => root,
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(false),
+                Err(error) => return Err(error.into()),
+            };
             let artifact_path = logical_root.join(artifact_key);
             ensure_local_path_within_root(logical_root, &root, artifact_key).await?;
             let final_is_symlink = tokio::fs::symlink_metadata(&artifact_path)

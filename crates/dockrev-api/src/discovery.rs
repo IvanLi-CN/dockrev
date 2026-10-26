@@ -21,6 +21,10 @@ use crate::{
 
 static DISCOVERY_SCAN_LOCK: LazyLock<tokio::sync::Mutex<()>> =
     LazyLock::new(|| tokio::sync::Mutex::new(()));
+
+pub(crate) async fn acquire_scan_lock() -> tokio::sync::MutexGuard<'static, ()> {
+    DISCOVERY_SCAN_LOCK.lock().await
+}
 mod managed_override_reconcile;
 pub(crate) use crate::discovery_compose::{
     PersistedComposeFilesState, classify_persisted_compose_files,
@@ -928,7 +932,7 @@ async fn run_scan_inner(
     state: &AppState,
     progress_job_id: Option<&str>,
 ) -> anyhow::Result<TriggerDiscoveryScanResponse> {
-    let _scan_guard = DISCOVERY_SCAN_LOCK.lock().await;
+    let _scan_guard = acquire_scan_lock().await;
     let started_at = now_rfc3339()?;
     let start = std::time::Instant::now();
     let now = started_at.clone();
@@ -1359,13 +1363,6 @@ async fn run_scan_inner(
                         last_config_files: Some(compose_files),
                         unarchive_if_active: false,
                     })
-                    .await?;
-                state
-                    .db
-                    .archive_discovered_compose_project_for_missing_compose_files(
-                        &persisted.project,
-                        &now,
-                    )
                     .await?;
                 if previous_status != "missing" {
                     summary.stacks_marked_missing = summary.stacks_marked_missing.saturating_add(1);

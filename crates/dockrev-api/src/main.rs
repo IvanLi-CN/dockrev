@@ -55,7 +55,11 @@ use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
 async fn recover_managed_override_transactions(state: &std::sync::Arc<state::AppState>) {
     let _operation_guard = managed_override::operation_lock().await;
-    let stack_items = match state.db.list_stacks(db::ArchivedFilter::Include).await {
+    let stack_items = match state
+        .db
+        .list_stacks_with_state(db::ArchivedFilter::Include, db::StackStateFilter::All)
+        .await
+    {
         Ok(stack_items) => stack_items,
         Err(error) => {
             tracing::error!(error = %error, "failed to list stacks for managed override recovery");

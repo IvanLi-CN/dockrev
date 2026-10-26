@@ -383,6 +383,10 @@ async fn run_cleanup_scan_stream(state: Arc<AppState>, req: CleanupScanRequest, 
         }
     });
 
+    // Keep the full scan and its final upsert in the same critical section as
+    // Stack-record deletion so an in-flight scan cannot resurrect a stale
+    // ownership snapshot after deletion invalidates it.
+    let _snapshot_gate = state.cleanup_snapshot_worker.acquire_snapshot_gate().await;
     let result = state
         .cleanup_snapshot_worker
         .build_inventory_snapshot_with_progress(move |snapshot| {
@@ -488,6 +492,8 @@ pub(super) async fn apply_cleanups(
 ) -> Result<Json<CleanupApplyResponse>, ApiError> {
     let user = require_user(&state, &headers).await?;
     validate_cleanup_apply_request(&req)?;
+    // Keep snapshot validation and job registration atomic with record deletion.
+    let _snapshot_gate = state.cleanup_snapshot_worker.acquire_snapshot_gate().await;
     let scan_req = CleanupScanRequest {
         reason: CleanupScanReason::Confirm,
         preset: req.preset.clone(),

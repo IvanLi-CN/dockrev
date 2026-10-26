@@ -20,6 +20,7 @@ import { handleGhcrRoutes } from './handlers/ghcr'
 import { handleJobStateRoutes } from './handlers/jobState'
 import { handleServiceLifecycleRoute } from './handlers/serviceLifecycle'
 import { handleServiceStateRoutes } from './handlers/serviceState'
+import { handleStackRecordRoutes } from './handlers/stackRecord'
 import {
   cloneFixture,
   parseCleanupScanRequest,
@@ -839,15 +840,8 @@ export function installDockrevMockApi(
     // stacks
     const lifecycleResponse = handleServiceLifecycleRoute({ scenario, method, urlPath, init, fixture: f, findService, jobSeqRef, json })
     if (lifecycleResponse) return lifecycleResponse
-    if (method === 'GET' && (urlPathWithQuery === '/api/stacks' || urlPathWithQuery.startsWith('/api/stacks?'))) {
-      const query = url?.search ? url.search.slice(1) : urlPathWithQuery.includes('?') ? urlPathWithQuery.split('?')[1] : ''
-      const params = new URLSearchParams(query)
-      const archived = params.get('archived') ?? 'exclude'
-      let stacks = f.stacks
-      if (archived === 'only') stacks = stacks.filter((s) => Boolean(s.archived))
-      if (archived === 'exclude') stacks = stacks.filter((s) => !s.archived)
-      return json({ stacks })
-    }
+    const stackRecordResponse = handleStackRecordRoutes({ method, urlPath, urlPathWithQuery, fixture: f, scenario })
+    if (stackRecordResponse) return stackRecordResponse
     if (method === 'GET' && urlPath.startsWith('/api/stacks/') && urlPath.endsWith('/settings')) {
       const id = decodeURIComponent(urlPath.split('/').slice(3, -1).join('/'))
       const settings = f.stackSettingsById[id] ?? { autoUpdatePolicy: { mode: 'override', enabled: false, rules: [] } }
@@ -875,14 +869,14 @@ export function installDockrevMockApi(
       if (item) item.archived = true
       if (item) item.archivedServices = f.stackById[id]?.services.filter((s) => Boolean(s.archived)).length ?? 0
       if (f.stackById[id]) f.stackById[id].archived = true
-      return json({}, { status: 204 })
+      return new Response(null, { status: 204 })
     }
     if (method === 'POST' && urlPath.startsWith('/api/stacks/') && urlPath.endsWith('/restore')) {
       const id = decodeURIComponent(urlPath.split('/').slice(3, -1).join('/'))
       const item = f.stacks.find((s) => s.id === id)
       if (item) item.archived = false
       if (f.stackById[id]) f.stackById[id].archived = false
-      return json({}, { status: 204 })
+      return new Response(null, { status: 204 })
     }
     // checks / updates
     if (method === 'POST' && urlPath === '/api/checks') return json({ checkId: `check-${Math.random().toString(16).slice(2)}` })

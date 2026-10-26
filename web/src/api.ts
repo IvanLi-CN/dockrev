@@ -11,6 +11,8 @@ import type {
   PutServiceBackupTargetsResponse,
   ServiceDigestTagsSnapshotResult,
   StackDetail,
+  StackRecordDeletionPreview,
+  StackRecordDeletionResponse,
   ServiceRepoLinkInferenceResponse,
   ServiceTagSuggestionsResponse,
   ServiceLogSnapshotResponse,
@@ -240,15 +242,30 @@ export async function listStacks(options: ApiRequestOptions = {}): Promise<Stack
 }
 
 export async function listStacksArchived(filter: 'exclude' | 'include' | 'only'): Promise<StackListItem[]> {
-  const resp = await apiFetch(`/api/stacks?archived=${encodeURIComponent(filter)}`)
+  const resp = await apiFetch(`/api/stacks?state=present&archived=${encodeURIComponent(filter)}`)
   const data = await resp.json()
   return data.stacks as StackListItem[]
 }
 
+export async function listStacksMissing(filter: 'exclude' | 'include' | 'only' = 'include'): Promise<StackListItem[]> {
+  const resp = await apiFetch(`/api/stacks?state=missing&archived=${encodeURIComponent(filter)}`)
+  const data = await resp.json()
+  return data.stacks as StackListItem[]
+}
 export async function getStack(stackId: string, options: ApiRequestOptions = {}): Promise<StackDetail> {
   const resp = await apiFetch(`/api/stacks/${encodeURIComponent(stackId)}`, options)
   const data = await resp.json()
   return data.stack as StackDetail
+}
+
+export async function getStackRecordDeletionPreview(stackId: string): Promise<StackRecordDeletionPreview> {
+  const resp = await apiFetch(`/api/stacks/${encodeURIComponent(stackId)}/record-deletion-preview`)
+  return (await resp.json()) as StackRecordDeletionPreview
+}
+
+export async function deleteMissingStack(stackId: string): Promise<StackRecordDeletionResponse> {
+  const resp = await apiFetch(`/api/stacks/${encodeURIComponent(stackId)}`, { method: 'DELETE' })
+  return (await resp.json()) as StackRecordDeletionResponse
 }
 
 export async function getStackSettings(stackId: string): Promise<StackSettings> {

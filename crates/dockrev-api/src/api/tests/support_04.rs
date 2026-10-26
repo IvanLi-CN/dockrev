@@ -117,7 +117,9 @@ impl CommandRunner for CleanupRunner {
                             "SizeRw": 512,
                             "Config": {
                                 "Image": "alpine:3.18",
-                                "Labels": {}
+                                "Labels": {
+                                    "com.docker.compose.project": "demo"
+                                }
                             },
                             "State": { "Status": "exited" },
                             "Mounts": [],

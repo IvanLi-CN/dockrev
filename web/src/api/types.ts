@@ -20,6 +20,7 @@ export type StackListItem = {
   services: number
   updates: number
   lastCheckAt: string
+  missing?: boolean
   archived?: boolean
   archivedServices?: number
 }
@@ -197,6 +198,31 @@ export type Service = {
   newVersionDiscoveryCount?: number | null
   settings: ServiceSettings
   archived?: boolean
+  missing?: boolean
+}
+
+export type StackRecordDeletionPreview = {
+  stackId: string
+  stackName: string
+  missing: boolean
+  canDelete: boolean
+  blockingReason?: string
+  backupArtifacts: Array<{
+    artifactPath: string
+    present: boolean
+  }>
+  dockerResources: {
+    status: string
+    containers: number
+    images: number
+    volumes: number
+    networks: number
+  }
+}
+
+export type StackRecordDeletionResponse = {
+  stackId: string
+  outcome: 'deleted' | 'already_absent'
 }
 
 export type ServiceDigestTagsScanSummary = {
@@ -242,6 +268,7 @@ export type StackDetail = {
   compose: ComposeConfig
   services: Service[]
   archived?: boolean
+  missing?: boolean
 }
 
 export type ServiceRepoLinkInferenceResponse = {

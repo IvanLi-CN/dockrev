@@ -55,6 +55,7 @@ mod jobs;
 mod notifications;
 mod operations;
 pub(crate) mod services;
+mod stack_record_deletion;
 mod stacks;
 mod webhooks;
 
@@ -75,6 +76,7 @@ pub(crate) use operations::{
     summary_emits_new_version_notification, summary_matched_service_ids,
 };
 use services::*;
+use stack_record_deletion::*;
 pub(crate) use stacks::needs_version_inference_for_tags;
 use stacks::*;
 use webhooks::*;
@@ -197,7 +199,14 @@ pub fn router(state: Arc<AppState>) -> Router {
             "/api/stacks",
             get(list_stacks).post(register_stack_disabled),
         )
-        .route("/api/stacks/{stack_id}", get(get_stack))
+        .route(
+            "/api/stacks/{stack_id}",
+            get(get_stack).delete(delete_stack_record),
+        )
+        .route(
+            "/api/stacks/{stack_id}/record-deletion-preview",
+            get(get_stack_record_deletion_preview),
+        )
         .route(
             "/api/stacks/{stack_id}/settings",
             get(get_stack_settings).put(put_stack_settings),

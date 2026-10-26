@@ -8,7 +8,10 @@ pub(super) async fn list_stacks(
     let _user = require_user(&state, &headers).await?;
     let stacks = state
         .db
-        .list_stacks(parse_archived_filter(q.archived.as_deref())?)
+        .list_stacks_with_state(
+            parse_archived_filter(q.archived.as_deref())?,
+            parse_stack_state_filter(q.state.as_deref())?,
+        )
         .await
         .map_err(map_internal)?;
     Ok(Json(ListStacksResponse { stacks }))
@@ -103,6 +106,20 @@ pub(super) async fn put_stack_settings(
 #[serde(rename_all = "camelCase")]
 pub(super) struct ListStacksQuery {
     archived: Option<String>,
+    state: Option<String>,
+}
+
+pub(super) fn parse_stack_state_filter(
+    input: Option<&str>,
+) -> Result<crate::db::StackStateFilter, ApiError> {
+    match input.unwrap_or("present") {
+        "present" => Ok(crate::db::StackStateFilter::Present),
+        "missing" => Ok(crate::db::StackStateFilter::Missing),
+        "all" => Ok(crate::db::StackStateFilter::All),
+        other => Err(ApiError::invalid_argument(format!(
+            "invalid stack state filter: {other}"
+        ))),
+    }
 }
 
 pub(super) fn parse_archived_filter(
@@ -1006,6 +1023,11 @@ pub(super) async fn get_stack(
     enrich_services_with_version_inference(&state, &mut stack.services, true).await?;
     enrich_services_with_auto_update_state(&state, &mut stack.services).await?;
     enrich_services_with_new_version_discovery_counts(&state, &mut stack.services).await?;
+    let missing = state
+        .db
+        .is_stack_missing(&stack_id)
+        .await
+        .map_err(map_internal)?;
     let lifecycle_states = lifecycle_states_for_stack(&state, &stack, &stack.services).await;
     let services = stack
         .services
@@ -1024,6 +1046,7 @@ pub(super) async fn get_stack(
             compose: stack.compose,
             services,
             archived: Some(stack.archived),
+            missing,
         },
     }))
 }

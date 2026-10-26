@@ -16,6 +16,8 @@ mod schema_resource_latest;
 #[path = "schema_service_version_tag_observations.rs"]
 mod schema_service_version_tag_observations;
 mod schema_settings_release_notes;
+#[path = "schema_stack_record_deletion.rs"]
+mod schema_stack_record_deletion;
 include!("schema_auto_update.rs");
 
 fn ensure_service_columns(conn: &rusqlite::Connection) -> anyhow::Result<()> {
@@ -657,6 +659,7 @@ pub(super) fn migrate(conn: &mut rusqlite::Connection) -> anyhow::Result<()> {
     schema_job_history_retention::apply(conn)?;
     schema_backup_cleanup_state::apply(conn)?;
     schema_accepted_state_generation::apply(conn)?;
+    schema_stack_record_deletion::apply(conn)?;
     let tx = conn.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
     super::release_stale_cancelled_auto_policy_job_service_leases_tx(&tx)?;
     tx.commit()?;
