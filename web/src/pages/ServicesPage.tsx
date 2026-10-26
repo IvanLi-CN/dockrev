@@ -438,7 +438,7 @@ export function ServicesPage(props: {
         ) : null}
       </AsyncDataRegion>
 
-      {error ? <div className="error">{error}</div> : null}
+      {error ? <div className="error" role="alert" aria-live="assertive">{error}</div> : null}
       {busy ? <div className="muted">处理中…</div> : null}
     </div>
   );

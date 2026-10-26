@@ -615,11 +615,14 @@ pub(super) async fn delete_stack_record(
             )
             .await
             {
-                let restore_error = restore_staged_stack_record_artifacts(&state, storage, &moved)
-                    .await
-                    .err()
-                    .map(|restore| format!("; restore failed: {restore}"))
-                    .unwrap_or_default();
+                let mut attempted = moved.clone();
+                attempted.push(item.clone());
+                let restore_error =
+                    restore_staged_stack_record_artifacts(&state, storage, &attempted)
+                        .await
+                        .err()
+                        .map(|restore| format!("; restore failed: {restore}"))
+                        .unwrap_or_default();
                 if restore_error.is_empty() {
                     state
                         .db

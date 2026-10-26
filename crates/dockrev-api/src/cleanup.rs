@@ -1056,9 +1056,13 @@ fn resolve_container_ownership(
     managed: &ManagedContext,
 ) -> CleanupOwnership {
     if let Some(labels) = container.config.labels.as_ref()
-        && let Some(owner) = resolve_ownership_from_labels(labels, managed, true)
+        && labels
+            .get("com.docker.compose.project")
+            .map(|value| !value.trim().is_empty())
+            .unwrap_or(false)
     {
-        return owner;
+        return resolve_ownership_from_labels(labels, managed, true)
+            .unwrap_or(CleanupOwnership::Unowned);
     }
 
     let mut repos = BTreeSet::new();

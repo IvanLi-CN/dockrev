@@ -126,6 +126,39 @@ fn service_and_stack_scope_exclude_unowned_candidates() {
 }
 
 #[test]
+fn deleted_compose_project_labels_do_not_fallback_to_another_stack_by_image() {
+    let mut managed = ManagedContext::default();
+    managed.repo_to_services.insert(
+        "ghcr.io/acme/shared".to_string(),
+        vec![ManagedServiceRef {
+            stack_id: "retained-stack".to_string(),
+            stack_name: "retained".to_string(),
+            service_id: "retained-service".to_string(),
+            service_name: "web".to_string(),
+            image_repo: Some("ghcr.io/acme/shared".to_string()),
+        }],
+    );
+    let mut labels = BTreeMap::new();
+    labels.insert(
+        "com.docker.compose.project".to_string(),
+        "deleted-project".to_string(),
+    );
+    labels.insert("com.docker.compose.service".to_string(), "web".to_string());
+    let container = DockerContainerInspect {
+        config: DockerInspectConfig {
+            image: Some("ghcr.io/acme/shared:latest".to_string()),
+            labels: Some(labels),
+        },
+        ..Default::default()
+    };
+
+    assert_eq!(
+        resolve_container_ownership(&container, &managed),
+        CleanupOwnership::Unowned
+    );
+}
+
+#[test]
 fn build_grouped_response_keeps_service_and_stack_orphans_separate() {
     let candidates = vec![
         sample_candidate(
