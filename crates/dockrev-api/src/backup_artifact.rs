@@ -1,9 +1,17 @@
 use std::{
     path::{Path, PathBuf},
+    sync::LazyLock,
     time::Duration,
 };
 
 use crate::runner::{CommandRunner, CommandSpec};
+
+static BACKUP_ARTIFACT_LIFECYCLE_LOCK: LazyLock<tokio::sync::Mutex<()>> =
+    LazyLock::new(|| tokio::sync::Mutex::new(()));
+
+pub(crate) async fn acquire_lifecycle_lock() -> tokio::sync::MutexGuard<'static, ()> {
+    BACKUP_ARTIFACT_LIFECYCLE_LOCK.lock().await
+}
 
 pub(crate) fn legacy_artifact_key(
     storage: &crate::backup_storage::BackupStorage,

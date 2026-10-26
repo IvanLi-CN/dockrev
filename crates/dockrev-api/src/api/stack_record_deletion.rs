@@ -453,7 +453,16 @@ pub(super) async fn delete_stack_record(
     Path(stack_id): Path<String>,
 ) -> Result<Json<StackRecordDeletionResponse>, ApiError> {
     let user = require_user(&state, &headers).await?;
-    let _guard = acquire_stack_record_deletion_guard(&stack_id)?;
+    let _guard = match acquire_stack_record_deletion_guard(&stack_id) {
+        Ok(guard) => guard,
+        Err(_) => {
+            record_stack_record_deletion_attempt(&state, &stack_id, &user.principal, "conflict")
+                .await?;
+            return Err(ApiError::conflict(
+                "stack record deletion already in progress",
+            ));
+        }
+    };
     // Managed override recovery holds this lock while it may still need the Stack record.
     // Acquire it before the discovery lock because recovery rescans while holding this lock.
     let _managed_override_operation_guard = crate::managed_override::operation_lock().await;
@@ -461,6 +470,7 @@ pub(super) async fn delete_stack_record(
     // with the scan so a stale id cannot be written back after this transaction.
     let _discovery_guard = crate::discovery::acquire_scan_lock().await;
     let _cleanup_snapshot_gate = state.cleanup_snapshot_worker.acquire_snapshot_gate().await;
+    let _artifact_lifecycle_guard = crate::backup::acquire_artifact_lifecycle_lock().await;
     let now = now_rfc3339().map_err(map_internal)?;
     if let Some(intent_json) = state
         .db
@@ -483,13 +493,17 @@ pub(super) async fn delete_stack_record(
                 "stack record deletion already in progress",
             ));
         }
-        recover_pending_stack_record_deletion_intent(
+        if let Err(error) = recover_pending_stack_record_deletion_intent(
             &state,
             &stack_id,
             &intent_json.backup_artifacts_json,
         )
         .await
-        .map_err(map_internal)?;
+        {
+            record_stack_record_deletion_attempt(&state, &stack_id, &user.principal, "failed")
+                .await?;
+            return Err(map_internal(error));
+        }
     }
 
     let Some(snapshot) = state
@@ -514,6 +528,8 @@ pub(super) async fn delete_stack_record(
                 )
                 .await
                 .map_err(map_internal)?;
+            record_stack_record_deletion_attempt(&state, &stack_id, &user.principal, "failed")
+                .await?;
             return Err(ApiError::internal(
                 "Stack record was deleted; backup artifact cleanup remains pending",
             ));
@@ -853,6 +869,8 @@ pub(super) async fn delete_stack_record(
                 )
                 .await
                 .map_err(map_internal)?;
+            record_stack_record_deletion_attempt(&state, &stack_id, &user.principal, "conflict")
+                .await?;
             Err(ApiError::conflict(reason))
         }
         crate::db::StackRecordDeletionCommit::AlreadyAbsent => {
@@ -878,6 +896,8 @@ pub(super) async fn delete_stack_record(
                     )
                     .await
                     .map_err(map_internal)?;
+                record_stack_record_deletion_attempt(&state, &stack_id, &user.principal, "failed")
+                    .await?;
                 return Err(ApiError::internal(
                     "Stack record was deleted; backup artifact cleanup is pending",
                 ));
@@ -906,6 +926,8 @@ pub(super) async fn delete_stack_record(
                     )
                     .await
                     .map_err(map_internal)?;
+                record_stack_record_deletion_attempt(&state, &stack_id, &user.principal, "failed")
+                    .await?;
                 return Err(ApiError::internal(
                     "Stack record deleted; backup artifact cleanup is pending",
                 ));
@@ -923,6 +945,8 @@ pub(super) async fn delete_stack_record(
                     )
                     .await
                     .map_err(map_internal)?;
+                record_stack_record_deletion_attempt(&state, &stack_id, &user.principal, "failed")
+                    .await?;
                 return Err(ApiError::internal(
                     "Stack record deleted; backup artifact cleanup is pending",
                 ));

@@ -6,8 +6,9 @@ export function handleStackRecordRoutes(args: {
   urlPath: string
   urlPathWithQuery: string
   fixture: Fixture
+  scenario?: string
 }): Response | null {
-  const { method, urlPath, urlPathWithQuery, fixture } = args
+  const { method, urlPath, urlPathWithQuery, fixture, scenario } = args
   if (method === 'GET' && (urlPathWithQuery === '/api/stacks' || urlPathWithQuery.startsWith('/api/stacks?'))) {
     const query = urlPathWithQuery.includes('?') ? urlPathWithQuery.split('?')[1] : ''
     const params = new URLSearchParams(query)
@@ -37,6 +38,12 @@ export function handleStackRecordRoutes(args: {
     const id = decodeURIComponent(urlPath.split('/').slice(3).join('/'))
     const index = fixture.stacks.findIndex((stack) => stack.id === id)
     if (index < 0) return json({ stackId: id, outcome: 'already_absent' })
+    if (scenario === 'missing-stack-record-conflict' && fixture.stacks[index]?.missing) {
+      fixture.stacks[index].missing = false
+      const detail = fixture.stackById[id]
+      if (detail) detail.missing = false
+      return json({ error: { code: 'conflict', message: 'stack is no longer missing', details: { reason: 'stack_is_not_missing' } } }, { status: 409 })
+    }
     if (!fixture.stacks[index]?.missing) {
       return json({ error: { code: 'conflict', message: 'stack is no longer missing' } }, { status: 409 })
     }

@@ -16,8 +16,9 @@ mod backup_artifact;
 #[path = "backup_cleanup.rs"]
 mod backup_cleanup;
 pub(crate) use backup_artifact::{
-    ArtifactCleanupOutcome, artifact_exists, delete_artifact_if_present, find_artifact_tombstone,
-    legacy_artifact_key, move_artifact_to_tombstone,
+    ArtifactCleanupOutcome, acquire_lifecycle_lock as acquire_artifact_lifecycle_lock,
+    artifact_exists, delete_artifact_if_present, find_artifact_tombstone, legacy_artifact_key,
+    move_artifact_to_tombstone,
 };
 #[cfg(test)]
 use backup_artifact::{delete_artifact, reconcile_artifact};
@@ -541,6 +542,7 @@ pub async fn recover_interrupted_backups(
 }
 
 pub(crate) async fn cleanup_once(state: &crate::state::AppState) -> anyhow::Result<()> {
+    let _artifact_lifecycle_guard = acquire_artifact_lifecycle_lock().await;
     let now_dt = time::OffsetDateTime::now_utc();
     let now = now_dt.format(&time::format_description::well_known::Rfc3339)?;
     let stale_before = (now_dt - time::Duration::minutes(5))

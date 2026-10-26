@@ -263,11 +263,6 @@ impl Db {
                 r#"
 UPDATE stack_record_deletion_audits
 SET outcome = ?2, pending_artifact_cleanup = ?3, cleanup_error = ?4
-    , backup_artifacts_json = CASE
-        WHEN ?3 = 1 AND ?2 IN ('deleted', 'already_absent')
-          THEN backup_artifacts_json
-        ELSE '[]'
-      END
 WHERE id = (
   SELECT id
   FROM stack_record_deletion_audits
@@ -309,7 +304,7 @@ WHERE id = (
         let stack_id = stack_id.to_string();
         self.call(move |conn| {
             conn.execute(
-                "UPDATE stack_record_deletion_audits SET backup_artifacts_json = '[]', pending_artifact_cleanup = 0, cleanup_error = NULL WHERE stack_id = ?1 AND outcome IN ('deleted', 'already_absent')",
+                "UPDATE stack_record_deletion_audits SET pending_artifact_cleanup = 0, cleanup_error = NULL WHERE stack_id = ?1 AND outcome IN ('deleted', 'already_absent')",
                 params![stack_id],
             )?;
             Ok(())
@@ -349,6 +344,7 @@ SELECT
           WHERE target.job_id = j.id
             AND target.service_id IN (SELECT id FROM services WHERE stack_id = s.id)
         )
+        OR (j.type = 'cleanup_apply' AND j.scope = 'all')
       )
   )
 FROM stacks s
@@ -441,6 +437,7 @@ SELECT
           WHERE target.job_id = j.id
             AND target.service_id IN (SELECT id FROM services WHERE stack_id = s.id)
         )
+        OR (j.type = 'cleanup_apply' AND j.scope = 'all')
       )
   )
 FROM stacks s
@@ -602,11 +599,7 @@ WHERE j.stack_id = ?1
                 "DELETE FROM cleanup_inventory_snapshots WHERE snapshot_key = ?1",
                 params![CLEANUP_INVENTORY_SNAPSHOT_KEY],
             )?;
-            let persisted_backup_artifacts_json = if pending_artifact_cleanup {
-                backup_artifacts_json.as_str()
-            } else {
-                "[]"
-            };
+            let persisted_backup_artifacts_json = backup_artifacts_json.as_str();
             let updated_intent = tx.execute(
                 r#"
 UPDATE stack_record_deletion_audits
@@ -961,6 +954,9 @@ mod tests {
                 .unwrap(),
             Vec::<String>::new()
         );
+        db.complete_stack_record_deletion_cleanup(&stack_id)
+            .await
+            .unwrap();
         let audit = db
             .call(|conn| {
                 Ok(conn.query_row(
@@ -988,7 +984,10 @@ mod tests {
             })
             .await
             .unwrap();
-        assert_eq!(audit_artifacts, "[]");
+        assert_eq!(
+            audit_artifacts,
+            r#"[{"artifactPath":"/srv/dockrev/backups/stack-record-delete/backup.tar.zst","present":false}]"#
+        );
         let delivery = db
             .call(|conn| {
                 Ok(conn.query_row(
@@ -1047,6 +1046,13 @@ mod tests {
             "missing",
         )
         .await;
+        let global_pending = seed_stack(
+            &db,
+            "stack-global-pending",
+            "service-global-pending",
+            "missing",
+        )
+        .await;
         db.insert_job(JobListItem {
             id: "job-pending-record-delete".to_string(),
             r#type: JobType::Update,
@@ -1083,6 +1089,24 @@ mod tests {
         })
         .await
         .unwrap();
+        db.insert_job(JobListItem {
+            id: "job-global-cleanup-record-delete".to_string(),
+            r#type: JobType::CleanupApply,
+            scope: JobScope::All,
+            stack_id: None,
+            service_id: None,
+            status: "running".to_string(),
+            created_by: "test".to_string(),
+            reason: "ui".to_string(),
+            created_at: now(),
+            started_at: Some(now()),
+            finished_at: None,
+            allow_arch_mismatch: false,
+            backup_mode: "none".to_string(),
+            summary_json: json!({}),
+        })
+        .await
+        .unwrap();
 
         assert!(matches!(
             db.commit_stack_record_deletion(&non_missing, "ivan", &now(), "[]", &[], false)
@@ -1104,6 +1128,12 @@ mod tests {
         ));
         assert!(matches!(
             db.commit_stack_record_deletion(&target_pending, "ivan", &now(), "[]", &[], false)
+                .await
+                .unwrap(),
+            StackRecordDeletionCommit::Conflict(reason) if reason == "stack has a pending operation"
+        ));
+        assert!(matches!(
+            db.commit_stack_record_deletion(&global_pending, "ivan", &now(), "[]", &[], false)
                 .await
                 .unwrap(),
             StackRecordDeletionCommit::Conflict(reason) if reason == "stack has a pending operation"

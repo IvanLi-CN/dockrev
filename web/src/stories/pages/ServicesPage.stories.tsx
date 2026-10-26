@@ -210,6 +210,39 @@ export const MissingStackRecordWorkflow: Story = {
   },
 };
 
+export const MissingStackRecordConflictRefresh: Story = {
+  parameters: {
+    dockrevApiScenario: "missing-stack-record-conflict",
+    viewport: { defaultViewport: "dockrevWide" },
+  },
+  render: renderServices("删除冲突后刷新缺失记录视图"),
+  play: async ({ canvasElement }) => {
+    await sleep(260);
+    const body = within(canvasElement.ownerDocument.body);
+    const deleteButton = body.getByRole("button", {
+      name: "永久删除缺失记录",
+    });
+    await userEvent.click(deleteButton);
+    const dialog = canvasElement.ownerDocument.querySelector<HTMLElement>(
+      '[role="alertdialog"]',
+    );
+    expectStory(dialog, "expected the missing stack deletion confirmation dialog");
+    const confirmButton = Array.from(
+      dialog?.querySelectorAll<HTMLButtonElement>("button") ?? [],
+    ).find((button) => button.textContent?.trim() === "永久删除记录");
+    expectStory(confirmButton, "expected the deletion confirmation action");
+    confirmButton?.click();
+    await body.findByText(
+      "删除冲突：该 Stack 已恢复为可发现状态，请刷新后重试。",
+    );
+    await body.findByText("暂无缺失 Stack");
+    expectStory(
+      !canvasElement.textContent?.includes("legacy-media"),
+      "a conflict refresh should remove the stale missing stack card",
+    );
+  },
+};
+
 export const StaleTempOverrideReconciliation: Story = {
   parameters: {
     dockrevApiScenario: "overview-discovery-stale-temp-reconcile",

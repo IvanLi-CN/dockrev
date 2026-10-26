@@ -297,6 +297,10 @@ export function buildMissingStackRecordWorkflow(): Fixture {
   return f
 }
 
+export function buildMissingStackRecordConflict(): Fixture {
+  return buildMissingStackRecordWorkflow()
+}
+
 export function buildArchivedStackDetailNavigation(): Fixture {
   const f = buildMultiStackMixed()
   const stackId = 'stack-lab'
@@ -690,6 +694,7 @@ export function buildFixture(scenario: Exclude<DockrevApiScenario, 'error'>): Fi
   if (scenario === 'settings-notification-channel-errors') return buildSettingsNotificationChannelErrors()
   if (scenario === 'multi-stack-mixed') return buildMultiStackMixed()
   if (scenario === 'missing-stack-record-workflow') return buildMissingStackRecordWorkflow()
+  if (scenario === 'missing-stack-record-conflict') return buildMissingStackRecordConflict()
   if (scenario === 'overview-discovery-readable') return buildOverviewDiscoveryReadable()
   if (scenario === 'overview-discovery-stale-temp-reconcile') return buildOverviewDiscoveryStaleTempReconcile()
   if (scenario === 'aggregate-dockrev-guard') return buildAggregateDockrevGuard()

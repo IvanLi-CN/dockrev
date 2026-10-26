@@ -11,12 +11,13 @@ import {
 import { ReadonlySnapshotNotice } from "../components/ReadonlySnapshotNotice";
 import { navigate } from "../routes";
 import { Button, Mono, Pill } from "../ui";
-import { AsyncDataRegion, AsyncDataSkeleton } from "../components/AsyncDataRegion";
+import {
+  AsyncDataRegion,
+  AsyncDataSkeleton,
+} from "../components/AsyncDataRegion";
 import { splitImageNameForDisplay, splitImageRef } from "../imageLinks";
 import { formatCurrentTagDisplay as formatTagDisplay } from "../versionDisplay";
-import {
-  OperationsDashboardSectionView,
-} from "./OperationsDashboardSection";
+import { OperationsDashboardSectionView } from "./OperationsDashboardSection";
 import {
   useArchivedStacksState,
   useMissingStacksState,
@@ -28,6 +29,57 @@ function formatShort(ts: string) {
   const d = new Date(ts);
   if (Number.isNaN(d.valueOf())) return ts;
   return d.toLocaleString();
+}
+
+function missingStackReasonCopy(reason?: string) {
+  const normalized = reason?.trim() ?? "";
+  if (
+    normalized === "stack_is_not_missing" ||
+    normalized === "stack is no longer missing"
+  ) {
+    return "该 Stack 已恢复为可发现状态，请刷新后重试。";
+  }
+  if (
+    normalized === "stack_has_pending_operation" ||
+    normalized === "stack has a pending operation"
+  ) {
+    return "该 Stack 存在正在运行的任务，请等待任务结束后重试。";
+  }
+  if (normalized === "managed_override_recovery_pending") {
+    return "该 Stack 仍有待恢复的临时配置，请先完成恢复。";
+  }
+  if (
+    normalized === "compose_files_reappeared" ||
+    normalized === "Compose files reappeared"
+  ) {
+    return "Compose 文件已重新出现，请刷新后确认。";
+  }
+  if (normalized.startsWith("compose_files_unreadable")) {
+    return "Compose 文件状态暂时无法确认，请检查权限后重试。";
+  }
+  if (
+    normalized.startsWith("backup_artifact_unsafe") ||
+    normalized === "backup artifacts changed"
+  ) {
+    return "备份路径或内容已变化，记录未删除，请刷新后重试。";
+  }
+  if (normalized === "database deletion preconditions changed") {
+    return "删除前提已变化，记录未删除，请刷新后重试。";
+  }
+  if (normalized === "stack record deletion already in progress") {
+    return "已有删除请求正在处理，请稍后刷新。";
+  }
+  return "删除前提已变化，记录未删除，请刷新后重试。";
+}
+
+function missingStackConflictMessage(error: ApiError) {
+  const details =
+    typeof error.details === "object" && error.details !== null
+      ? (error.details as { reason?: unknown })
+      : null;
+  const reason =
+    typeof details?.reason === "string" ? details.reason : error.message;
+  return `删除冲突：${missingStackReasonCopy(reason)}`;
 }
 
 export function ServicesPage(props: {
@@ -72,8 +124,7 @@ export function ServicesPage(props: {
     ]);
   };
   const archivedServices = useMemo(() => {
-    const out: Array<{ stackId: string; stackName: string; svc: Service }> =
-      [];
+    const out: Array<{ stackId: string; stackName: string; svc: Service }> = [];
     for (const stack of stacks) {
       const detail = details[stack.id];
       if (!detail) continue;
@@ -108,9 +159,7 @@ export function ServicesPage(props: {
                 await refreshRecordViews();
               } catch (value: unknown) {
                 setError(
-                  value instanceof Error
-                    ? value.message
-                    : String(value),
+                  value instanceof Error ? value.message : String(value),
                 );
               } finally {
                 setBusy(false);
@@ -133,9 +182,16 @@ export function ServicesPage(props: {
         error={missingError}
         hasData={missingLoaded}
         label="正在刷新缺失 Stack"
-        onRetry={() => void requestMissingRefresh("user-action").catch(() => undefined)}
+        onRetry={() =>
+          void requestMissingRefresh("user-action").catch(() => undefined)
+        }
         phase={missingPhase}
-        skeleton={<AsyncDataSkeleton className="archivedStacksLoadingSkeleton" lines={3} />}
+        skeleton={
+          <AsyncDataSkeleton
+            className="archivedStacksLoadingSkeleton"
+            lines={3}
+          />
+        }
         trigger={missingTrigger}
       >
         <div className="sectionRow">
@@ -148,7 +204,8 @@ export function ServicesPage(props: {
               缺失 Stack
             </h2>
             <div className="muted">
-              Compose 文件均已确认不存在。这里的删除只清理 Dockrev 记录和备份文件，不修改宿主文件或 Docker 资源。
+              Compose 文件均已确认不存在。这里的删除只清理 Dockrev
+              记录和备份文件，不修改宿主文件或 Docker 资源。
             </div>
           </div>
         </div>
@@ -162,7 +219,11 @@ export function ServicesPage(props: {
               const title = detail ? detail.name : stack.name;
               const archived = Boolean(stack.archived);
               return (
-                <div key={stack.id} className="svcCard" style={{ cursor: "default" }}>
+                <div
+                  key={stack.id}
+                  className="svcCard"
+                  style={{ cursor: "default" }}
+                >
                   <div className="svcCardTop">
                     <div className="svcCardName">{title}</div>
                     <div style={{ display: "flex", gap: 6 }}>
@@ -171,11 +232,21 @@ export function ServicesPage(props: {
                     </div>
                   </div>
                   <div className="svcCardMeta">
-                    <div className="muted">id <Mono>{stack.id}</Mono></div>
                     <div className="muted">
-                      services <Mono>{stack.services}</Mono> · last scan <Mono>{formatShort(stack.lastCheckAt)}</Mono>
+                      id <Mono>{stack.id}</Mono>
                     </div>
-                    <div style={{ display: "flex", gap: 8, marginTop: 8, flexWrap: "wrap" }}>
+                    <div className="muted">
+                      services <Mono>{stack.services}</Mono> · last scan{" "}
+                      <Mono>{formatShort(stack.lastCheckAt)}</Mono>
+                    </div>
+                    <div
+                      style={{
+                        display: "flex",
+                        gap: 8,
+                        marginTop: 8,
+                        flexWrap: "wrap",
+                      }}
+                    >
                       <Button
                         variant="primary"
                         disabled={busy || readonlyOffline}
@@ -191,7 +262,11 @@ export function ServicesPage(props: {
                               }
                               await refreshRecordViews();
                             } catch (value: unknown) {
-                              setError(value instanceof Error ? value.message : String(value));
+                              setError(
+                                value instanceof Error
+                                  ? value.message
+                                  : String(value),
+                              );
                             } finally {
                               setBusy(false);
                             }
@@ -208,18 +283,35 @@ export function ServicesPage(props: {
                             setBusy(true);
                             setError(null);
                             try {
-                              const preview = await getStackRecordDeletionPreview(stack.id);
+                              const preview =
+                                await getStackRecordDeletionPreview(stack.id);
                               if (!preview.canDelete) {
-                                throw new Error(`当前不可删除：${preview.blockingReason ?? "状态已变化"}`);
+                                throw new Error(
+                                  `当前不可删除：${missingStackReasonCopy(preview.blockingReason)}`,
+                                );
                               }
                               const approved = await confirm({
                                 title: `永久删除缺失记录：${title}`,
                                 body: (
                                   <div>
-                                    <p>将删除 Dockrev 中的 Stack、服务、历史元数据和备份文件。</p>
-                                    <p>不会停止、删除或修改宿主机 Compose 文件、容器、镜像、卷、网络或构建缓存。</p>
-                                    <p>如果仍有 Docker 资源，它们会保留，但删除记录后 Dockrev 不再把它们视为该 Stack 的已知归属，后续可能按未归属资源规则处理。</p>
-                                    <p>删除后若 Compose 文件重新出现，Discovery 会创建新的 Stack 记录。</p>
+                                    <p>
+                                      将删除 Dockrev 中的
+                                      Stack、服务、历史元数据和备份文件。
+                                    </p>
+                                    <p>
+                                      不会停止、删除或修改宿主机 Compose
+                                      文件、容器、镜像、卷、网络或构建缓存。
+                                    </p>
+                                    <p>
+                                      如果仍有 Docker
+                                      资源，它们会保留，但删除记录后 Dockrev
+                                      不再把它们视为该 Stack
+                                      的已知归属，后续可能按未归属资源规则处理。
+                                    </p>
+                                    <p>
+                                      删除后若 Compose 文件重新出现，Discovery
+                                      会创建新的 Stack 记录。
+                                    </p>
                                   </div>
                                 ),
                                 confirmText: "永久删除记录",
@@ -231,11 +323,13 @@ export function ServicesPage(props: {
                               await deleteMissingStack(stack.id);
                               await refreshRecordViews();
                             } catch (value: unknown) {
-                              const message = value instanceof ApiError && value.status === 409
-                                ? `删除冲突：${value.message}`
-                                : value instanceof Error
-                                  ? value.message
-                                  : String(value);
+                              const message =
+                                value instanceof ApiError &&
+                                value.status === 409
+                                  ? missingStackConflictMessage(value)
+                                  : value instanceof Error
+                                    ? value.message
+                                    : String(value);
                               setError(message);
                               await refreshRecordViews().catch(() => undefined);
                             } finally {
@@ -260,9 +354,16 @@ export function ServicesPage(props: {
         error={archivedError}
         hasData={archivedLoaded}
         label="正在刷新归档对象"
-        onRetry={() => void requestArchivedRefresh("user-action").catch(() => undefined)}
+        onRetry={() =>
+          void requestArchivedRefresh("user-action").catch(() => undefined)
+        }
         phase={archivedPhase}
-        skeleton={<AsyncDataSkeleton className="archivedStacksLoadingSkeleton" lines={4} />}
+        skeleton={
+          <AsyncDataSkeleton
+            className="archivedStacksLoadingSkeleton"
+            lines={4}
+          />
+        }
         trigger={archivedTrigger}
       >
         <div className="sectionRow">
@@ -273,7 +374,9 @@ export function ServicesPage(props: {
             </div>
           </div>
         </div>
-        {archivedPhase === "ready-empty" && archivedStacks.length === 0 && archivedServices.length === 0 ? (
+        {archivedPhase === "ready-empty" &&
+        archivedStacks.length === 0 &&
+        archivedServices.length === 0 ? (
           <div className="muted">暂无归档对象</div>
         ) : null}
 
@@ -319,7 +422,10 @@ export function ServicesPage(props: {
                               try {
                                 await restoreStack(stack.id);
                                 await Promise.all([
-                                  requestRefresh({ source: "memory", trigger: "user-action" }),
+                                  requestRefresh({
+                                    source: "memory",
+                                    trigger: "user-action",
+                                  }),
                                   requestArchivedRefresh(),
                                 ]);
                               } catch (value: unknown) {
@@ -406,7 +512,10 @@ export function ServicesPage(props: {
                             try {
                               await restoreService(item.svc.id);
                               await Promise.all([
-                                requestRefresh({ source: "memory", trigger: "user-action" }),
+                                requestRefresh({
+                                  source: "memory",
+                                  trigger: "user-action",
+                                }),
                                 requestArchivedRefresh(),
                               ]);
                             } catch (value: unknown) {
@@ -445,7 +554,11 @@ export function ServicesPage(props: {
         ) : null}
       </AsyncDataRegion>
 
-      {error ? <div className="error" role="alert" aria-live="assertive">{error}</div> : null}
+      {error ? (
+        <div className="error" role="alert" aria-live="assertive">
+          {error}
+        </div>
+      ) : null}
       {busy ? <div className="muted">处理中…</div> : null}
     </div>
   );

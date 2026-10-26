@@ -840,7 +840,7 @@ export function installDockrevMockApi(
     // stacks
     const lifecycleResponse = handleServiceLifecycleRoute({ scenario, method, urlPath, init, fixture: f, findService, jobSeqRef, json })
     if (lifecycleResponse) return lifecycleResponse
-    const stackRecordResponse = handleStackRecordRoutes({ method, urlPath, urlPathWithQuery, fixture: f })
+    const stackRecordResponse = handleStackRecordRoutes({ method, urlPath, urlPathWithQuery, fixture: f, scenario })
     if (stackRecordResponse) return stackRecordResponse
     if (method === 'GET' && urlPath.startsWith('/api/stacks/') && urlPath.endsWith('/settings')) {
       const id = decodeURIComponent(urlPath.split('/').slice(3, -1).join('/'))
