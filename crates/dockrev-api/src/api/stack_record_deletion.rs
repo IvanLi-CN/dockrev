@@ -6,6 +6,7 @@ use std::{
 };
 
 static STACK_RECORD_DELETION_GUARDS: OnceLock<Mutex<HashSet<String>>> = OnceLock::new();
+const STACK_RECORD_DELETION_INTENT_STALE_AFTER: time::Duration = time::Duration::minutes(10);
 
 struct StackRecordDeletionGuard(String);
 
@@ -430,15 +431,35 @@ pub(super) async fn delete_stack_record(
 ) -> Result<Json<StackRecordDeletionResponse>, ApiError> {
     let user = require_user(&state, &headers).await?;
     let _guard = acquire_stack_record_deletion_guard(&stack_id)?;
+    let now = now_rfc3339().map_err(map_internal)?;
     if let Some(intent_json) = state
         .db
         .pending_stack_record_deletion_intent(&stack_id)
         .await
         .map_err(map_internal)?
     {
-        recover_pending_stack_record_deletion_intent(&state, &stack_id, &intent_json)
-            .await
-            .map_err(map_internal)?;
+        let intent_started_at = time::OffsetDateTime::parse(
+            &intent_json.started_at,
+            &time::format_description::well_known::Rfc3339,
+        )
+        .map_err(|error| map_internal(error.into()))?;
+        let current_time =
+            time::OffsetDateTime::parse(&now, &time::format_description::well_known::Rfc3339)
+                .map_err(|error| map_internal(error.into()))?;
+        if current_time - intent_started_at < STACK_RECORD_DELETION_INTENT_STALE_AFTER {
+            record_stack_record_deletion_attempt(&state, &stack_id, &user.principal, "conflict")
+                .await?;
+            return Err(ApiError::conflict(
+                "stack record deletion already in progress",
+            ));
+        }
+        recover_pending_stack_record_deletion_intent(
+            &state,
+            &stack_id,
+            &intent_json.backup_artifacts_json,
+        )
+        .await
+        .map_err(map_internal)?;
     }
 
     let Some(snapshot) = state
@@ -555,8 +576,7 @@ pub(super) async fn delete_stack_record(
             .collect::<Vec<_>>(),
     )
     .map_err(|error| map_internal(error.into()))?;
-    let now = now_rfc3339().map_err(map_internal)?;
-    state
+    let began = state
         .db
         .begin_stack_record_deletion(
             &stack_id,
@@ -567,10 +587,25 @@ pub(super) async fn delete_stack_record(
         )
         .await
         .map_err(map_internal)?;
+    if !began {
+        record_stack_record_deletion_attempt(&state, &stack_id, &user.principal, "conflict")
+            .await?;
+        return Err(ApiError::conflict(
+            "stack record deletion already in progress",
+        ));
+    }
 
     let mut moved = Vec::new();
     if let Some(storage) = &storage {
         for item in staged.iter().filter(|item| item.present) {
+            state
+                .db
+                .refresh_stack_record_deletion_intent(
+                    &stack_id,
+                    &now_rfc3339().map_err(map_internal)?,
+                )
+                .await
+                .map_err(map_internal)?;
             if let Err(error) = crate::backup::move_artifact_to_tombstone(
                 &*state.runner,
                 storage,
@@ -663,10 +698,39 @@ pub(super) async fn delete_stack_record(
             .await?;
         return Err(ApiError::conflict("stack deletion preconditions changed"));
     }
-    if !compose_files_are_missing(&final_snapshot.compose_files)
-        .await
-        .map_err(map_internal)?
-    {
+    let final_compose_files_missing =
+        match compose_files_are_missing(&final_snapshot.compose_files).await {
+            Ok(value) => value,
+            Err(error) => {
+                let restore_error = if let Some(storage) = &storage {
+                    restore_staged_stack_record_artifacts(&state, storage, &moved)
+                        .await
+                        .err()
+                        .map(|restore| format!("; restore failed: {restore}"))
+                        .unwrap_or_default()
+                } else {
+                    String::new()
+                };
+                if restore_error.is_empty() {
+                    state
+                        .db
+                        .finish_stack_record_deletion_intent(
+                            &stack_id,
+                            "failed",
+                            false,
+                            Some("Compose file verification failed"),
+                        )
+                        .await
+                        .map_err(map_internal)?;
+                }
+                record_stack_record_deletion_attempt(&state, &stack_id, &user.principal, "failed")
+                    .await?;
+                return Err(ApiError::internal(format!(
+                    "Compose files cannot be verified: {error}{restore_error}"
+                )));
+            }
+        };
+    if !final_compose_files_missing {
         if let Some(storage) = &storage {
             restore_staged_stack_record_artifacts(&state, storage, &moved)
                 .await

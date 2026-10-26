@@ -140,7 +140,8 @@ jobs:
           if-no-files-found: error
 
   assemble-pages:
-    runs-on: ubuntu-latest
+    # Playwright 1.57 does not support the Ubuntu 26.04 image currently used by ubuntu-latest.
+    runs-on: ubuntu-24.04
     needs: [build-docs, build-storybook, build-demo]
     steps:
       - name: Checkout

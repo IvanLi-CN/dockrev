@@ -31,6 +31,12 @@ pub(crate) struct StackRecordDeletionSnapshot {
     pub backup_artifacts: Vec<StackRecordDeletionBackupArtifact>,
 }
 
+#[derive(Clone, Debug)]
+pub(crate) struct StackRecordDeletionIntent {
+    pub backup_artifacts_json: String,
+    pub started_at: String,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) enum StackRecordDeletionCommit {
     Deleted,
@@ -140,13 +146,21 @@ impl Db {
         occurred_at: &str,
         backup_artifacts_json: &str,
         pending_artifact_cleanup: bool,
-    ) -> anyhow::Result<()> {
+    ) -> anyhow::Result<bool> {
         let stack_id = stack_id.to_string();
         let actor_principal = actor_principal.to_string();
         let occurred_at = occurred_at.to_string();
         let backup_artifacts_json = backup_artifacts_json.to_string();
         self.call(move |conn| {
             let tx = conn.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
+            let active = tx.query_row(
+                "SELECT EXISTS (SELECT 1 FROM stack_record_deletion_audits WHERE stack_id = ?1 AND outcome = 'staging')",
+                params![stack_id.clone()],
+                |row| Ok(row.get::<_, i64>(0)? != 0),
+            )?;
+            if active {
+                return Ok(false);
+            }
             insert_stack_record_deletion_audit_tx(
                 &tx,
                 &stack_id,
@@ -157,7 +171,7 @@ impl Db {
                 pending_artifact_cleanup,
             )?;
             tx.commit()?;
-            Ok(())
+            Ok(true)
         })
         .await
         .context("begin stack record deletion")
@@ -166,19 +180,42 @@ impl Db {
     pub async fn pending_stack_record_deletion_intent(
         &self,
         stack_id: &str,
-    ) -> anyhow::Result<Option<String>> {
+    ) -> anyhow::Result<Option<StackRecordDeletionIntent>> {
         let stack_id = stack_id.to_string();
         self.call(move |conn| {
             Ok(conn
                 .query_row(
-                    "SELECT backup_artifacts_json FROM stack_record_deletion_audits WHERE stack_id = ?1 AND outcome = 'staging' ORDER BY deleted_at DESC, id DESC LIMIT 1",
+                    "SELECT backup_artifacts_json, deleted_at FROM stack_record_deletion_audits WHERE stack_id = ?1 AND outcome = 'staging' ORDER BY deleted_at DESC, id DESC LIMIT 1",
                     params![stack_id],
-                    |row| row.get::<_, String>(0),
+                    |row| {
+                        Ok(StackRecordDeletionIntent {
+                            backup_artifacts_json: row.get(0)?,
+                            started_at: row.get(1)?,
+                        })
+                    },
                 )
                 .optional()?)
         })
         .await
         .context("load pending stack record deletion intent")
+    }
+
+    pub async fn refresh_stack_record_deletion_intent(
+        &self,
+        stack_id: &str,
+        heartbeat_at: &str,
+    ) -> anyhow::Result<()> {
+        let stack_id = stack_id.to_string();
+        let heartbeat_at = heartbeat_at.to_string();
+        self.call(move |conn| {
+            conn.execute(
+                "UPDATE stack_record_deletion_audits SET deleted_at = ?2 WHERE stack_id = ?1 AND outcome = 'staging'",
+                params![stack_id, heartbeat_at],
+            )?;
+            Ok(())
+        })
+        .await
+        .context("refresh stack record deletion intent")
     }
 
     pub async fn finish_stack_record_deletion_intent(

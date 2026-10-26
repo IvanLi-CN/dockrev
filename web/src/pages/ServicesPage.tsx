@@ -211,6 +211,7 @@ export function ServicesPage(props: {
                                   <div>
                                     <p>将删除 Dockrev 中的 Stack、服务、历史元数据和备份文件。</p>
                                     <p>不会停止、删除或修改宿主机 Compose 文件、容器、镜像、卷、网络或构建缓存。</p>
+                                    <p>如果仍有 Docker 资源，它们会保留，但删除记录后 Dockrev 不再把它们视为该 Stack 的已知归属，后续可能按未归属资源规则处理。</p>
                                     <p>删除后若 Compose 文件重新出现，Discovery 会创建新的 Stack 记录。</p>
                                   </div>
                                 ),

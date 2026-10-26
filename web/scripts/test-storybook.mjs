@@ -21,6 +21,7 @@ const STORIES_REQUIRING_PLAY_SUCCESS = [
   "pages-servicedetailpage--versions-section-forced-update-submission",
   "pages-cleanuppage--confirm-dialog-latest-scan",
   "pages-cleanuppage--confirm-dialog-scrollable-latest-scan",
+  "pages-servicespage--missing-stack-record-workflow",
 ];
 
 function parsePort(value, fallback) {
