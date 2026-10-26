@@ -178,3 +178,84 @@ async fn stack_record_deletion_api_requires_auth_and_rejects_present_stacks() {
 
     std::fs::remove_file(compose_path).unwrap();
 }
+
+#[tokio::test]
+async fn missing_stack_record_deletion_waits_for_managed_override_recovery() {
+    let state = test_state(":memory:").await;
+    let app = api::router(state.clone());
+    let compose_path = format!(
+        "/tmp/dockrev-pending-override-stack-{}.yml",
+        ulid::Ulid::new()
+    );
+    std::fs::write(
+        &compose_path,
+        "services:\n  web:\n    image: ghcr.io/acme/web:latest\n",
+    )
+    .unwrap();
+    let stack_id = seed_stack_from_compose(&state, "pending-override", &compose_path).await;
+    let now = test_now_rfc3339();
+    state
+        .db
+        .upsert_discovered_compose_project(crate::db::DiscoveredComposeProjectUpsert {
+            project: "pending-override".to_string(),
+            stack_id: Some(stack_id.clone()),
+            status: "missing".to_string(),
+            last_seen_at: None,
+            last_scan_at: now,
+            last_error: Some("compose_files_missing".to_string()),
+            last_config_files: Some(vec![compose_path.clone()]),
+            unarchive_if_active: false,
+        })
+        .await
+        .unwrap();
+    std::fs::remove_file(&compose_path).unwrap();
+
+    let managed_override = crate::managed_override::managed_override_path(
+        &state.config.managed_override_dir,
+        &stack_id,
+    );
+    std::fs::create_dir_all(managed_override.parent().unwrap()).unwrap();
+    std::fs::write(
+        format!("{}.pending", managed_override.display()),
+        r#"{"phase":"prepared","services":["web"]}"#,
+    )
+    .unwrap();
+
+    let preview = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("GET")
+                .uri(format!("/api/stacks/{stack_id}/record-deletion-preview"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(preview.status(), 200);
+    let preview_body = response_json(preview).await;
+    assert_eq!(preview_body["canDelete"], false);
+    assert_eq!(
+        preview_body["blockingReason"],
+        "managed_override_recovery_pending"
+    );
+
+    let rejected = app
+        .oneshot(
+            Request::builder()
+                .method("DELETE")
+                .uri(format!("/api/stacks/{stack_id}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(rejected.status(), 409);
+    assert_eq!(
+        response_json(rejected).await["error"]["details"]["reason"],
+        "managed_override_recovery_pending"
+    );
+    assert!(state.db.get_stack(&stack_id).await.unwrap().is_some());
+
+    std::fs::remove_file(format!("{}.pending", managed_override.display())).unwrap();
+}

@@ -367,6 +367,10 @@ async fn stack_record_deletion_preview(
     state: &Arc<AppState>,
     stack_id: &str,
 ) -> Result<StackRecordDeletionPreviewResponse, ApiError> {
+    let pending_override_recovery = {
+        let _operation_guard = crate::managed_override::operation_lock().await;
+        managed_override_recovery_pending(state, stack_id)
+    };
     let Some(snapshot) = state
         .db
         .stack_record_deletion_snapshot(stack_id)
@@ -381,6 +385,8 @@ async fn stack_record_deletion_preview(
         blocking_reason = Some("stack_is_not_missing".to_string());
     } else if snapshot.has_pending_job {
         blocking_reason = Some("stack_has_pending_operation".to_string());
+    } else if pending_override_recovery {
+        blocking_reason = Some("managed_override_recovery_pending".to_string());
     } else {
         match compose_files_are_missing(&snapshot.compose_files).await {
             Ok(true) => {}
@@ -422,6 +428,14 @@ async fn stack_record_deletion_preview(
     })
 }
 
+fn managed_override_recovery_pending(state: &Arc<AppState>, stack_id: &str) -> bool {
+    let path = crate::managed_override::managed_override_path(
+        &state.config.managed_override_dir,
+        stack_id,
+    );
+    crate::managed_override::has_pending_snapshot(&path)
+}
+
 pub(super) async fn get_stack_record_deletion_preview(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
@@ -440,6 +454,9 @@ pub(super) async fn delete_stack_record(
 ) -> Result<Json<StackRecordDeletionResponse>, ApiError> {
     let user = require_user(&state, &headers).await?;
     let _guard = acquire_stack_record_deletion_guard(&stack_id)?;
+    // Managed override recovery holds this lock while it may still need the Stack record.
+    // Acquire it before the discovery lock because recovery rescans while holding this lock.
+    let _managed_override_operation_guard = crate::managed_override::operation_lock().await;
     // Discovery keeps a stack id across Compose I/O. Serialize record deletion
     // with the scan so a stale id cannot be written back after this transaction.
     let _discovery_guard = crate::discovery::acquire_scan_lock().await;
@@ -528,6 +545,15 @@ pub(super) async fn delete_stack_record(
         return Err(
             ApiError::conflict("stack has a pending operation").with_details(json!({
                 "reason": "stack_has_pending_operation"
+            })),
+        );
+    }
+    if managed_override_recovery_pending(&state, &stack_id) {
+        record_stack_record_deletion_attempt(&state, &stack_id, &user.principal, "conflict")
+            .await?;
+        return Err(
+            ApiError::conflict("managed override recovery is pending").with_details(json!({
+                "reason": "managed_override_recovery_pending"
             })),
         );
     }

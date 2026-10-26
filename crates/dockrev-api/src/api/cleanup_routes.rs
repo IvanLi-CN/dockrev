@@ -492,6 +492,8 @@ pub(super) async fn apply_cleanups(
 ) -> Result<Json<CleanupApplyResponse>, ApiError> {
     let user = require_user(&state, &headers).await?;
     validate_cleanup_apply_request(&req)?;
+    // Keep snapshot validation and job registration atomic with record deletion.
+    let _snapshot_gate = state.cleanup_snapshot_worker.acquire_snapshot_gate().await;
     let scan_req = CleanupScanRequest {
         reason: CleanupScanReason::Confirm,
         preset: req.preset.clone(),

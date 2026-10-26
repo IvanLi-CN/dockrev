@@ -30,6 +30,8 @@ The UI will provide an explicit per-Stack action named “permanently delete mis
 
 The server will revalidate that the Stack is still `missing` and is not owned by discovery, update, restore, or another conflicting operation. Each Stack is committed independently. A conflict, unsafe backup path, or other failure leaves that Stack's Dockrev data unchanged and can be retried later.
 
+Managed override recovery is another deletion conflict: the operation lock is shared with override recovery, and a Stack with a pending override snapshot remains undeletable until that recovery state is resolved. This prevents a permanent record purge from orphaning Dockrev-owned recovery files.
+
 Successful deletion removes the Stack's Dockrev metadata and dependent service, history, task, backup-record, and backup-file data. A referenced backup file that is already absent counts as cleared and is recorded in the audit result. Backup paths must be validated before deletion and must remain within the managed Dockrev backup area.
 
 The operation never deletes host Compose files and never stops or removes Docker containers, images, volumes, networks, or builder data. If Docker resources still exist, the confirmation explains that they will remain and become unmanaged by Dockrev after the record is deleted.
