@@ -739,6 +739,30 @@ impl CommandRunner for SemverRetryFailRunner {
                     stderr: "not found".to_string(),
                 }
             }
+            12 => {
+                assert_eq!(args, vec!["ps", "-q", "--filter", "label=com.docker.compose.project=demo", "--filter", "label=com.docker.compose.service=web"]);
+                CommandOutput {
+                    status: 0,
+                    stdout: "container_new\n".to_string(),
+                    stderr: String::new(),
+                }
+            }
+            13 => {
+                assert_eq!(args, vec!["inspect", "--format", "{{.Image}}\t{{.State.StartedAt}}", "container_new"]);
+                CommandOutput {
+                    status: 0,
+                    stdout: "sha256:new\t2026-08-30T00:02:00Z\n".to_string(),
+                    stderr: String::new(),
+                }
+            }
+            14 => {
+                assert_eq!(args, vec!["image", "inspect", "sha256:new", "--format", "{{json .RepoDigests}}"]);
+                CommandOutput {
+                    status: 0,
+                    stdout: "[\"ghcr.io/acme/web@sha256:new\"]\n".to_string(),
+                    stderr: String::new(),
+                }
+            }
             _ => CommandOutput {
                 status: 1,
                 stdout: String::new(),

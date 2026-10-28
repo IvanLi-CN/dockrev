@@ -498,6 +498,7 @@ services:
     .unwrap();
 
     let stack_id = seed_stack_from_compose(&state, "demo", &compose_path).await;
+    seed_discovered_project(&state, &stack_id, "demo").await;
     let services = state.db.list_services_for_check(&stack_id).await.unwrap();
     let svc = services.first().unwrap().clone();
 

@@ -1273,7 +1273,6 @@ INSERT INTO services (
             Some(service_id.clone()),
             "2026-08-30T00:01:00Z",
         );
-
         let outcome = db
             .insert_service_operation_job_if_unblocked_with_service_baseline(
                 job.to_db(),
@@ -1291,7 +1290,6 @@ INSERT INTO services (
             )
             .await
             .unwrap();
-
         assert!(matches!(
             outcome,
             ServiceOperationAcquireOutcome::StaleCurrentDigest
@@ -1303,7 +1301,6 @@ INSERT INTO services (
                 .is_none()
         );
     }
-
     #[tokio::test]
     async fn selected_version_enqueue_rejects_a_newly_blocked_update_guard() {
         let db = Db::open(Path::new(":memory:")).await.unwrap();
@@ -1394,7 +1391,6 @@ INSERT INTO services (
         })
         .await
         .unwrap();
-
         let job = crate::api::types::JobRecord::new_running(
             "job_legacy_current_digest".to_string(),
             JobType::Update,
@@ -1419,5 +1415,86 @@ INSERT INTO services (
             outcome,
             ServiceOperationAcquireOutcome::Acquired(_)
         ));
+    }
+
+    #[tokio::test]
+    async fn unapplied_stop_settles_baseline_and_closes_generation_atomically() {
+        let db = Db::open(Path::new(":memory:")).await.unwrap();
+        let (stack_id, service_id) = seed_service(&db).await;
+        let now = "2026-08-30T00:03:00Z";
+        let mut job = crate::api::types::JobRecord::new_running(
+            "job_unapplied_stop".to_string(),
+            JobType::Update,
+            JobScope::Service,
+            Some(stack_id.clone()),
+            Some(service_id.clone()),
+            now,
+        );
+        job.summary_json = serde_json::json!({"mode": "apply"});
+        let acquired = db
+            .insert_service_operation_job_with_accepted_state_if_unblocked(
+                job.to_db(),
+                vec![ServiceOperationTarget {
+                    service_id: service_id.clone(),
+                    stack_id,
+                }],
+                None,
+            )
+            .await
+            .unwrap();
+        assert!(matches!(
+            acquired,
+            ServiceOperationAcquireOutcome::Acquired(_)
+        ));
+        db.create_update_stop_control("job_unapplied_stop", now)
+            .await
+            .unwrap();
+        assert_eq!(
+            db.request_update_job_stop("job_unapplied_stop", "alice", now)
+                .await
+                .unwrap(),
+            crate::db::UpdateStopRequestOutcome::Requested
+        );
+        assert_eq!(
+            db.list_unapplied_update_stop_jobs().await.unwrap(),
+            vec!["job_unapplied_stop".to_string()]
+        );
+        let settlements = db
+            .baseline_service_operation_settlements("job_unapplied_stop")
+            .await
+            .unwrap();
+        assert_eq!(settlements.len(), 1);
+        db.finish_job_with_archive_and_settlement_and_notification(
+            "job_unapplied_stop",
+            "cancelled",
+            "2026-08-30T00:04:00Z",
+            &serde_json::json!({"mode": "apply", "stopRequested": true}),
+            None,
+            Some(&settlements),
+            None,
+        )
+        .await
+        .unwrap();
+        let service = db
+            .get_versioned_service_accepted_state(&service_id)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(service.generation, 2);
+        assert_eq!(service.state.current_digest.as_deref(), Some("sha256:old"));
+        assert_eq!(
+            db.get_job("job_unapplied_stop")
+                .await
+                .unwrap()
+                .unwrap()
+                .status,
+            "cancelled"
+        );
+        assert!(
+            db.list_unapplied_update_stop_jobs()
+                .await
+                .unwrap()
+                .is_empty()
+        );
     }
 }

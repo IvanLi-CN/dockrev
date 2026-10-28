@@ -839,6 +839,51 @@ impl CommandRunner for HealthRollbackUpdateRunner {
                     stderr: String::new(),
                 }
             }
+            14 if spec.args
+                == vec![
+                    "ps",
+                    "-q",
+                    "--filter",
+                    "label=com.docker.compose.project=demo",
+                    "--filter",
+                    "label=com.docker.compose.service=web",
+                ] =>
+            {
+                CommandOutput {
+                    status: 0,
+                    stdout: "container_rollback\n".to_string(),
+                    stderr: String::new(),
+                }
+            }
+            15 if spec.args
+                == vec![
+                    "inspect",
+                    "--format",
+                    "{{.Image}}\t{{.State.StartedAt}}",
+                    "container_rollback",
+                ] =>
+            {
+                CommandOutput {
+                    status: 0,
+                    stdout: "sha256:old\t2026-08-30T00:02:00Z\n".to_string(),
+                    stderr: String::new(),
+                }
+            }
+            16 if spec.args
+                == vec![
+                    "image",
+                    "inspect",
+                    "sha256:old",
+                    "--format",
+                    "{{json .RepoDigests}}",
+                ] =>
+            {
+                CommandOutput {
+                    status: 0,
+                    stdout: "[\"ghcr.io/acme/web@sha256:old\"]\n".to_string(),
+                    stderr: String::new(),
+                }
+            }
             _ => panic!(
                 "unexpected command at step {}: program={} args={:?}",
                 *step, spec.program, spec.args

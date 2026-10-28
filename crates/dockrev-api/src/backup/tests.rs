@@ -11,7 +11,7 @@ impl BackupRecoveryStore for FakeRecoveryStore {
         Ok(())
     }
 
-    async fn clear(&self) -> anyhow::Result<()> {
+    async fn clear(&self, _stack_id: &str) -> anyhow::Result<()> {
         Ok(())
     }
 }
