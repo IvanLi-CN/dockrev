@@ -10,6 +10,381 @@ pub(crate) struct DbBackupRecoveryStore {
     pub(crate) job_id: String,
 }
 
+async fn load_recovered_update_settlements(
+    state: &Arc<AppState>,
+    job_id: &str,
+    snapshots: &[backup::BackupRecoverySnapshot],
+) -> anyhow::Result<Vec<crate::db::ServiceAcceptedStateSettlement>> {
+    let settlements = state
+        .db
+        .baseline_service_operation_settlements(job_id)
+        .await?;
+    if settlements.is_empty() {
+        anyhow::bail!("update recovery has no service baselines: job={job_id}");
+    }
+    let targets = state
+        .db
+        .list_service_operation_recovery_targets(job_id)
+        .await?;
+    if targets.len() != settlements.len() {
+        anyhow::bail!(
+            "update recovery target set is incomplete: baselines={} targets={}",
+            settlements.len(),
+            targets.len()
+        );
+    }
+    let mut project_cache = std::collections::HashMap::<String, String>::new();
+    let mut services_cache =
+        std::collections::HashMap::<String, Vec<crate::db::ServiceForCheck>>::new();
+    let mut recovered = Vec::with_capacity(settlements.len());
+    for settlement in &settlements {
+        let target = targets
+            .iter()
+            .find(|target| target.service_id == settlement.service_id)
+            .ok_or_else(|| {
+                anyhow::anyhow!(
+                    "update recovery service is missing: {}",
+                    settlement.service_id
+                )
+            })?;
+        // A non-empty snapshot means services were deliberately stopped and must
+        // be back at the durable baseline after restore. A missing/empty snapshot
+        // means that stack never had stopped services; settle its observed runtime
+        // instead of blocking the entire multi-stack recovery on a nonexistent
+        // backup artifact.
+        let baseline_must_match = snapshots
+            .iter()
+            .find(|snapshot| snapshot.stack_id == target.stack_id)
+            .is_some_and(|snapshot| !snapshot.services.is_empty());
+        let project = if let Some(project) = project_cache.get(&target.stack_id) {
+            project.clone()
+        } else {
+            let project = state
+                .db
+                .get_stack_compose_project(&target.stack_id)
+                .await?
+                .ok_or_else(|| {
+                    anyhow::anyhow!(
+                        "update recovery compose project is missing: {}",
+                        target.stack_id
+                    )
+                })?;
+            project_cache.insert(target.stack_id.clone(), project.clone());
+            project
+        };
+        let services = if let Some(services) = services_cache.get(&target.stack_id) {
+            services.clone()
+        } else {
+            let services = state.db.list_services_for_check(&target.stack_id).await?;
+            services_cache.insert(target.stack_id.clone(), services.clone());
+            services
+        };
+        let service = services
+            .iter()
+            .find(|service| service.id == settlement.service_id)
+            .ok_or_else(|| {
+                anyhow::anyhow!(
+                    "update recovery service is missing: {}",
+                    settlement.service_id
+                )
+            })?;
+        let image = registry::ImageRef::parse(&service.image_ref).map_err(|error| {
+            anyhow::anyhow!("parse recovery image {}: {error}", service.image_ref)
+        })?;
+        let observed = crate::api::operations::docker_compose_service_runtime_digest(
+            state.as_ref(),
+            &project,
+            &service.name,
+            &crate::api::operations::repo_candidates(&image),
+        )
+        .await?
+        .ok_or_else(|| {
+            anyhow::anyhow!(
+                "update recovery runtime is unavailable: service={}",
+                service.id
+            )
+        })?;
+        if baseline_must_match
+            && settlement.state.current_digest.as_deref() != Some(observed.digest.as_str())
+        {
+            anyhow::bail!(
+                "update recovery runtime does not match baseline: service={} baseline={:?} observed={}",
+                service.id,
+                settlement.state.current_digest,
+                observed.digest
+            );
+        }
+        if baseline_must_match {
+            recovered.push(settlement.clone());
+            continue;
+        }
+        let mut state = settlement.state.clone();
+        state.current_digest = Some(observed.digest.clone());
+        state.current_runtime_started_at = observed.started_at;
+        if state.candidate_digest.as_deref() == Some(observed.digest.as_str()) {
+            state.candidate_tag = None;
+            state.candidate_resolved_tag = None;
+            state.candidate_digest = None;
+            state.candidate_arch_match = None;
+            state.candidate_arch_json = None;
+        }
+        let settlement = crate::db::ServiceAcceptedStateSettlement {
+            service_id: settlement.service_id.clone(),
+            opened_generation: settlement.opened_generation,
+            state,
+        };
+        recovered.push(settlement);
+    }
+    Ok(recovered)
+}
+
+/// Settles an interrupted update when no backup snapshot needs restoration.
+/// Runtime inspection is the only authority for the post-apply declaration;
+/// an unavailable or mismatching observation leaves the generation fenced.
+pub(crate) async fn recover_fenced_update_jobs(state: Arc<AppState>) {
+    let job_ids = match state.db.list_fenced_update_jobs().await {
+        Ok(job_ids) => job_ids,
+        Err(error) => {
+            tracing::error!(error = %error, "cannot list fenced update jobs");
+            return;
+        }
+    };
+
+    for job_id in job_ids {
+        let settlements = match state
+            .db
+            .baseline_service_operation_settlements(&job_id)
+            .await
+        {
+            Ok(settlements) => settlements,
+            Err(error) => {
+                tracing::warn!(job_id = %job_id, error = %error, "cannot load fenced update baselines");
+                continue;
+            }
+        };
+        let targets = match state
+            .db
+            .list_service_operation_recovery_targets(&job_id)
+            .await
+        {
+            Ok(targets) if targets.len() == settlements.len() => targets,
+            Ok(targets) => {
+                tracing::warn!(
+                    job_id = %job_id,
+                    baseline_count = settlements.len(),
+                    target_count = targets.len(),
+                    "fenced update recovery target set is incomplete"
+                );
+                continue;
+            }
+            Err(error) => {
+                tracing::warn!(job_id = %job_id, error = %error, "cannot load fenced update targets");
+                continue;
+            }
+        };
+        let control = state
+            .db
+            .get_update_stop_control(&job_id)
+            .await
+            .ok()
+            .flatten();
+        let stop_requested = control
+            .as_ref()
+            .is_some_and(|control| control.stop_requested_at.is_some());
+        let mut project_cache = std::collections::HashMap::<String, String>::new();
+        let mut runtime_settlements = Vec::with_capacity(settlements.len());
+        let result = async {
+            for settlement in settlements {
+                let target = targets
+                    .iter()
+                    .find(|target| target.service_id == settlement.service_id)
+                    .ok_or_else(|| {
+                        anyhow::anyhow!(
+                            "fenced update target disappeared: {}",
+                            settlement.service_id
+                        )
+                    })?;
+                let project = if let Some(project) = project_cache.get(&target.stack_id) {
+                    project.clone()
+                } else {
+                    let project = state
+                        .db
+                        .get_stack_compose_project(&target.stack_id)
+                        .await?
+                        .ok_or_else(|| {
+                            anyhow::anyhow!(
+                                "fenced update compose project is missing: {}",
+                                target.stack_id
+                            )
+                        })?;
+                    project_cache.insert(target.stack_id.clone(), project.clone());
+                    project
+                };
+                let image = registry::ImageRef::parse(&target.image_ref).map_err(|error| {
+                    anyhow::anyhow!("parse fenced update image {}: {error}", target.image_ref)
+                })?;
+                let observed = crate::api::operations::docker_compose_service_runtime_digest(
+                    state.as_ref(),
+                    &project,
+                    &target.service_name,
+                    &crate::api::operations::repo_candidates(&image),
+                )
+                .await?
+                .ok_or_else(|| {
+                    anyhow::anyhow!(
+                        "fenced update runtime is unavailable: service={}",
+                        target.service_id
+                    )
+                })?;
+                let mut state_snapshot = settlement.state;
+                state_snapshot.current_digest = Some(observed.digest.clone());
+                state_snapshot.current_runtime_started_at = observed.started_at;
+                if state_snapshot.candidate_digest.as_deref() == Some(observed.digest.as_str()) {
+                    state_snapshot.candidate_tag = None;
+                    state_snapshot.candidate_resolved_tag = None;
+                    state_snapshot.candidate_digest = None;
+                    state_snapshot.candidate_arch_match = None;
+                    state_snapshot.candidate_arch_json = None;
+                }
+                runtime_settlements.push(crate::db::ServiceAcceptedStateSettlement {
+                    service_id: settlement.service_id,
+                    opened_generation: settlement.opened_generation,
+                    state: state_snapshot,
+                });
+            }
+            anyhow::Ok(())
+        }
+        .await;
+
+        if let Err(error) = result {
+            let error_message = error.to_string();
+            let now = now_rfc3339().unwrap_or_else(|_| time::OffsetDateTime::now_utc().to_string());
+            let _ = state
+                .db
+                .record_update_stop_recovery_error(&job_id, &error_message, &now)
+                .await;
+            let _ = state
+                .db
+                .insert_job_log(
+                    &job_id,
+                    &JobLogLine {
+                        ts: now,
+                        level: "warn".to_string(),
+                        msg: format!("update recovery deferred: {error_message}"),
+                    },
+                )
+                .await;
+            continue;
+        }
+
+        let finished_at = match now_rfc3339() {
+            Ok(now) => now,
+            Err(error) => {
+                tracing::warn!(job_id = %job_id, error = %error, "cannot timestamp fenced update recovery");
+                continue;
+            }
+        };
+        let summary = json!({
+            "mode": "apply",
+            "stopRequested": stop_requested,
+            "recoveredOnStartup": true,
+            "recovery": {
+                "phase": "runtime_inspection",
+                "runtimeVerified": true,
+            },
+        });
+        if let Err(error) = state
+            .db
+            .finish_update_stop_recovery_job_with_settlement(
+                &job_id,
+                "failed",
+                &finished_at,
+                &summary,
+                &runtime_settlements,
+            )
+            .await
+        {
+            tracing::warn!(job_id = %job_id, error = %error, "fenced update recovery settlement deferred");
+        }
+    }
+}
+
+/// Finalizes update jobs that received a stop request before the apply gate
+/// committed. These jobs have no backup snapshot because they never entered a
+/// runtime-mutating phase, so their persisted baselines are authoritative.
+pub(crate) async fn recover_unapplied_update_stop_requests(state: Arc<AppState>) {
+    let job_ids = match state.db.list_unapplied_update_stop_jobs().await {
+        Ok(job_ids) => job_ids,
+        Err(error) => {
+            tracing::error!(error = %error, "cannot list unapplied update stop jobs");
+            return;
+        }
+    };
+
+    for job_id in job_ids {
+        let settlements = match state
+            .db
+            .baseline_service_operation_settlements(&job_id)
+            .await
+        {
+            Ok(settlements) if !settlements.is_empty() => settlements,
+            Ok(_) => {
+                tracing::warn!(job_id = %job_id, "unapplied update stop job has no service baselines");
+                continue;
+            }
+            Err(error) => {
+                tracing::warn!(job_id = %job_id, error = %error, "cannot load unapplied update stop baselines");
+                continue;
+            }
+        };
+        let finished_at = match now_rfc3339() {
+            Ok(now) => now,
+            Err(error) => {
+                tracing::error!(job_id = %job_id, error = %error, "cannot timestamp unapplied update stop recovery");
+                continue;
+            }
+        };
+        let summary = json!({
+            "mode": "apply",
+            "stopRequested": true,
+            "recoveredOnStartup": true,
+            "recovery": {
+                "phase": "pre_apply",
+                "reason": "stop requested before apply commit",
+            },
+        });
+        match state
+            .db
+            .finish_update_stop_recovery_job_with_settlement(
+                &job_id,
+                "cancelled",
+                &finished_at,
+                &summary,
+                &settlements,
+            )
+            .await
+        {
+            Ok(_) => {
+                let _ = state
+                    .db
+                    .insert_job_log(
+                        &job_id,
+                        &JobLogLine {
+                            ts: finished_at,
+                            level: "info".to_string(),
+                            msg: "update cancelled during startup recovery before apply"
+                                .to_string(),
+                        },
+                    )
+                    .await;
+            }
+            Err(error) => {
+                tracing::warn!(job_id = %job_id, error = %error, "unapplied update stop recovery deferred");
+            }
+        }
+    }
+}
+
 #[async_trait::async_trait]
 impl backup::BackupRecoveryStore for DbBackupRecoveryStore {
     async fn save(&self, snapshot: &backup::BackupRecoverySnapshot) -> anyhow::Result<()> {
@@ -18,9 +393,9 @@ impl backup::BackupRecoveryStore for DbBackupRecoveryStore {
             .await
     }
 
-    async fn clear(&self) -> anyhow::Result<()> {
+    async fn clear(&self, stack_id: &str) -> anyhow::Result<()> {
         self.db
-            .clear_update_stop_recovery_snapshot(&self.job_id, &now_rfc3339()?)
+            .clear_update_stop_recovery_snapshot_for_stack(&self.job_id, stack_id, &now_rfc3339()?)
             .await
     }
 }
@@ -44,30 +419,42 @@ pub(crate) async fn recover_interrupted_update_backups(state: Arc<AppState>) {
 
     for pending in pending {
         let finished_at = now_rfc3339().unwrap_or_else(|_| now.clone());
-        let result = async {
-            let snapshot: backup::BackupRecoverySnapshot =
-                serde_json::from_str(&pending.snapshot_json)?;
-            let stack = state
-                .db
-                .get_stack(&snapshot.stack_id)
-                .await?
-                .ok_or_else(|| {
-                    anyhow::anyhow!("backup recovery stack missing: {}", snapshot.stack_id)
-                })?;
-            backup::restore_backup_recovery_snapshot(
-                &*state.runner,
-                &state.config.compose_bin,
-                state.config.docker_config_path.as_deref(),
-                &stack,
-                &state.config.managed_override_dir,
-                &snapshot,
-            )
-            .await
+        let result: anyhow::Result<Vec<backup::BackupRecoverySnapshot>> = async {
+            let snapshots = match serde_json::from_str::<serde_json::Value>(&pending.snapshot_json)?
+            {
+                serde_json::Value::Array(values) => values
+                    .into_iter()
+                    .map(serde_json::from_value)
+                    .collect::<Result<Vec<backup::BackupRecoverySnapshot>, _>>()?,
+                value => vec![serde_json::from_value(value)?],
+            };
+            if snapshots.is_empty() {
+                anyhow::bail!("backup recovery snapshot list is empty");
+            }
+            for snapshot in &snapshots {
+                let stack = state
+                    .db
+                    .get_stack(&snapshot.stack_id)
+                    .await?
+                    .ok_or_else(|| {
+                        anyhow::anyhow!("backup recovery stack missing: {}", snapshot.stack_id)
+                    })?;
+                backup::restore_backup_recovery_snapshot(
+                    &*state.runner,
+                    &state.config.compose_bin,
+                    state.config.docker_config_path.as_deref(),
+                    &stack,
+                    &state.config.managed_override_dir,
+                    snapshot,
+                )
+                .await?;
+            }
+            Ok(snapshots)
         }
         .await;
 
         match result {
-            Ok(()) => {
+            Ok(snapshot) => {
                 let was_stopped = state
                     .db
                     .get_update_stop_control(&pending.job_id)
@@ -77,16 +464,49 @@ pub(crate) async fn recover_interrupted_update_backups(state: Arc<AppState>) {
                     .and_then(|control| control.stop_requested_at)
                     .is_some();
                 let status = if was_stopped { "cancelled" } else { "failed" };
-                let summary = json!({"mode": "apply", "stopRequested": was_stopped, "recoveredOnStartup": true});
-                finish_recovered_update_job(
-                    &state.db,
-                    &pending.job_id,
-                    status,
-                    &finished_at,
-                    &summary,
-                    true,
-                )
-                .await;
+                match load_recovered_update_settlements(&state, &pending.job_id, &snapshot).await {
+                    Ok(settlements) => {
+                        let summary = json!({
+                            "mode": "apply",
+                            "stopRequested": was_stopped,
+                            "recoveredOnStartup": true,
+                            "recovery": {
+                                "phase": "restore",
+                                "runtimeVerified": true,
+                            },
+                        });
+                        finish_recovered_update_job(
+                            &state.db,
+                            &pending.job_id,
+                            status,
+                            &finished_at,
+                            &summary,
+                            true,
+                            Some(&settlements),
+                        )
+                        .await;
+                    }
+                    Err(error) => {
+                        let error_message = error.to_string();
+                        let _ = state
+                            .db
+                            .record_update_stop_recovery_error(
+                                &pending.job_id,
+                                &error_message,
+                                &finished_at,
+                            )
+                            .await;
+                        let _ = state
+                            .db
+                            .rearm_update_stop_recovery(
+                                &pending.job_id,
+                                &error_message,
+                                &finished_at,
+                            )
+                            .await;
+                        tracing::warn!(job_id = %pending.job_id, error = %error, "interrupted update runtime verification deferred");
+                    }
+                }
             }
             Err(error) => {
                 let error_message = error.to_string();
@@ -98,17 +518,10 @@ pub(crate) async fn recover_interrupted_update_backups(state: Arc<AppState>) {
                         &finished_at,
                     )
                     .await;
-                let summary =
-                    json!({"mode": "apply", "stopRequested": true, "recoveryError": error_message});
-                finish_recovered_update_job(
-                    &state.db,
-                    &pending.job_id,
-                    "failed",
-                    &finished_at,
-                    &summary,
-                    false,
-                )
-                .await;
+                let _ = state
+                    .db
+                    .rearm_update_stop_recovery(&pending.job_id, &error_message, &finished_at)
+                    .await;
                 tracing::error!(job_id = %pending.job_id, error = %error, "interrupted backup recovery failed");
             }
         }
@@ -126,12 +539,24 @@ async fn finish_recovered_update_job(
     finished_at: &str,
     summary: &serde_json::Value,
     clear_snapshot_on_success: bool,
+    settlements: Option<&[crate::db::ServiceAcceptedStateSettlement]>,
 ) {
     let mut last_error = None;
     for attempt in 0..3 {
         let finish_result = if clear_snapshot_on_success {
-            db.finish_update_stop_recovery_job(job_id, status, finished_at, summary)
+            if let Some(settlements) = settlements {
+                db.finish_update_stop_recovery_job_with_settlement(
+                    job_id,
+                    status,
+                    finished_at,
+                    summary,
+                    settlements,
+                )
                 .await
+            } else {
+                db.finish_update_stop_recovery_job(job_id, status, finished_at, summary)
+                    .await
+            }
         } else {
             db.finish_job(job_id, status, finished_at, summary).await
         };

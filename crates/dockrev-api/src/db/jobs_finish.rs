@@ -28,6 +28,28 @@ impl Db {
         .map(|_| ())
     }
 
+    pub async fn finish_update_stop_recovery_job_with_settlement(
+        &self,
+        job_id: &str,
+        status: &str,
+        finished_at: &str,
+        summary_json: &serde_json::Value,
+        settlements: &[ServiceAcceptedStateSettlement],
+    ) -> anyhow::Result<()> {
+        self.finish_job_with_archive_source(
+            job_id,
+            status,
+            finished_at,
+            summary_json,
+            None,
+            Some(settlements),
+            None,
+            true,
+        )
+        .await
+        .map(|_| ())
+    }
+
     #[allow(clippy::too_many_arguments)]
     pub async fn finish_job_with_archive_and_settlement_and_notification(
         &self,
@@ -72,6 +94,30 @@ impl Db {
             settlements,
             notification,
             false,
+        )
+        .await
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub async fn finish_update_stop_job_with_archive_file_and_settlement_and_notification(
+        &self,
+        job_id: &str,
+        status: &str,
+        finished_at: &str,
+        summary_json: &serde_json::Value,
+        archive_path: Option<PathBuf>,
+        settlements: Option<&[ServiceAcceptedStateSettlement]>,
+        notification: Option<&NotificationItemDraft>,
+    ) -> anyhow::Result<Option<bool>> {
+        self.finish_job_with_archive_source(
+            job_id,
+            status,
+            finished_at,
+            summary_json,
+            archive_path.map(ArchiveSource::File),
+            settlements,
+            notification,
+            true,
         )
         .await
     }

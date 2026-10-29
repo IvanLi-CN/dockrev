@@ -34,6 +34,80 @@ fn tag_history_is_recorded_only_for_successful_apply_updates() {
 }
 
 #[test]
+fn recovery_error_is_found_in_stack_summary() {
+    let summary = serde_json::json!({
+        "stacks": [{"update": {"recoveryError": "docker unavailable"}}]
+    });
+    assert_eq!(
+        find_recovery_error(&summary).as_deref(),
+        Some("docker unavailable")
+    );
+}
+
+#[test]
+fn managed_override_recovery_error_is_a_recovery_fence() {
+    let summary = serde_json::json!({
+        "stacks": [{"update": {"managedOverrideRecoveryError": "restore failed"}}]
+    });
+    assert_eq!(
+        find_recovery_error(&summary).as_deref(),
+        Some("restore failed")
+    );
+}
+
+#[test]
+fn unapplied_stop_converts_failed_update_to_cancelled() {
+    let mut outcome = updater::UpdateOutcome {
+        status: "failed".to_string(),
+        summary_json: serde_json::json!({"error": "update stop requested"}),
+    };
+    let control = crate::db::UpdateStopControl {
+        apply_committed_at: None,
+        stop_requested_at: Some("2026-10-29T00:00:00Z".to_string()),
+        stop_requested_by: Some("test".to_string()),
+    };
+
+    assert!(convert_unapplied_stop_failure(&mut outcome, Some(&control)));
+    assert_eq!(outcome.status, "cancelled");
+    assert_eq!(outcome.summary_json["stopRequested"], true);
+}
+
+#[test]
+fn applied_stop_does_not_convert_failed_update_to_cancelled() {
+    let mut outcome = updater::UpdateOutcome {
+        status: "failed".to_string(),
+        summary_json: serde_json::json!({"error": "update failed"}),
+    };
+    let control = crate::db::UpdateStopControl {
+        apply_committed_at: Some("2026-10-29T00:00:00Z".to_string()),
+        stop_requested_at: Some("2026-10-29T00:00:00Z".to_string()),
+        stop_requested_by: Some("test".to_string()),
+    };
+
+    assert!(!convert_unapplied_stop_failure(
+        &mut outcome,
+        Some(&control)
+    ));
+    assert_eq!(outcome.status, "failed");
+}
+
+#[tokio::test]
+async fn update_waiting_for_operation_lock_observes_stop_request() {
+    let _guard = crate::managed_override::operation_lock().await;
+    let (sender, mut receiver) = tokio::sync::watch::channel(false);
+    let waiter = tokio::spawn(async move { operation_lock_until_update_stop(&mut receiver).await });
+
+    tokio::time::sleep(std::time::Duration::from_millis(25)).await;
+    sender.send(true).expect("stop signal receiver");
+    let result = tokio::time::timeout(std::time::Duration::from_secs(1), waiter)
+        .await
+        .expect("lock waiter should observe stop")
+        .expect("lock waiter task should finish");
+    let error = result.expect_err("stop request should cancel lock wait");
+    assert!(crate::update_stop::is_requested(&error));
+}
+
+#[test]
 fn backup_and_pull_progress_are_weighted_without_terminal_jump() {
     let pull = AtomicU32::new(5_000);
     let backup = AtomicU32::new(2_500);

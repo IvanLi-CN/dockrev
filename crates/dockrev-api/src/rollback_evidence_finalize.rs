@@ -5,6 +5,7 @@ use anyhow::Context as _;
 use crate::rollback_evidence::{RollbackEvidenceContext, bounded_summary_errors};
 
 #[allow(clippy::too_many_arguments)]
+#[allow(dead_code)]
 pub(crate) async fn finish_job_with_evidence_archive(
     db: &crate::db::Db,
     job_id: &str,
@@ -16,9 +17,64 @@ pub(crate) async fn finish_job_with_evidence_archive(
     settlements: Option<&[crate::db::ServiceAcceptedStateSettlement]>,
     notification: Option<&crate::db::NotificationItemDraft>,
 ) -> anyhow::Result<Option<bool>> {
+    finish_job_with_evidence_archive_impl(
+        db,
+        job_id,
+        status,
+        finished_at,
+        summary_json,
+        archive_path,
+        evidence,
+        settlements,
+        notification,
+        false,
+    )
+    .await
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(crate) async fn finish_update_stop_job_with_evidence_archive(
+    db: &crate::db::Db,
+    job_id: &str,
+    status: &str,
+    finished_at: &str,
+    summary_json: &mut serde_json::Value,
+    archive_path: Option<PathBuf>,
+    evidence: Option<&RollbackEvidenceContext>,
+    settlements: Option<&[crate::db::ServiceAcceptedStateSettlement]>,
+    notification: Option<&crate::db::NotificationItemDraft>,
+) -> anyhow::Result<Option<bool>> {
+    finish_job_with_evidence_archive_impl(
+        db,
+        job_id,
+        status,
+        finished_at,
+        summary_json,
+        archive_path,
+        evidence,
+        settlements,
+        notification,
+        true,
+    )
+    .await
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn finish_job_with_evidence_archive_impl(
+    db: &crate::db::Db,
+    job_id: &str,
+    status: &str,
+    finished_at: &str,
+    summary_json: &mut serde_json::Value,
+    archive_path: Option<PathBuf>,
+    evidence: Option<&RollbackEvidenceContext>,
+    settlements: Option<&[crate::db::ServiceAcceptedStateSettlement]>,
+    notification: Option<&crate::db::NotificationItemDraft>,
+    clear_update_stop_recovery_snapshot: bool,
+) -> anyhow::Result<Option<bool>> {
     let Some(archive_path) = archive_path else {
-        let result = db
-            .finish_job_with_archive_file_and_settlement_and_notification(
+        let result = if clear_update_stop_recovery_snapshot {
+            db.finish_update_stop_job_with_archive_file_and_settlement_and_notification(
                 job_id,
                 status,
                 finished_at,
@@ -27,15 +83,27 @@ pub(crate) async fn finish_job_with_evidence_archive(
                 settlements,
                 notification,
             )
-            .await;
+            .await
+        } else {
+            db.finish_job_with_archive_file_and_settlement_and_notification(
+                job_id,
+                status,
+                finished_at,
+                summary_json,
+                None,
+                settlements,
+                notification,
+            )
+            .await
+        };
         if let Some(evidence) = evidence {
             evidence.release_active_spool_from_recovery();
         }
         return result;
     };
 
-    let notification_enabled = match db
-        .finish_job_with_archive_file_and_settlement_and_notification(
+    let notification_enabled = match if clear_update_stop_recovery_snapshot {
+        db.finish_update_stop_job_with_archive_file_and_settlement_and_notification(
             job_id,
             status,
             finished_at,
@@ -45,7 +113,18 @@ pub(crate) async fn finish_job_with_evidence_archive(
             notification,
         )
         .await
-    {
+    } else {
+        db.finish_job_with_archive_file_and_settlement_and_notification(
+            job_id,
+            status,
+            finished_at,
+            summary_json,
+            Some(archive_path),
+            settlements,
+            notification,
+        )
+        .await
+    } {
         Ok(notification_enabled) => notification_enabled,
         Err(error) => {
             let result = finish_after_archive_error(
@@ -58,6 +137,7 @@ pub(crate) async fn finish_job_with_evidence_archive(
                 settlements,
                 notification,
                 error,
+                clear_update_stop_recovery_snapshot,
             )
             .await;
             if let Some(evidence) = evidence {
@@ -85,6 +165,7 @@ async fn finish_after_archive_error(
     settlements: Option<&[crate::db::ServiceAcceptedStateSettlement]>,
     notification: Option<&crate::db::NotificationItemDraft>,
     error: anyhow::Error,
+    clear_update_stop_recovery_snapshot: bool,
 ) -> anyhow::Result<Option<bool>> {
     match archive_commit_is_visible(db, job_id, status, finished_at).await {
         Ok(true) => {
@@ -110,17 +191,30 @@ async fn finish_after_archive_error(
     }
 
     record_archive_persistence_failure(summary_json, &error);
-    db.finish_job_with_archive_file_and_settlement_and_notification(
-        job_id,
-        status,
-        finished_at,
-        summary_json,
-        None,
-        settlements,
-        notification,
-    )
-    .await
-    .context("finish job after rollback evidence archive persistence failure")
+    let result = if clear_update_stop_recovery_snapshot {
+        db.finish_update_stop_job_with_archive_file_and_settlement_and_notification(
+            job_id,
+            status,
+            finished_at,
+            summary_json,
+            None,
+            settlements,
+            notification,
+        )
+        .await
+    } else {
+        db.finish_job_with_archive_file_and_settlement_and_notification(
+            job_id,
+            status,
+            finished_at,
+            summary_json,
+            None,
+            settlements,
+            notification,
+        )
+        .await
+    };
+    result.context("finish job after rollback evidence archive persistence failure")
 }
 
 async fn archive_commit_is_visible(
@@ -483,6 +577,7 @@ mod tests {
             None,
             None,
             anyhow::anyhow!("injected post-commit failure"),
+            false,
         )
         .await;
 

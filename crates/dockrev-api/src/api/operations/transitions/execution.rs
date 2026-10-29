@@ -3,6 +3,9 @@ use crate::backup::BackupRecoveryStore;
 use crate::managed_override;
 use std::sync::atomic::{AtomicU32, Ordering};
 
+#[path = "execution_finalization.rs"]
+mod finalization;
+
 pub(crate) type UpdateStackSummaries = Vec<serde_json::Value>;
 pub(crate) type UpdateBackupsToCleanup = Vec<(String, u32)>;
 pub(crate) type UpdateJobOutcome = (
@@ -34,6 +37,66 @@ pub(crate) fn extract_changed_service_ids(update: &serde_json::Value) -> Option<
     if ids.is_empty() { None } else { Some(ids) }
 }
 
+fn find_recovery_error(value: &serde_json::Value) -> Option<String> {
+    match value {
+        serde_json::Value::Object(object) => {
+            for key in ["recoveryError", "managedOverrideRecoveryError"] {
+                if let Some(error) = object.get(key).and_then(serde_json::Value::as_str) {
+                    return Some(error.to_string());
+                }
+            }
+            object.values().find_map(find_recovery_error)
+        }
+        serde_json::Value::Array(values) => values.iter().find_map(find_recovery_error),
+        _ => None,
+    }
+}
+
+fn convert_unapplied_stop_failure(
+    outcome: &mut updater::UpdateOutcome,
+    control: Option<&crate::db::UpdateStopControl>,
+) -> bool {
+    let Some(control) = control else {
+        return false;
+    };
+    if outcome.status == "success"
+        || control.stop_requested_at.is_none()
+        || control.apply_committed_at.is_some()
+    {
+        return false;
+    }
+    outcome.status = "cancelled".to_string();
+    if let Some(summary) = outcome.summary_json.as_object_mut() {
+        summary.insert("stopRequested".to_string(), json!(true));
+    }
+    true
+}
+
+async fn operation_lock_until_update_stop(
+    stop_signal: &mut tokio::sync::watch::Receiver<bool>,
+) -> anyhow::Result<tokio::sync::MutexGuard<'static, ()>> {
+    loop {
+        if *stop_signal.borrow() {
+            return Err(crate::update_stop::requested_error());
+        }
+        if let Some(guard) = managed_override::try_operation_lock() {
+            if *stop_signal.borrow() {
+                drop(guard);
+                return Err(crate::update_stop::requested_error());
+            }
+            return Ok(guard);
+        }
+        tokio::select! {
+            changed = stop_signal.changed() => {
+                if changed.is_err() {
+                    return Err(anyhow::anyhow!("update stop control channel closed"));
+                }
+            }
+            _ = tokio::time::sleep(std::time::Duration::from_millis(50)) => {}
+        }
+    }
+}
+
 pub(crate) async fn run_update_job(
     state: Arc<AppState>,
     job_id: String,
@@ -49,7 +112,7 @@ pub(crate) async fn run_update_job(
         .await?
         .map(|job| TransitionJobKind::from_job_type(&job.r#type))
         .unwrap_or(TransitionJobKind::Update);
-    let stop_signal = (job_kind == TransitionJobKind::Update && req.mode.as_str() == "apply")
+    let mut stop_signal = (job_kind == TransitionJobKind::Update && req.mode.as_str() == "apply")
         .then(|| state.update_stop_hub.subscribe(&job_id));
     let (evidence, evidence_setup_error) =
         crate::rollback_evidence_finalize::initialize_evidence_context(
@@ -116,8 +179,28 @@ pub(crate) async fn run_update_job(
                 continue;
             };
             // Keep one operation lock across backup, apply, and any recovery so stopped
-            // services cannot be mutated by another lifecycle or reconciliation job.
-            let _managed_override_operation_guard = managed_override::operation_lock().await;
+            // services cannot be mutated by another lifecycle or reconciliation job. Update
+            // jobs must still be cancellable while waiting for that lock.
+            if stop_signal.is_some() {
+                latest_progress = make_job_progress(
+                    "prepare",
+                    "waiting for update operation slot".to_string(),
+                    processed_stacks,
+                    total_stacks,
+                    Some(stack_id.clone()),
+                    now_rfc3339()
+                        .unwrap_or_else(|_| time::OffsetDateTime::now_utc().to_string()),
+                );
+                if let Err(error) = persist_job_progress(&state, &job_id, &latest_progress).await
+                {
+                    tracing::warn!(job_id = %job_id, error = %error, "failed to persist update wait progress");
+                }
+            }
+            let _managed_override_operation_guard = if let Some(stop_signal) = stop_signal.as_mut() {
+                operation_lock_until_update_stop(stop_signal).await?
+            } else {
+                managed_override::operation_lock().await
+            };
             latest_progress = make_job_progress_with_percent(
                 "backup",
                 job_kind.processing_stack_message(stack_id),
@@ -567,7 +650,7 @@ pub(crate) async fn run_update_job(
                             let override_recovery =
                                 updater::restore_managed_override_snapshot(&managed_override_path);
                             final_status = if override_recovery.is_ok()
-                                && recovery_store.clear().await.is_ok()
+                                && recovery_store.clear(stack_id).await.is_ok()
                             {
                                 "cancelled".to_string()
                             } else {
@@ -641,8 +724,11 @@ pub(crate) async fn run_update_job(
                             .await
                         }
                     };
-                    let cleanup = recovery_store.clear().await;
-                    final_status = if prepare_stop_requested && restored.is_ok() && cleanup.is_ok() {
+                    let recovery_error = match restored {
+                        Ok(()) => recovery_store.clear(stack_id).await.err(),
+                        Err(error) => Some(error),
+                    };
+                    final_status = if prepare_stop_requested && recovery_error.is_none() {
                         "cancelled".to_string()
                     } else {
                         "failed".to_string()
@@ -653,7 +739,7 @@ pub(crate) async fn run_update_job(
                             "error": error.to_string(),
                             "failureStep": "pull_services",
                             "stopRequested": prepare_stop_requested,
-                            "recoveryError": restored.err().or_else(|| cleanup.err()).map(|error| error.to_string()),
+                            "recoveryError": recovery_error.map(|error| error.to_string()),
                         }),
                     );
                     stack_summaries.push(serde_json::Value::Object(stack_summary));
@@ -841,6 +927,8 @@ pub(crate) async fn run_update_job(
             let _ = progress_task.await;
             match update_outcome {
                 Ok(mut outcome) => {
+                    let stop_control = state.db.get_update_stop_control(&job_id).await?;
+                    convert_unapplied_stop_failure(&mut outcome, stop_control.as_ref());
                     if outcome.status != "success"
                     {
                         let restored = if services_kept_stopped_for_apply.is_empty() {
@@ -856,21 +944,15 @@ pub(crate) async fn run_update_job(
                             )
                             .await
                         };
-                        let cleanup = recovery_store.clear().await;
-                        if let Some(error) = restored.err().or_else(|| cleanup.err()) {
+                        let recovery_error = restored.err();
+                        if let Some(error) = recovery_error {
                             outcome.status = "failed".to_string();
                             if let Some(summary) = outcome.summary_json.as_object_mut() {
                                 summary.insert("recoveryError".to_string(), json!(error.to_string()));
                             }
                         }
-                    } else if let Err(error) = recovery_store.clear().await {
-                        outcome.status = "failed".to_string();
-                        if let Some(summary) = outcome.summary_json.as_object_mut() {
-                            summary.insert("recoveryError".to_string(), json!(error.to_string()));
-                        }
                     }
-                    if outcome.status == "success"
-                        && !planned_service_ids.is_empty()
+                    if !planned_service_ids.is_empty()
                         && let Some(project) = state.db.get_stack_compose_project(stack_id).await?
                     {
                         let settled_at = now_rfc3339()
@@ -916,6 +998,21 @@ pub(crate) async fn run_update_job(
                                 &repo_tags_cache,
                             )
                             .await?;
+                            if outcome.status != "success" {
+                                // A failed apply that was rolled back must settle the observed
+                                // baseline while retaining the candidate for a later retry.
+                                settle_outcome.candidate_tag = svc_for_check.candidate_tag.clone();
+                                settle_outcome.candidate_resolved_tag =
+                                    svc_for_check.candidate_resolved_tag.clone();
+                                settle_outcome.candidate_digest =
+                                    svc_for_check.candidate_digest.clone();
+                                settle_outcome.candidate_arch_match =
+                                    svc_for_check.candidate_arch_match.clone();
+                                settle_outcome.candidate_arch_json =
+                                    svc_for_check.candidate_arch_json.clone();
+                                settle_outcome.ignore_rule_id = svc_for_check.ignore_rule_id.clone();
+                                settle_outcome.ignore_reason = svc_for_check.ignore_reason.clone();
+                            }
                             let mut inference_ok = true;
                             if settle_outcome.current_digest.is_none() {
                                 inference_ok = false;
@@ -992,7 +1089,12 @@ pub(crate) async fn run_update_job(
                     }
                 }
                 Err(e) => {
-                    let stop_requested = crate::update_stop::is_requested(&e);
+                    let stop_control = state.db.get_update_stop_control(&job_id).await?;
+                    let stop_requested = crate::update_stop::is_requested(&e)
+                        || stop_control.as_ref().is_some_and(|control| {
+                            control.stop_requested_at.is_some()
+                                && control.apply_committed_at.is_none()
+                        });
                     let restored = if services_kept_stopped_for_apply.is_empty() {
                         Ok(())
                     } else {
@@ -1006,8 +1108,7 @@ pub(crate) async fn run_update_job(
                         )
                         .await
                     };
-                    let cleanup = recovery_store.clear().await;
-                    let recovery_error = restored.err().or_else(|| cleanup.err());
+                    let recovery_error = restored.err();
                     final_status = if stop_requested && recovery_error.is_none() {
                         "cancelled".to_string()
                     } else {
@@ -1143,7 +1244,7 @@ pub(crate) async fn run_update_job(
         final_status,
         stack_summaries,
         backups_to_cleanup,
-        mut final_summary,
+        final_summary,
         finished_at,
         settlements,
         observed_healthcheck_failures,
@@ -1229,217 +1330,22 @@ pub(crate) async fn run_update_job(
         }
     };
 
-    if let Some(summary) = final_summary.as_object_mut() {
-        let refresh = if final_status == "success" {
-            "fresh"
-        } else {
-            "deferred"
-        };
-        let reason = if final_status == "success" {
-            "settled from final runtime observation"
-        } else {
-            "baseline candidate retained until a later authoritative observation"
-        };
-        let services = req
-            .targets
-            .as_deref()
-            .unwrap_or_default()
-            .iter()
-            .map(|target| {
-                json!({
-                    "serviceId": target.service_id,
-                    "candidateRefresh": refresh,
-                    "reason": reason,
-                })
-            })
-            .collect::<Vec<_>>();
-        summary.insert(
-            "stateSettlement".to_string(),
-            json!({
-                "status": "settled",
-                "services": services,
-            }),
-        );
-    }
-
-    let force_notify = final_status != "success";
-    let mut should_notify = true;
-    let mut notify_summary = final_summary.clone();
-    let mut notify_skip_reason: Option<String> = None;
-    if !force_notify {
-        match req.scope {
-            JobScope::Service => {
-                if let Some(service_id) = req.service_id.as_deref()
-                    && let Some(true) = state.db.is_service_archived(service_id).await?
-                {
-                    should_notify = false;
-                    notify_skip_reason = Some("archived service".to_string());
-                }
-                if should_notify
-                    && let Some(service_id) = req.service_id.as_deref()
-                    && let Some(stack_id) = state.db.get_service_stack_id(service_id).await?
-                    && let Some(true) = state.db.is_stack_archived(&stack_id).await?
-                {
-                    should_notify = false;
-                    notify_skip_reason = Some("archived stack".to_string());
-                }
-            }
-            JobScope::Stack | JobScope::All => {
-                let mut filtered = Vec::<serde_json::Value>::new();
-                for s in &stack_summaries {
-                    let Some(stack_id) = s.get("stackId").and_then(|v| v.as_str()) else {
-                        continue;
-                    };
-
-                    if let Some(true) = state.db.is_stack_archived(stack_id).await? {
-                        continue;
-                    }
-
-                    let include = if let Some(update) = s.get("update")
-                        && let Some(changed_ids) = extract_changed_service_ids(update)
-                    {
-                        state.db.has_unarchived_services(&changed_ids).await?
-                    } else {
-                        state.db.has_unarchived_services_in_stack(stack_id).await?
-                    };
-
-                    if include {
-                        filtered.push(s.clone());
-                    }
-                }
-
-                if filtered.is_empty() {
-                    should_notify = false;
-                    notify_skip_reason =
-                        Some("all stacks archived or only archived services touched".to_string());
-                } else {
-                    notify_summary = json!({
-                        "mode": req.mode.as_str(),
-                        "stacks": filtered,
-                    });
-                }
-            }
-        }
-    }
-
-    if !should_notify {
-        let _ = state
-            .db
-            .insert_job_log(
-                &job_id,
-                &JobLogLine {
-                    ts: finished_at.clone(),
-                    level: "info".to_string(),
-                    msg: format!(
-                        "notify skipped ({})",
-                        notify_skip_reason.as_deref().unwrap_or("filtered")
-                    ),
-                },
-            )
-            .await;
-    }
-    let archive_path = if let Some(evidence) = evidence.as_ref() {
-        let mut evidence_summary = evidence.finalize().await;
-        let mut archive_path = None;
-        if evidence_summary.status == "available" {
-            match tokio::fs::metadata(evidence.archive_path()).await {
-                Ok(_) => archive_path = Some(evidence.archive_path()),
-                Err(error) => {
-                    mark_archive_metadata_unavailable(&mut evidence_summary, error);
-                }
-            }
-        }
-        if evidence_summary.status != "absent"
-            && let Some(summary) = final_summary.as_object_mut()
-        {
-            summary.insert(
-                "rollbackEvidence".to_string(),
-                serde_json::to_value(&evidence_summary)?,
-            );
-        }
-        archive_path
-    } else {
-        let failed_candidates = transition_failed_candidate_count(
-            job_kind,
-            req.mode.as_str(),
-            &stack_summaries,
-            observed_healthcheck_failures,
-        );
-        crate::rollback_evidence_finalize::record_spool_setup_failure(
-            &mut final_summary,
-            evidence_setup_error.as_deref(),
-            failed_candidates,
-        );
-        None
-    };
-    let notification = notify::prepare_job_notification_item_for_finish(
-        state.as_ref(),
-        should_notify,
-        &job_id,
-        &final_status,
-        &finished_at,
-        &notify_summary,
+    finalization::finalize_update_job(
+        state,
+        job_id,
+        req,
+        job_kind,
+        final_status,
+        stack_summaries,
+        backups_to_cleanup,
+        final_summary,
+        finished_at,
+        settlements,
+        observed_healthcheck_failures,
+        evidence,
+        evidence_setup_error,
     )
-    .await?;
-    let notification_event_enabled =
-        crate::rollback_evidence_finalize::finish_job_with_evidence_archive(
-            &state.db,
-            &job_id,
-            &final_status,
-            &finished_at,
-            &mut final_summary,
-            archive_path,
-            evidence.as_ref(),
-            (!settlements.is_empty()).then_some(settlements.as_slice()),
-            notification.as_ref(),
-        )
-        .await?;
-    if should_record_update_tag_history(&req, &final_status) {
-        record_update_tag_history(state.as_ref(), &req, &finished_at).await;
-    }
-    if final_status == "success"
-        && let Ok(now_dt) = time::OffsetDateTime::parse(
-            &finished_at,
-            &time::format_description::well_known::Rfc3339,
-        )
-    {
-        for (backup_id, after_seconds) in backups_to_cleanup {
-            let cleanup_after = now_dt + time::Duration::seconds(after_seconds as i64);
-            if let Ok(cleanup_after) =
-                cleanup_after.format(&time::format_description::well_known::Rfc3339)
-            {
-                let _ = state
-                    .db
-                    .schedule_backup_cleanup(&backup_id, &cleanup_after)
-                    .await;
-            }
-        }
-    }
-    if notification_event_enabled == Some(true)
-        && let Err(error) = notify::notify_job_updated_with_event_enabled(
-            state.as_ref(),
-            &job_id,
-            &final_status,
-            &finished_at,
-            &notify_summary,
-            notification_event_enabled,
-        )
-        .await
-    {
-        let _ = state
-            .db
-            .insert_job_log(
-                &job_id,
-                &JobLogLine {
-                    ts: finished_at.clone(),
-                    level: "warn".to_string(),
-                    msg: format!("notification delivery failed: {error}"),
-                },
-            )
-            .await;
-    }
-    state.update_stop_hub.remove(&job_id);
-    Ok(())
+    .await
 }
 
 fn should_record_update_tag_history(req: &TriggerUpdateRequest, final_status: &str) -> bool {

@@ -90,7 +90,7 @@ pub struct BackupRecoverySnapshot {
 #[async_trait::async_trait]
 pub trait BackupRecoveryStore: Send + Sync {
     async fn save(&self, snapshot: &BackupRecoverySnapshot) -> anyhow::Result<()>;
-    async fn clear(&self) -> anyhow::Result<()>;
+    async fn clear(&self, stack_id: &str) -> anyhow::Result<()>;
 }
 
 #[derive(Clone, Debug)]
@@ -349,7 +349,7 @@ pub(crate) async fn run_pre_update_backup_unlocked(
                 "stopping services failed ({error}); restoring services failed ({restore_error})"
             )));
         }
-        recovery_store.clear().await?;
+        recovery_store.clear(&stack.id).await?;
         return Err(error);
     }
     let total_bytes = included.iter().map(|item| item.size_bytes).sum::<u64>();
@@ -397,7 +397,7 @@ pub(crate) async fn run_pre_update_backup_unlocked(
                         "resuming non-update services failed ({resume_error}); restoring all stopped services failed ({restore_error})"
                     )));
                 }
-                recovery_store.clear().await?;
+                recovery_store.clear(&stack.id).await?;
                 return Err(resume_error.context("resume non-update services after backup"));
             }
         }
@@ -414,7 +414,7 @@ pub(crate) async fn run_pre_update_backup_unlocked(
                     "backup failed ({error}); restoring previous services failed ({restore_error})"
                 )));
             }
-            recovery_store.clear().await?;
+            recovery_store.clear(&stack.id).await?;
             return Err(error);
         }
     }
@@ -441,7 +441,7 @@ pub(crate) async fn run_pre_update_backup_unlocked(
                     "reading backup artifact size failed ({error}); restoring services failed ({restore_error})"
                 )));
             }
-            recovery_store.clear().await?;
+            recovery_store.clear(&stack.id).await?;
             return Err(error.context("read backup artifact size"));
         }
     };
@@ -455,7 +455,7 @@ pub(crate) async fn run_pre_update_backup_unlocked(
     }
 
     if services_kept_stopped.is_empty() {
-        recovery_store.clear().await?;
+        recovery_store.clear(&stack.id).await?;
     }
 
     Ok(BackupRunResult {

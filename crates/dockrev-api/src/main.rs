@@ -301,6 +301,11 @@ async fn main() -> anyhow::Result<()> {
         .db
         .reset_update_stop_recovery_claims_for_startup(&now)
         .await?;
+    // Complete recovery before any listener or background producer can create a new update job.
+    // Startup recovery owns the persisted snapshot/fence, while a live worker owns its own run.
+    api::recover_interrupted_update_backups(state.clone()).await;
+    api::recover_unapplied_update_stop_requests(state.clone()).await;
+    api::recover_fenced_update_jobs(state.clone()).await;
     let recovered = state
         .db
         .recover_incomplete_jobs(&now, "server_restart")
@@ -400,9 +405,6 @@ async fn main() -> anyhow::Result<()> {
     let listener = tokio::net::TcpListener::bind(&bind).await?;
     tracing::info!(bind = %bind, "dockrev api listening");
 
-    // Recovery owns only the services recorded before a pre-apply backup stopped them. It is
-    // deliberately detached from startup so a failed restore cannot prevent Dockrev serving.
-    tokio::spawn(api::recover_interrupted_update_backups(state.clone()));
     rollback_evidence::spawn_startup_interrupted_evidence_recovery(
         state.db.clone(),
         state.config.db_path.clone(),

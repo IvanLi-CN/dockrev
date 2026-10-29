@@ -22,6 +22,74 @@ pub(crate) enum UpdateStopRequestOutcome {
 }
 
 impl Db {
+    pub async fn list_unapplied_update_stop_jobs(&self) -> anyhow::Result<Vec<String>> {
+        self.call(move |conn| {
+            let mut statement = conn.prepare(
+                r#"
+SELECT jobs.id
+FROM jobs
+JOIN update_job_stop_controls controls ON controls.job_id = jobs.id
+WHERE jobs.type = 'update'
+  AND jobs.status IN ('queued', 'running')
+  AND jobs.finished_at IS NULL
+  AND controls.stop_requested_at IS NOT NULL
+  AND controls.apply_committed_at IS NULL
+  AND controls.recovery_snapshot_json IS NULL
+  AND EXISTS (
+    SELECT 1
+    FROM job_service_targets target
+    JOIN services service ON service.id = target.service_id
+    WHERE target.job_id = jobs.id
+      AND target.opened_generation IS NOT NULL
+      AND target.opened_generation = service.accepted_state_generation
+      AND target.opened_generation % 2 = 1
+  )
+ORDER BY jobs.created_at ASC
+"#,
+            )?;
+            let rows = statement.query_map([], |row| row.get::<_, String>(0))?;
+            rows.collect::<Result<Vec<_>, _>>().map_err(Into::into)
+        })
+        .await
+        .context("list unapplied update stop jobs")
+    }
+
+    pub async fn list_fenced_update_jobs(&self) -> anyhow::Result<Vec<String>> {
+        self.call(move |conn| {
+            let mut statement = conn.prepare(
+                r#"
+SELECT jobs.id
+FROM jobs
+LEFT JOIN update_job_stop_controls controls ON controls.job_id = jobs.id
+WHERE jobs.type = 'update'
+  AND jobs.status IN ('queued', 'running')
+  AND jobs.finished_at IS NULL
+  AND json_extract(CASE WHEN json_valid(jobs.summary_json) THEN jobs.summary_json ELSE '{}' END, '$.mode') = 'apply'
+  AND (controls.recovery_snapshot_json IS NULL OR controls.job_id IS NULL)
+  AND (
+    controls.job_id IS NULL
+    OR controls.stop_requested_at IS NULL
+    OR controls.apply_committed_at IS NOT NULL
+  )
+  AND EXISTS (
+    SELECT 1
+    FROM job_service_targets target
+    JOIN services service ON service.id = target.service_id
+    WHERE target.job_id = jobs.id
+      AND target.opened_generation IS NOT NULL
+      AND target.opened_generation = service.accepted_state_generation
+      AND target.opened_generation % 2 = 1
+  )
+ORDER BY jobs.created_at ASC
+"#,
+            )?;
+            let rows = statement.query_map([], |row| row.get::<_, String>(0))?;
+            rows.collect::<Result<Vec<_>, _>>().map_err(Into::into)
+        })
+        .await
+        .context("list fenced update jobs")
+    }
+
     pub async fn create_update_stop_control(&self, job_id: &str, now: &str) -> anyhow::Result<()> {
         let job_id = job_id.to_string();
         let now = now.to_string();
@@ -129,13 +197,38 @@ impl Db {
         now: &str,
     ) -> anyhow::Result<()> {
         let job_id = job_id.to_string();
-        let snapshot = serde_json::to_string(snapshot)?;
+        let snapshot = serde_json::to_value(snapshot)?;
         let now = now.to_string();
         self.call(move |conn| {
-            conn.execute(
+            let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
+            let existing = tx
+                .query_row(
+                    "SELECT recovery_snapshot_json FROM update_job_stop_controls WHERE job_id = ?1",
+                    params![&job_id],
+                    |row| row.get::<_, Option<String>>(0),
+                )
+                .optional()?
+                .flatten();
+            let mut snapshots = match existing.as_deref() {
+                Some(raw) if !raw.trim().is_empty() => match serde_json::from_str::<serde_json::Value>(raw) {
+                    Ok(serde_json::Value::Array(values)) => values,
+                    Ok(value) => vec![value],
+                    Err(error) => {
+                        return Err(rusqlite::Error::ToSqlConversionFailure(Box::new(error)).into());
+                    }
+                },
+                _ => Vec::new(),
+            };
+            snapshots.retain(|value| {
+                value.get("stack_id").or_else(|| value.get("stackId"))
+                    != snapshot.get("stack_id").or_else(|| snapshot.get("stackId"))
+            });
+            snapshots.push(snapshot);
+            tx.execute(
                 "UPDATE update_job_stop_controls SET recovery_snapshot_json = ?2, recovery_attempted_at = NULL, recovery_error = NULL, updated_at = ?3 WHERE job_id = ?1",
-                params![job_id, snapshot, now],
+                params![job_id, serde_json::to_string(&snapshots)?, now],
             )?;
+            tx.commit()?;
             Ok(())
         })
         .await
@@ -153,6 +246,58 @@ impl Db {
                 "UPDATE update_job_stop_controls SET recovery_snapshot_json = NULL, recovery_error = NULL, updated_at = ?2 WHERE job_id = ?1",
                 params![job_id, now],
             )?;
+            Ok(())
+        })
+        .await
+    }
+
+    pub async fn clear_update_stop_recovery_snapshot_for_stack(
+        &self,
+        job_id: &str,
+        stack_id: &str,
+        now: &str,
+    ) -> anyhow::Result<()> {
+        let job_id = job_id.to_string();
+        let stack_id = stack_id.to_string();
+        let now = now.to_string();
+        self.call(move |conn| {
+            let tx = conn.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
+            let existing = tx
+                .query_row(
+                    "SELECT recovery_snapshot_json FROM update_job_stop_controls WHERE job_id = ?1",
+                    params![&job_id],
+                    |row| row.get::<_, Option<String>>(0),
+                )
+                .optional()?
+                .flatten();
+            let Some(raw) = existing else {
+                tx.commit()?;
+                return Ok(());
+            };
+            let values = match serde_json::from_str::<serde_json::Value>(&raw) {
+                Ok(serde_json::Value::Array(values)) => values,
+                Ok(value) => vec![value],
+                Err(error) => {
+                    return Err(rusqlite::Error::ToSqlConversionFailure(Box::new(error)).into());
+                }
+            };
+            let remaining = values
+                .into_iter()
+                .filter(|value| {
+                    value
+                        .get("stack_id")
+                        .or_else(|| value.get("stackId"))
+                        .and_then(serde_json::Value::as_str)
+                        != Some(stack_id.as_str())
+                })
+                .collect::<Vec<_>>();
+            let snapshot_json = (!remaining.is_empty()).then(|| serde_json::to_string(&remaining))
+                .transpose()?;
+            tx.execute(
+                "UPDATE update_job_stop_controls SET recovery_snapshot_json = ?2, recovery_error = CASE WHEN ?2 IS NULL THEN NULL ELSE recovery_error END, updated_at = ?3 WHERE job_id = ?1",
+                params![job_id, snapshot_json, now],
+            )?;
+            tx.commit()?;
             Ok(())
         })
         .await
@@ -214,10 +359,23 @@ impl Db {
         let error = error.to_string();
         let now = now.to_string();
         self.call(move |conn| {
-            conn.execute(
+            let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
+            tx.execute(
                 "UPDATE update_job_stop_controls SET recovery_error = ?2, updated_at = ?3 WHERE job_id = ?1",
                 params![job_id, error, now],
             )?;
+            tx.execute(
+                r#"
+UPDATE jobs
+SET summary_json = CASE
+    WHEN json_valid(summary_json) THEN json_set(summary_json, '$.recoveryError', ?2, '$.recoveryUpdatedAt', ?3)
+    ELSE json_object('recoveryError', ?2, 'recoveryUpdatedAt', ?3)
+END
+WHERE id = ?1 AND finished_at IS NULL
+"#,
+                params![job_id, error, now],
+            )?;
+            tx.commit()?;
             Ok(())
         })
         .await
@@ -331,6 +489,172 @@ mod tests {
         );
         assert!(
             db.claim_pending_update_stop_recoveries("2026-08-16T00:05:00Z")
+                .await
+                .unwrap()
+                .is_empty()
+        );
+    }
+
+    #[tokio::test]
+    async fn recovery_snapshots_accumulate_all_stacks_for_one_update() {
+        let db = Db::open(Path::new(":memory:")).await.unwrap();
+        db.insert_job(update_job("job-multi-stack-recovery"))
+            .await
+            .unwrap();
+        db.create_update_stop_control("job-multi-stack-recovery", "2026-08-16T00:00:00Z")
+            .await
+            .unwrap();
+        for (stack_id, service) in [("stack-a", "web"), ("stack-b", "api")] {
+            db.save_update_stop_recovery_snapshot(
+                "job-multi-stack-recovery",
+                &crate::backup::BackupRecoverySnapshot {
+                    stack_id: stack_id.to_string(),
+                    services: vec![service.to_string()],
+                },
+                "2026-08-16T00:01:00Z",
+            )
+            .await
+            .unwrap();
+        }
+
+        let pending = db
+            .claim_pending_update_stop_recoveries("2026-08-16T00:02:00Z")
+            .await
+            .unwrap();
+        let snapshots: Vec<crate::backup::BackupRecoverySnapshot> =
+            serde_json::from_str(&pending[0].snapshot_json).unwrap();
+        assert_eq!(snapshots.len(), 2);
+        assert_eq!(snapshots[0].stack_id, "stack-a");
+        assert_eq!(snapshots[1].stack_id, "stack-b");
+    }
+
+    #[tokio::test]
+    async fn stack_specific_recovery_cleanup_keeps_other_stack_snapshot() {
+        let db = Db::open(Path::new(":memory:")).await.unwrap();
+        let job_id = "job-stack-specific-recovery-cleanup";
+        db.insert_job(update_job(job_id)).await.unwrap();
+        db.create_update_stop_control(job_id, "2026-08-16T00:00:00Z")
+            .await
+            .unwrap();
+        for (stack_id, service) in [("stack-a", "web"), ("stack-b", "api")] {
+            db.save_update_stop_recovery_snapshot(
+                job_id,
+                &crate::backup::BackupRecoverySnapshot {
+                    stack_id: stack_id.to_string(),
+                    services: vec![service.to_string()],
+                },
+                "2026-08-16T00:01:00Z",
+            )
+            .await
+            .unwrap();
+        }
+
+        db.clear_update_stop_recovery_snapshot_for_stack(job_id, "stack-a", "2026-08-16T00:02:00Z")
+            .await
+            .unwrap();
+
+        let pending = db
+            .claim_pending_update_stop_recoveries("2026-08-16T00:03:00Z")
+            .await
+            .unwrap();
+        let snapshots: Vec<crate::backup::BackupRecoverySnapshot> =
+            serde_json::from_str(&pending[0].snapshot_json).unwrap();
+        assert_eq!(snapshots.len(), 1);
+        assert_eq!(snapshots[0].stack_id, "stack-b");
+    }
+
+    #[tokio::test]
+    async fn multi_stack_recovery_window_keeps_completed_stack_until_terminal_cleanup() {
+        let db = Db::open(Path::new(":memory:")).await.unwrap();
+        let job_id = "job-multi-stack-crash-window";
+        db.insert_job(update_job(job_id)).await.unwrap();
+        db.create_update_stop_control(job_id, "2026-08-16T00:00:00Z")
+            .await
+            .unwrap();
+
+        db.save_update_stop_recovery_snapshot(
+            job_id,
+            &crate::backup::BackupRecoverySnapshot {
+                stack_id: "stack-a".to_string(),
+                services: vec!["web".to_string()],
+            },
+            "2026-08-16T00:01:00Z",
+        )
+        .await
+        .unwrap();
+        // Stack A has applied, but its non-empty recovery snapshot remains until
+        // the whole update reaches terminal cleanup.
+        db.save_update_stop_recovery_snapshot(
+            job_id,
+            &crate::backup::BackupRecoverySnapshot {
+                stack_id: "stack-b".to_string(),
+                services: vec!["api".to_string()],
+            },
+            "2026-08-16T00:02:00Z",
+        )
+        .await
+        .unwrap();
+
+        let pending = db
+            .claim_pending_update_stop_recoveries("2026-08-16T00:03:00Z")
+            .await
+            .unwrap();
+        let snapshots: Vec<crate::backup::BackupRecoverySnapshot> =
+            serde_json::from_str(&pending[0].snapshot_json).unwrap();
+        assert_eq!(
+            snapshots
+                .iter()
+                .map(|snapshot| snapshot.stack_id.as_str())
+                .collect::<Vec<_>>(),
+            vec!["stack-a", "stack-b"]
+        );
+
+        db.clear_update_stop_recovery_snapshot(job_id, "2026-08-16T00:04:00Z")
+            .await
+            .unwrap();
+        assert!(
+            db.claim_pending_update_stop_recoveries("2026-08-16T00:05:00Z")
+                .await
+                .unwrap()
+                .is_empty()
+        );
+    }
+
+    #[tokio::test]
+    async fn terminal_update_finish_clears_all_recovery_snapshots() {
+        let db = Db::open(Path::new(":memory:")).await.unwrap();
+        let job_id = "job-terminal-clears-multi-stack-recovery";
+        db.insert_job(update_job(job_id)).await.unwrap();
+        db.create_update_stop_control(job_id, "2026-08-16T00:00:00Z")
+            .await
+            .unwrap();
+        for stack_id in ["stack-a", "stack-b"] {
+            db.save_update_stop_recovery_snapshot(
+                job_id,
+                &crate::backup::BackupRecoverySnapshot {
+                    stack_id: stack_id.to_string(),
+                    services: vec!["app".to_string()],
+                },
+                "2026-08-16T00:01:00Z",
+            )
+            .await
+            .unwrap();
+        }
+
+        db.finish_update_stop_job_with_archive_file_and_settlement_and_notification(
+            job_id,
+            "failed",
+            "2026-08-16T00:02:00Z",
+            &serde_json::json!({"mode": "apply"}),
+            None,
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+
+        assert!(
+            db.claim_pending_update_stop_recoveries("2026-08-16T00:03:00Z")
                 .await
                 .unwrap()
                 .is_empty()

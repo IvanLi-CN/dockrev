@@ -72,8 +72,9 @@ pub(crate) use operations::LifecycleSnapshotCoordinator;
 use operations::*;
 pub(crate) use operations::{
     complete_check_job, enqueue_update_job, enqueue_update_job_deferred,
-    normalize_digest_for_compare, recover_interrupted_update_backups, run_update_job,
-    summary_emits_new_version_notification, summary_matched_service_ids,
+    normalize_digest_for_compare, recover_fenced_update_jobs, recover_interrupted_update_backups,
+    recover_unapplied_update_stop_requests, run_update_job, summary_emits_new_version_notification,
+    summary_matched_service_ids,
 };
 use services::*;
 use stack_record_deletion::*;

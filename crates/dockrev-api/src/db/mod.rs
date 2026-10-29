@@ -28,6 +28,7 @@ mod repo_links;
 mod resource_usage;
 mod schema;
 mod schema_path;
+mod service_operation_recovery;
 mod service_operations;
 mod settings;
 mod snapshots;
@@ -159,7 +160,7 @@ pub(crate) use service_operations::{
     ServiceOperationTarget,
 };
 pub(crate) use stack_record_deletion::{StackRecordDeletionCommit, StackRecordDeletionSnapshot};
-pub(crate) use update_stops::UpdateStopRequestOutcome;
+pub(crate) use update_stops::{UpdateStopControl, UpdateStopRequestOutcome};
 
 pub(crate) const BACKUP_CLEANUP_DELETE_INTENT_PREFIX: &str = "__dockrev_cleanup_delete_intent__:";
 pub(crate) const BACKUP_CLEANUP_DELETE_INTENT_LEGACY: &str = "__dockrev_cleanup_delete_intent__";

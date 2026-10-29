@@ -8,7 +8,15 @@
 - Lifecycle: implementation candidate
 - Catalog note: `docs/specs/README.md` records this canonical topic.
 - Diagnosis: production race confirmed from Job logs, source write paths, and persisted state history.
-- Existing focused baseline: `cargo test -p dockrev-api update_ --no-fail-fast` passes 55 tests with the accepted-state guard enabled.
+- Existing focused baseline: `cargo test -p dockrev-api update_ --no-fail-fast` passes 68 tests with the accepted-state guard enabled.
+- Update stop requests now interrupt operation-lock waits and settle the immutable baseline before terminal cancellation.
+- A stop observed while an updater is returning a failed step result is still converted to `cancelled` when the apply gate was not committed; the baseline settlement remains atomic and the Compose service is left unchanged.
+- Startup recovery now handles pre-apply stop requests, restores backup snapshots, verifies observed runtime digests, and settles fenced interrupted updates atomically; unavailable runtime facts remain retryable and fenced.
+- A single update may persist an ordered snapshot list covering every affected stack; startup restores and verifies the complete list before clearing recovery ownership.
+- Recovery snapshots are cleared per stack only for pre-apply backup cleanup; non-empty snapshots remain through apply and are cleared only by terminal job cleanup, preserving the full multi-stack crash window.
+- Startup update recovery completes before the listener and job-producing background workers start, so a live worker cannot be mistaken for interrupted work by the recovery scan.
+- After the apply gate commits, a terminal update must provide an authoritative runtime settlement for every baseline target; incomplete observations preserve the odd generation and retry diagnostic. Failed rollbacks retain the durable candidate while settling the observed baseline.
+- Managed-override restore failures are treated as recovery fences alongside ordinary runtime restore errors.
 - Red regression: `api::tests::update_apply_healthcheck_rollback_preserves_candidate_across_concurrent_observers` first reproduced declaration overwrite and candidate loss, then passed after CAS/ownership integration.
 
 ## Implementation Order
@@ -37,10 +45,10 @@
 - Add a Stack observation token and change `sync_stack_from_compose` to all-or-nothing membership/generation validation.
 - Treat CAS rejection as deferred/stale observation with structured logs, not a failed Docker or registry check.
 
-### 4. Unify terminal settlement (partially covered for update transition)
+### 4. Unify terminal settlement (covered for update transition and recovery)
 
-- Success updates collect every acquired target and settle them together; automatic rollback, failure and cancellation close odd ownership through the shared terminal Job path while retaining the durable baseline.
-- Build settlement from durable baseline, explicit updater outcome and final runtime inspection. Registry lookup enriches candidate knowledge but cannot erase it on failure.
+- Success updates collect every acquired target and settle them together; apply-before-failure/cancellation settles from the durable baseline through the same terminal Job transaction.
+- Recovery builds settlements from durable baselines plus verified runtime inspection. Registry lookup enriches candidate knowledge but cannot erase it on failure.
 - Publish terminal management events only after the settlement/Job transaction commits.
 - Preserve the accepted declaration on rollback and accept the committed managed override declaration on success.
 
@@ -51,11 +59,11 @@
 - Remove check-then-insert TOCTOU behavior from managed-override reconcile.
 - Keep the existing managed-override process lock limited to Compose/override filesystem effects.
 
-### 6. Recover durable ownership (partially covered)
+### 6. Recover durable ownership (covered for update jobs)
 
 - Reorder startup so odd-generation ownership is recovered before incomplete Jobs become terminal.
-- Restore or clean managed overrides before generic recovery. Runtime inspection and retryable settlement for an unresolved odd owner still require a dedicated recovery worker.
-- Keep unresolved Services fenced when Docker facts are unavailable and expose retryable diagnostics.
+- Restore or clean managed overrides before generic recovery, then inspect runtime and settle the owning Job atomically.
+- Keep unresolved Services fenced when Docker facts are unavailable or runtime verification mismatches, and expose retryable diagnostics.
 - Detect odd generations without a recoverable owning target as invariant violations; never reset them silently.
 
 ## Expected Code Surfaces
@@ -88,7 +96,7 @@
 
 ## Remaining Gaps
 
-- Startup recovery now restores managed overrides before generic incomplete-job recovery and skips jobs whose odd ownership is still active. A dedicated retry worker for unresolved runtime facts, and a single DB transaction combining accepted-state writes with the terminal Job summary, remain future work.
+- Startup recovery now restores managed overrides before generic incomplete-job recovery and skips jobs whose odd ownership is still active. Legacy targets with empty historical baselines remain outside the new settlement path and are left for the existing invariant diagnostics.
 - Discovery uses a pre-I/O generation token and an all-or-nothing guarded compose sync; a structured deferred-result field is not exposed in the HTTP response.
 - Runtime-scan CAS rejection is now treated as deferred and does not increment the update count; notification reconciliation is transactional with authoritative observer CAS.
 - Full workspace/all-features validation is blocked in the shared testbox before Cargo starts: two isolated runs fail with `Permission denied (os error 13) at path "/workspace/target..."`; focused/local validation is green and remote required CI remains the independent full-suite gate.
