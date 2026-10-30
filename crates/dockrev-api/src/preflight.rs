@@ -183,23 +183,25 @@ async fn collect_context_from_db(db: &crate::db::Db) -> anyhow::Result<Preflight
             continue;
         }
 
-        for file in stack.compose.compose_files {
-            if !file.trim().is_empty() {
+        if !db.is_stack_missing(&stack.id).await? {
+            for file in stack.compose.compose_files {
+                if !file.trim().is_empty() {
+                    compose_paths_by_project
+                        .entry(stack.id.clone())
+                        .or_default()
+                        .insert(file.clone());
+                    compose_paths.insert(file);
+                }
+            }
+            if let Some(env_file) = stack.compose.env_file
+                && !env_file.trim().is_empty()
+            {
                 compose_paths_by_project
                     .entry(stack.id.clone())
                     .or_default()
-                    .insert(file.clone());
-                compose_paths.insert(file);
+                    .insert(env_file.clone());
+                compose_paths.insert(env_file);
             }
-        }
-        if let Some(env_file) = stack.compose.env_file
-            && !env_file.trim().is_empty()
-        {
-            compose_paths_by_project
-                .entry(stack.id.clone())
-                .or_default()
-                .insert(env_file.clone());
-            compose_paths.insert(env_file);
         }
 
         for service in stack.services {
@@ -223,6 +225,12 @@ async fn collect_context_from_db(db: &crate::db::Db) -> anyhow::Result<Preflight
         .await
         .context("list discovered compose projects for deploy preflight")?;
     for project in discovered {
+        if matches!(
+            project.status,
+            crate::api::types::DiscoveredProjectStatus::Missing
+        ) {
+            continue;
+        }
         if let Some(files) = project.config_files {
             if let Some(stack_id) = project.stack_id {
                 for file in &files {

@@ -866,7 +866,7 @@ expected = {
     "invalid-auto": ("invalid", 0, None, 0, None),
     "legacy-auto-stopped": ("stopped", 0, None, 0, None),
     "manual-stopped": ("stopped", 1, "user_archive", 1, "user_archive"),
-    "missing-compose": ("missing", 1, "auto_archive_compose_files_missing", 1, "auto_archive_compose_files_missing"),
+    "missing-compose": ("missing", 0, None, 0, None),
 }
 if actual != expected:
     raise SystemExit(f"unexpected discovery reconciliation state: {actual}")
@@ -874,7 +874,7 @@ if healthy != (0,):
     raise SystemExit(f"active discovery Stack was unexpectedly archived: {healthy}")
 print(json.dumps({
     "historicalAutoArchiveRestored": True,
-    "missingComposeAutoArchived": True,
+    "missingComposeRetained": True,
     "invalidComposeVisible": True,
     "manualArchiveProtected": True,
     "healthyStackArchived": False,

@@ -42,6 +42,8 @@
 - Static failures MAY be confirmed immediately. Command timeouts and runtime connection failures MUST receive one bounded retry after two seconds, with a maximum review budget of 30 seconds and existing per-command timeout settings preserved.
 - A successful retry MUST suppress the transient failure. A review-level error MUST preserve the last confirmed report and expose the check error separately.
 - A successful discovery with no managed project MUST NOT classify Compose paths as a core failure solely because no path exists to inspect.
+- A discovery project confirmed `missing` because all saved Compose files are absent MUST NOT contribute paths to `core.compose_access`, whether its Stack is user-archived or not; its retained record and discovery state MUST remain unchanged.
+- A Stack is missing only when it has at least one associated missing discovery project and no associated non-missing project. Unlinked discovery projects use their own status. Partial absence, permission and I/O errors MUST remain eligible for path failure and scoped impacts.
 
 ### REQ-SCS-003
 
@@ -87,6 +89,7 @@
 - Method: Backend virtual-clock and controlled-runner tests.
 - covers: `REQ-SCS-001`, `REQ-SCS-002`
 - Pass condition: Startup runs without a browser, five-minute reviews run, unchanged scans do not add runs, changes coalesce, in-flight changes are not lost, concurrency is one, and retry/error budgets are bounded.
+- Pass condition: Confirmed missing projects do not fail Compose access; non-missing and partially missing projects still report inaccessible paths, and a healthy rescan restores path validation.
 
 ### VER-SCS-002
 

@@ -1,0 +1,49 @@
+{
+  "schema_version": 1,
+  "kind": "version-impact-record",
+  "change": {
+    "description": "Exclude discovery-confirmed missing Compose projects from deploy-check path failures.",
+    "release_unit_description": "Dockrev application release unit.",
+    "affected_contracts": ["public-api", "persistent-state"]
+  },
+  "classification": {
+    "allowed_impacts": ["patch", "minor", "major"],
+    "planned": {
+      "impact": "patch",
+      "reasoning": "Correct an erroneous diagnostic without changing the API shape or database schema.",
+      "assessed_at": "2026-10-29T15:14:21Z",
+      "evidence": ["docs/specs/server-owned-self-checks/SPEC.md"]
+    },
+    "current": {
+      "impact": "patch",
+      "scope_drift": {"detected": false, "description": "The change remains within the approved diagnostic correction."},
+      "reasoning": "Existing response fields and snapshot encoding remain unchanged; only the diagnostic result is corrected.",
+      "reassessed_at": "2026-10-29T15:17:59Z",
+      "evidence": ["crates/dockrev-api/src/preflight.rs"]
+    },
+    "verified": {
+      "impact": "patch",
+      "reasoning": "Focused report and discovery regressions verify the corrected results and preserved records.",
+      "verified_at": "2026-10-29T15:17:59Z",
+      "evidence": ["cargo test -p dockrev-api deploy_check_ -- --nocapture", "crates/dockrev-api/src/api/tests/suite_33_missing_preflight.rs"]
+    }
+  },
+  "compatibility_evidence": {
+    "public_api": {
+      "change": "compatible",
+      "supported_consumer_range": "Existing Dockrev 0.81.x report consumers.",
+      "evidence": ["Existing deploy-check endpoints and response fields are unchanged."]
+    },
+    "persistent_state": {
+      "applicable": true,
+      "state_description": "Deploy-check report snapshots retain the existing JSON encoding; discovery and Stack records are not modified by this check.",
+      "source_program_compatibility_range": "Existing Dockrev 0.81.x snapshots and databases.",
+      "evidence": ["No database schema or report serialization changes."]
+    }
+  },
+  "release_unit": {
+    "member_change_records": ["missing-compose-preflight"],
+    "maximum_verified_impact": "patch",
+    "calculation_evidence": ["The public API and persistent state changes are compatible patch corrections."]
+  }
+}
