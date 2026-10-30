@@ -11,6 +11,7 @@
 - Backend worker owns startup scheduling, five-minute review, relevant-input coalescing, bounded confirmation and report metadata.
 - Deploy-check HTTP handlers keep GET read-only and POST explicit/manual, while preserving old envelope fields and old snapshot readability.
 - Core failure and operation impact projections are separate from the complete diagnostic check list and per-request authorization diagnostics.
+- Compose access excludes discovery-confirmed missing records while retaining path checks for non-missing and partially missing projects; no record or archive state is changed by the check.
 - The web app renders its target route immediately, uses the first read only for a one-time current-startup failure claim, and uses notices plus scoped impacts for late/background changes.
 - Overview, batch-update, homepage, detail, context-menu, cleanup and version-history controls consume the same operation-impact projection; scoped project/service IDs and a submit-time recheck keep stale UI state from bypassing the server boundary.
 - The diagnostic page keeps browsing, settings, discovery and manual review reachable; IndexedDB claims coordinate same-origin tabs.

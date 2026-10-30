@@ -51,6 +51,7 @@ include!("suite_29_selected_version.rs");
 include!("suite_30_auto_policy_observations.rs");
 include!("suite_31_cleanup_estimate_version.rs");
 include!("suite_32_missing_stack_record.rs");
+include!("suite_33_missing_preflight.rs");
 include!("suite_20.rs");
 include!("suite_21.rs");
 include!("suite_22.rs");
