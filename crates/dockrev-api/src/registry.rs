@@ -25,8 +25,8 @@ mod platform;
 mod rate_limit;
 
 use auth::{BearerAuth, DockerConfig, normalize_auth_key, parse_www_authenticate_bearer};
-use platform::platform_matches;
 pub use platform::{compute_arch_match, host_platform_override};
+use platform::{merge_config_blob_platform, parse_manifest_value, platform_matches};
 use rate_limit::{
     is_registry_rate_limit_error_text, parse_ratelimit_remaining, parse_retry_after_delay,
     retry_backoff_with_jitter,
@@ -181,6 +181,8 @@ pub struct HttpRegistryClient {
     host_limiters: Arc<Mutex<HashMap<String, Arc<Semaphore>>>>,
     rate_limit_cooldowns: Arc<Mutex<HashMap<String, Instant>>>,
     options: HttpRegistryClientOptions,
+    #[cfg(test)]
+    test_registry_base_url: Option<String>,
 }
 
 #[derive(Clone, Debug)]
@@ -237,7 +239,15 @@ impl HttpRegistryClient {
                 per_host_concurrency,
                 ..options
             },
+            #[cfg(test)]
+            test_registry_base_url: None,
         })
+    }
+
+    #[cfg(test)]
+    fn with_test_registry_base_url(mut self, base_url: impl Into<String>) -> Self {
+        self.test_registry_base_url = Some(base_url.into());
+        self
     }
 
     fn basic_auth_for_registry_host(&self, registry_host: &str) -> Option<(String, String)> {
@@ -358,25 +368,61 @@ impl RegistryClient for HttpRegistryClient {
     ) -> anyhow::Result<ManifestInfo> {
         let scope = format!("repository:{}:pull", image.name);
         let url = format!(
-            "https://{}/v2/{}/manifests/{}",
-            registry_api_host(&image.registry),
+            "{}/v2/{}/manifests/{}",
+            self.registry_base_url(&image.registry),
             image.name,
             reference
         );
 
-        let accept = Some(manifest_accept_header());
         let resp = self
-            .get_with_auth(&image.registry, &scope, url, accept)
+            .get_with_auth(&image.registry, &scope, url, Some(manifest_accept_header()))
             .await?;
-
         let digest = resp
             .headers()
             .get("Docker-Content-Digest")
-            .and_then(|v| v.to_str().ok())
-            .map(|s| s.to_string());
-
+            .and_then(|value| value.to_str().ok())
+            .map(str::to_string);
         let body = resp.text().await?;
-        parse_manifest_json(&body, digest, host_platform)
+        let mut info = parse_manifest_json(&body, digest, host_platform)?;
+
+        if info.arch.is_empty() {
+            let manifest = serde_json::from_str::<serde_json::Value>(&body)
+                .context("parse manifest json for config platform")?;
+            if manifest.get("manifests").is_none()
+                && let Some(config_digest) = manifest_config_digest(&manifest)
+            {
+                let config_blob = match tokio::time::timeout(
+                    CONFIG_BLOB_TIMEOUT,
+                    self.get_blob_json(image, &config_digest),
+                )
+                .await
+                {
+                    Ok(result) => result,
+                    Err(_) => Err(anyhow::anyhow!("config blob request timed out")),
+                };
+                match config_blob {
+                    Ok(config_blob) => {
+                        merge_config_blob_platform(
+                            &mut info,
+                            &manifest,
+                            &config_blob,
+                            host_platform,
+                        );
+                    }
+                    Err(error) => {
+                        tracing::debug!(
+                            image = %image.name,
+                            reference,
+                            config_digest,
+                            error = %error,
+                            "single-platform manifest config blob unavailable; leaving architecture unknown"
+                        );
+                    }
+                }
+            }
+        }
+
+        Ok(info)
     }
 
     async fn get_manifest_if_changed(
@@ -543,16 +589,40 @@ impl HttpRegistryClient {
     ) -> anyhow::Result<serde_json::Value> {
         let scope = format!("repository:{}:pull", image.name);
         let url = format!(
-            "https://{}/v2/{}/blobs/{}",
-            registry_api_host(&image.registry),
+            "{}/v2/{}/blobs/{}",
+            self.registry_base_url(&image.registry),
             image.name,
             digest
         );
         let resp = self
             .get_with_auth(&image.registry, &scope, url, None)
             .await?;
-        let body = resp.text().await?;
-        serde_json::from_str::<serde_json::Value>(&body).context("parse config blob json")
+        if resp
+            .content_length()
+            .is_some_and(|length| length > MAX_CONFIG_BLOB_BYTES as u64)
+        {
+            return Err(anyhow::anyhow!("config blob exceeds size limit"));
+        }
+
+        let mut resp = resp;
+        let mut body = Vec::new();
+        while let Some(chunk) = resp.chunk().await? {
+            if body.len().saturating_add(chunk.len()) > MAX_CONFIG_BLOB_BYTES {
+                return Err(anyhow::anyhow!("config blob exceeds size limit"));
+            }
+            body.extend_from_slice(&chunk);
+        }
+        let Some((_, expected_digest)) = digest.split_once(':') else {
+            return Err(anyhow::anyhow!("invalid config blob digest"));
+        };
+        let actual_digest =
+            hex::encode(ring::digest::digest(&ring::digest::SHA256, &body).as_ref());
+        if !actual_digest.eq_ignore_ascii_case(expected_digest) {
+            return Err(anyhow::anyhow!(
+                "config blob digest mismatch: expected {expected_digest}, got {actual_digest}"
+            ));
+        }
+        serde_json::from_slice::<serde_json::Value>(&body).context("parse config blob json")
     }
 
     async fn get_with_auth(
@@ -564,6 +634,15 @@ impl HttpRegistryClient {
     ) -> anyhow::Result<reqwest::Response> {
         self.request_with_auth(Method::GET, registry_host, scope, url, accept)
             .await
+    }
+
+    fn registry_base_url(&self, registry: &str) -> String {
+        #[cfg(test)]
+        if let Some(base_url) = self.test_registry_base_url.as_deref() {
+            return base_url.trim_end_matches('/').to_string();
+        }
+
+        format!("https://{}", registry_api_host(registry))
     }
 
     async fn request_with_auth(
@@ -844,6 +923,9 @@ fn manifest_accept_header() -> &'static str {
     "application/vnd.oci.image.index.v1+json, application/vnd.docker.distribution.manifest.list.v2+json, application/vnd.oci.image.manifest.v1+json, application/vnd.docker.distribution.manifest.v2+json"
 }
 
+const CONFIG_BLOB_TIMEOUT: Duration = Duration::from_secs(2);
+const MAX_CONFIG_BLOB_BYTES: usize = 1024 * 1024;
+
 fn request_limit_host(url: &str, fallback_host: &str) -> String {
     reqwest::Url::parse(url)
         .ok()
@@ -860,92 +942,7 @@ pub fn parse_manifest_json(
 ) -> anyhow::Result<ManifestInfo> {
     let value: serde_json::Value = serde_json::from_str(body).context("parse manifest json")?;
 
-    let mut arch = Vec::new();
-    let mut host_platform_digest_exact: Option<String> = None;
-    let mut host_platform_digest_base_matches: Vec<String> = Vec::new();
-    let host_base = host_platform
-        .split('/')
-        .take(2)
-        .collect::<Vec<_>>()
-        .join("/");
-    if let Some(manifests) = value.get("manifests").and_then(|v| v.as_array()) {
-        for m in manifests {
-            let os = m
-                .get("platform")
-                .and_then(|p| p.get("os"))
-                .and_then(|v| v.as_str());
-            let architecture = m
-                .get("platform")
-                .and_then(|p| p.get("architecture"))
-                .and_then(|v| v.as_str());
-            let variant = m
-                .get("platform")
-                .and_then(|p| p.get("variant"))
-                .and_then(|v| v.as_str());
-
-            if let (Some(os), Some(architecture)) = (os, architecture) {
-                let plat = if let Some(variant) = variant {
-                    format!("{os}/{architecture}/{variant}")
-                } else {
-                    format!("{os}/{architecture}")
-                };
-                arch.push(plat);
-            }
-
-            let digest = m.get("digest").and_then(|v| v.as_str());
-            if digest.is_none() {
-                continue;
-            }
-            let digest = digest.unwrap();
-
-            if host_platform_digest_exact.is_none()
-                && platform_matches(host_platform, os, architecture, variant)
-            {
-                host_platform_digest_exact = Some(digest.to_string());
-                continue;
-            }
-
-            // Best-effort fallback: if the host platform doesn't match exactly (e.g. missing/unknown
-            // variant), allow os/arch match ONLY when it is unambiguous. This avoids picking the
-            // wrong digest for multi-variant lists like linux/arm/v6 + linux/arm/v7.
-            if let (Some(os), Some(architecture)) = (os, architecture) {
-                let base = format!("{os}/{architecture}");
-                if base == host_base {
-                    host_platform_digest_base_matches.push(digest.to_string());
-                }
-            }
-        }
-    } else if let (Some(os), Some(architecture)) = (
-        value.get("os").and_then(|v| v.as_str()),
-        value.get("architecture").and_then(|v| v.as_str()),
-    ) {
-        arch.push(format!("{os}/{architecture}"));
-    }
-
-    arch.sort();
-    arch.dedup();
-
-    // Prefer the digest returned by the registry for the requested reference (tag or digest).
-    //
-    // For multi-arch images, Docker commonly reports the *index/manifest-list* digest in
-    // `.RepoDigests`, so aligning on the header digest makes runtime comparisons work.
-    let platform_digest = if host_platform_digest_exact.is_some() {
-        host_platform_digest_exact
-    } else {
-        host_platform_digest_base_matches.sort();
-        host_platform_digest_base_matches.dedup();
-        if host_platform_digest_base_matches.len() == 1 {
-            host_platform_digest_base_matches.into_iter().next()
-        } else {
-            None
-        }
-    };
-    let digest = digest.or(platform_digest.clone());
-    Ok(ManifestInfo {
-        digest,
-        platform_digest,
-        arch,
-    })
+    parse_manifest_value(&value, digest, host_platform)
 }
 
 fn manifest_config_digest(value: &serde_json::Value) -> Option<String> {
@@ -953,7 +950,18 @@ fn manifest_config_digest(value: &serde_json::Value) -> Option<String> {
         .get("config")
         .and_then(|config| config.get("digest"))
         .and_then(|digest| digest.as_str())
+        .map(str::trim)
+        .filter(|digest| is_valid_config_digest(digest))
         .map(str::to_string)
+}
+
+fn is_valid_config_digest(input: &str) -> bool {
+    let Some((algorithm, encoded)) = input.split_once(':') else {
+        return false;
+    };
+    algorithm.eq_ignore_ascii_case("sha256")
+        && encoded.len() == 64
+        && encoded.bytes().all(|byte| byte.is_ascii_hexdigit())
 }
 
 fn select_platform_manifest_digest(
@@ -1024,6 +1032,9 @@ fn extract_oci_source_from_config_blob(value: &serde_json::Value) -> Option<Stri
         .and_then(|value| value.as_str())
         .map(str::to_string)
 }
+
+#[cfg(test)]
+mod single_platform_manifest_tests;
 
 #[cfg(test)]
 mod http_registry_tests {
