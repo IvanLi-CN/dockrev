@@ -612,6 +612,16 @@ impl HttpRegistryClient {
             }
             body.extend_from_slice(&chunk);
         }
+        let Some((_, expected_digest)) = digest.split_once(':') else {
+            return Err(anyhow::anyhow!("invalid config blob digest"));
+        };
+        let actual_digest =
+            hex::encode(ring::digest::digest(&ring::digest::SHA256, &body).as_ref());
+        if !actual_digest.eq_ignore_ascii_case(expected_digest) {
+            return Err(anyhow::anyhow!(
+                "config blob digest mismatch: expected {expected_digest}, got {actual_digest}"
+            ));
+        }
         serde_json::from_slice::<serde_json::Value>(&body).context("parse config blob json")
     }
 
@@ -941,15 +951,17 @@ fn manifest_config_digest(value: &serde_json::Value) -> Option<String> {
         .and_then(|config| config.get("digest"))
         .and_then(|digest| digest.as_str())
         .map(str::trim)
-        .filter(|digest| {
-            let Some((algorithm, encoded)) = digest.split_once(':') else {
-                return false;
-            };
-            algorithm.eq_ignore_ascii_case("sha256")
-                && encoded.len() == 64
-                && encoded.bytes().all(|byte| byte.is_ascii_hexdigit())
-        })
+        .filter(|digest| is_valid_config_digest(digest))
         .map(str::to_string)
+}
+
+fn is_valid_config_digest(input: &str) -> bool {
+    let Some((algorithm, encoded)) = input.split_once(':') else {
+        return false;
+    };
+    algorithm.eq_ignore_ascii_case("sha256")
+        && encoded.len() == 64
+        && encoded.bytes().all(|byte| byte.is_ascii_hexdigit())
 }
 
 fn select_platform_manifest_digest(

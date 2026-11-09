@@ -11,7 +11,7 @@ use serde_json::json;
 use std::sync::{Arc, Mutex};
 
 const CONFIG_DIGEST: &str =
-    "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+    "sha256:9d99a75171aea000c711b34c0e5e3f28d3d537dd99d110eafbfbc2bd8e52c2bf";
 
 async fn spawn_server(app: Router) -> Option<(String, tokio::task::JoinHandle<()>)> {
     let listener = match tokio::net::TcpListener::bind("127.0.0.1:0").await {
@@ -127,6 +127,34 @@ async fn get_manifest_preserves_unknown_when_config_blob_fails() {
         compute_arch_match("linux/amd64", &info.arch),
         ArchMatch::Unknown
     ));
+    server.abort();
+}
+
+async fn mismatched_config_blob() -> impl IntoResponse {
+    Json(json!({ "os": "linux", "architecture": "arm64" }))
+}
+
+#[tokio::test]
+async fn get_manifest_preserves_unknown_when_config_blob_digest_mismatches() {
+    let app = Router::new()
+        .route(
+            "/v2/testrepo/manifests/latest",
+            get(single_platform_manifest),
+        )
+        .route("/v2/testrepo/blobs/{digest}", get(mismatched_config_blob));
+    let Some((base, server)) = spawn_server(app).await else {
+        return;
+    };
+    let client = HttpRegistryClient::new(None, HttpRegistryClientOptions::default())
+        .unwrap()
+        .with_test_registry_base_url(base);
+    let image = ImageRef::parse("test.registry/testrepo:latest").unwrap();
+    let info = RegistryClient::get_manifest(&client, &image, "latest", "linux/amd64")
+        .await
+        .unwrap();
+
+    assert_eq!(info.digest.as_deref(), Some("sha256:manifest"));
+    assert!(info.arch.is_empty());
     server.abort();
 }
 
