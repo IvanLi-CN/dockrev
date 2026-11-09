@@ -10,17 +10,22 @@ use axum::{
 use serde_json::json;
 use std::sync::{Arc, Mutex};
 
-async fn spawn_server(app: Router) -> (String, tokio::task::JoinHandle<()>) {
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
-        .await
-        .expect("failed to bind test listener");
+async fn spawn_server(app: Router) -> Option<(String, tokio::task::JoinHandle<()>)> {
+    let listener = match tokio::net::TcpListener::bind("127.0.0.1:0").await {
+        Ok(listener) => listener,
+        Err(error) if error.kind() == std::io::ErrorKind::PermissionDenied => {
+            eprintln!("skipping network-bound test: {error}");
+            return None;
+        }
+        Err(error) => panic!("failed to bind test listener: {error}"),
+    };
     let addr = listener.local_addr().expect("failed to read test address");
     let handle = tokio::spawn(async move {
         axum::serve(listener, app)
             .await
             .expect("test server failed");
     });
-    (format!("http://{addr}"), handle)
+    Some((format!("http://{addr}"), handle))
 }
 
 fn manifest_headers() -> HeaderMap {
@@ -62,7 +67,9 @@ async fn get_manifest_reads_single_platform_config_blob() {
         )
         .route("/v2/testrepo/blobs/{digest}", get(config_blob))
         .with_state(requests.clone());
-    let (base, server) = spawn_server(app).await;
+    let Some((base, server)) = spawn_server(app).await else {
+        return;
+    };
     let client = HttpRegistryClient::new(None, HttpRegistryClientOptions::default())
         .unwrap()
         .with_test_registry_base_url(base);
@@ -81,19 +88,27 @@ async fn get_manifest_reads_single_platform_config_blob() {
     server.abort();
 }
 
-async fn config_blob_failure() -> impl IntoResponse {
+async fn config_blob_failure(
+    State(requests): State<Arc<Mutex<Vec<String>>>>,
+    Path(digest): Path<String>,
+) -> impl IntoResponse {
+    requests.lock().unwrap().push(digest);
     (StatusCode::INTERNAL_SERVER_ERROR, "config unavailable")
 }
 
 #[tokio::test]
 async fn get_manifest_preserves_unknown_when_config_blob_fails() {
+    let requests = Arc::new(Mutex::new(Vec::new()));
     let app = Router::new()
         .route(
             "/v2/testrepo/manifests/latest",
             get(single_platform_manifest),
         )
-        .route("/v2/testrepo/blobs/{digest}", get(config_blob_failure));
-    let (base, server) = spawn_server(app).await;
+        .route("/v2/testrepo/blobs/{digest}", get(config_blob_failure))
+        .with_state(requests.clone());
+    let Some((base, server)) = spawn_server(app).await else {
+        return;
+    };
     let client = HttpRegistryClient::new(None, HttpRegistryClientOptions::default())
         .unwrap()
         .with_test_registry_base_url(base);
@@ -104,6 +119,7 @@ async fn get_manifest_preserves_unknown_when_config_blob_fails() {
 
     assert_eq!(info.digest.as_deref(), Some("sha256:manifest"));
     assert!(info.arch.is_empty());
+    assert_eq!(requests.lock().unwrap().as_slice(), ["sha256:config"]);
     assert!(matches!(
         compute_arch_match("linux/amd64", &info.arch),
         ArchMatch::Unknown
@@ -111,20 +127,28 @@ async fn get_manifest_preserves_unknown_when_config_blob_fails() {
     server.abort();
 }
 
-async fn slow_config_blob() -> impl IntoResponse {
+async fn slow_config_blob(
+    State(requests): State<Arc<Mutex<Vec<String>>>>,
+    Path(digest): Path<String>,
+) -> impl IntoResponse {
+    requests.lock().unwrap().push(digest);
     tokio::time::sleep(std::time::Duration::from_secs(3)).await;
     Json(json!({ "os": "linux", "architecture": "amd64" }))
 }
 
 #[tokio::test]
 async fn get_manifest_preserves_manifest_result_when_config_blob_times_out() {
+    let requests = Arc::new(Mutex::new(Vec::new()));
     let app = Router::new()
         .route(
             "/v2/testrepo/manifests/latest",
             get(single_platform_manifest),
         )
-        .route("/v2/testrepo/blobs/{digest}", get(slow_config_blob));
-    let (base, server) = spawn_server(app).await;
+        .route("/v2/testrepo/blobs/{digest}", get(slow_config_blob))
+        .with_state(requests.clone());
+    let Some((base, server)) = spawn_server(app).await else {
+        return;
+    };
     let client = HttpRegistryClient::new(None, HttpRegistryClientOptions::default())
         .unwrap()
         .with_test_registry_base_url(base);
@@ -136,6 +160,38 @@ async fn get_manifest_preserves_manifest_result_when_config_blob_times_out() {
     .await
     .expect("config fallback exceeded test deadline")
     .unwrap();
+
+    assert_eq!(info.digest.as_deref(), Some("sha256:manifest"));
+    assert!(info.arch.is_empty());
+    assert_eq!(requests.lock().unwrap().as_slice(), ["sha256:config"]);
+    server.abort();
+}
+
+async fn oversized_config_blob() -> impl IntoResponse {
+    (
+        StatusCode::OK,
+        "x".repeat(MAX_CONFIG_BLOB_BYTES.saturating_add(1)),
+    )
+}
+
+#[tokio::test]
+async fn get_manifest_preserves_unknown_when_config_blob_is_too_large() {
+    let app = Router::new()
+        .route(
+            "/v2/testrepo/manifests/latest",
+            get(single_platform_manifest),
+        )
+        .route("/v2/testrepo/blobs/{digest}", get(oversized_config_blob));
+    let Some((base, server)) = spawn_server(app).await else {
+        return;
+    };
+    let client = HttpRegistryClient::new(None, HttpRegistryClientOptions::default())
+        .unwrap()
+        .with_test_registry_base_url(base);
+    let image = ImageRef::parse("test.registry/testrepo:latest").unwrap();
+    let info = RegistryClient::get_manifest(&client, &image, "latest", "linux/amd64")
+        .await
+        .unwrap();
 
     assert_eq!(info.digest.as_deref(), Some("sha256:manifest"));
     assert!(info.arch.is_empty());
@@ -174,7 +230,9 @@ async fn get_manifest_does_not_fetch_config_blob_for_manifest_lists() {
         )
         .route("/v2/testrepo/blobs/{digest}", get(unexpected_config_blob))
         .with_state(requests.clone());
-    let (base, server) = spawn_server(app).await;
+    let Some((base, server)) = spawn_server(app).await else {
+        return;
+    };
     let client = HttpRegistryClient::new(None, HttpRegistryClientOptions::default())
         .unwrap()
         .with_test_registry_base_url(base);

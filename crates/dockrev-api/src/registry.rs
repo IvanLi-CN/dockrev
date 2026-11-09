@@ -597,8 +597,22 @@ impl HttpRegistryClient {
         let resp = self
             .get_with_auth(&image.registry, &scope, url, None)
             .await?;
-        let body = resp.text().await?;
-        serde_json::from_str::<serde_json::Value>(&body).context("parse config blob json")
+        if resp
+            .content_length()
+            .is_some_and(|length| length > MAX_CONFIG_BLOB_BYTES as u64)
+        {
+            return Err(anyhow::anyhow!("config blob exceeds size limit"));
+        }
+
+        let mut resp = resp;
+        let mut body = Vec::new();
+        while let Some(chunk) = resp.chunk().await? {
+            if body.len().saturating_add(chunk.len()) > MAX_CONFIG_BLOB_BYTES {
+                return Err(anyhow::anyhow!("config blob exceeds size limit"));
+            }
+            body.extend_from_slice(&chunk);
+        }
+        serde_json::from_slice::<serde_json::Value>(&body).context("parse config blob json")
     }
 
     async fn get_with_auth(
@@ -900,6 +914,7 @@ fn manifest_accept_header() -> &'static str {
 }
 
 const CONFIG_BLOB_TIMEOUT: Duration = Duration::from_secs(2);
+const MAX_CONFIG_BLOB_BYTES: usize = 1024 * 1024;
 
 fn request_limit_host(url: &str, fallback_host: &str) -> String {
     reqwest::Url::parse(url)
