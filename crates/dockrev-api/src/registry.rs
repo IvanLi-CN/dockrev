@@ -25,8 +25,8 @@ mod platform;
 mod rate_limit;
 
 use auth::{BearerAuth, DockerConfig, normalize_auth_key, parse_www_authenticate_bearer};
-use platform::platform_matches;
 pub use platform::{compute_arch_match, host_platform_override};
+use platform::{merge_config_blob_platform, parse_manifest_value, platform_matches};
 use rate_limit::{
     is_registry_rate_limit_error_text, parse_ratelimit_remaining, parse_retry_after_delay,
     retry_backoff_with_jitter,
@@ -391,9 +391,23 @@ impl RegistryClient for HttpRegistryClient {
             if manifest.get("manifests").is_none()
                 && let Some(config_digest) = manifest_config_digest(&manifest)
             {
-                match self.get_blob_json(image, &config_digest).await {
+                let config_blob = match tokio::time::timeout(
+                    CONFIG_BLOB_TIMEOUT,
+                    self.get_blob_json(image, &config_digest),
+                )
+                .await
+                {
+                    Ok(result) => result,
+                    Err(_) => Err(anyhow::anyhow!("config blob request timed out")),
+                };
+                match config_blob {
                     Ok(config_blob) => {
-                        merge_config_blob_platform(&mut info, &manifest, &config_blob);
+                        merge_config_blob_platform(
+                            &mut info,
+                            &manifest,
+                            &config_blob,
+                            host_platform,
+                        );
                     }
                     Err(error) => {
                         tracing::debug!(
@@ -885,6 +899,8 @@ fn manifest_accept_header() -> &'static str {
     "application/vnd.oci.image.index.v1+json, application/vnd.docker.distribution.manifest.list.v2+json, application/vnd.oci.image.manifest.v1+json, application/vnd.docker.distribution.manifest.v2+json"
 }
 
+const CONFIG_BLOB_TIMEOUT: Duration = Duration::from_secs(2);
+
 fn request_limit_host(url: &str, fallback_host: &str) -> String {
     reqwest::Url::parse(url)
         .ok()
@@ -902,141 +918,6 @@ pub fn parse_manifest_json(
     let value: serde_json::Value = serde_json::from_str(body).context("parse manifest json")?;
 
     parse_manifest_value(&value, digest, host_platform)
-}
-
-fn parse_manifest_value(
-    value: &serde_json::Value,
-    digest: Option<String>,
-    host_platform: &str,
-) -> anyhow::Result<ManifestInfo> {
-    let mut arch = Vec::new();
-    let mut host_platform_digest_exact: Option<String> = None;
-    let mut host_platform_digest_base_matches: Vec<String> = Vec::new();
-    let host_base = host_platform
-        .split('/')
-        .take(2)
-        .collect::<Vec<_>>()
-        .join("/");
-    if let Some(manifests) = value.get("manifests").and_then(|v| v.as_array()) {
-        for m in manifests {
-            let os = m
-                .get("platform")
-                .and_then(|p| p.get("os"))
-                .and_then(|v| v.as_str());
-            let architecture = m
-                .get("platform")
-                .and_then(|p| p.get("architecture"))
-                .and_then(|v| v.as_str());
-            let variant = m
-                .get("platform")
-                .and_then(|p| p.get("variant"))
-                .and_then(|v| v.as_str());
-
-            if let (Some(os), Some(architecture)) = (os, architecture) {
-                let plat = if let Some(variant) = variant {
-                    format!("{os}/{architecture}/{variant}")
-                } else {
-                    format!("{os}/{architecture}")
-                };
-                arch.push(plat);
-            }
-
-            let digest = m.get("digest").and_then(|v| v.as_str());
-            if digest.is_none() {
-                continue;
-            }
-            let digest = digest.unwrap();
-
-            if host_platform_digest_exact.is_none()
-                && platform_matches(host_platform, os, architecture, variant)
-            {
-                host_platform_digest_exact = Some(digest.to_string());
-                continue;
-            }
-
-            // Best-effort fallback: if the host platform doesn't match exactly (e.g. missing/unknown
-            // variant), allow os/arch match ONLY when it is unambiguous. This avoids picking the
-            // wrong digest for multi-variant lists like linux/arm/v6 + linux/arm/v7.
-            if let (Some(os), Some(architecture)) = (os, architecture) {
-                let base = format!("{os}/{architecture}");
-                if base == host_base {
-                    host_platform_digest_base_matches.push(digest.to_string());
-                }
-            }
-        }
-    } else if let (Some(os), Some(architecture)) = (
-        value.get("os").and_then(|v| v.as_str()),
-        value.get("architecture").and_then(|v| v.as_str()),
-    ) {
-        arch.push(format!("{os}/{architecture}"));
-    }
-
-    arch.sort();
-    arch.dedup();
-
-    // Prefer the digest returned by the registry for the requested reference (tag or digest).
-    //
-    // For multi-arch images, Docker commonly reports the *index/manifest-list* digest in
-    // `.RepoDigests`, so aligning on the header digest makes runtime comparisons work.
-    let platform_digest = if host_platform_digest_exact.is_some() {
-        host_platform_digest_exact
-    } else {
-        host_platform_digest_base_matches.sort();
-        host_platform_digest_base_matches.dedup();
-        if host_platform_digest_base_matches.len() == 1 {
-            host_platform_digest_base_matches.into_iter().next()
-        } else {
-            None
-        }
-    };
-    let digest = digest.or(platform_digest.clone());
-    Ok(ManifestInfo {
-        digest,
-        platform_digest,
-        arch,
-    })
-}
-
-fn merge_config_blob_platform(
-    info: &mut ManifestInfo,
-    manifest: &serde_json::Value,
-    config_blob: &serde_json::Value,
-) {
-    if !info.arch.is_empty()
-        || manifest.get("manifests").is_some()
-        || manifest_config_digest(manifest).is_none()
-    {
-        return;
-    }
-
-    let Some(platform) = config_blob_platform(config_blob) else {
-        return;
-    };
-
-    info.arch.push(platform);
-    info.arch.sort();
-    info.arch.dedup();
-}
-
-fn config_blob_platform(value: &serde_json::Value) -> Option<String> {
-    let os = value.get("os").and_then(|value| value.as_str())?.trim();
-    let architecture = value
-        .get("architecture")
-        .and_then(|value| value.as_str())?
-        .trim();
-    if os.is_empty() || architecture.is_empty() {
-        return None;
-    }
-
-    let variant = value
-        .get("variant")
-        .and_then(|value| value.as_str())
-        .map(str::trim)
-        .filter(|variant| !variant.is_empty());
-    Some(match variant {
-        Some(variant) => format!("{os}/{architecture}/{variant}"),
-        None => format!("{os}/{architecture}"),
-    })
 }
 
 fn manifest_config_digest(value: &serde_json::Value) -> Option<String> {
@@ -1117,11 +998,14 @@ fn extract_oci_source_from_config_blob(value: &serde_json::Value) -> Option<Stri
 }
 
 #[cfg(test)]
+mod single_platform_manifest_tests;
+
+#[cfg(test)]
 mod http_registry_tests {
     use super::*;
     use axum::{
         Json, Router,
-        extract::{Path, Query, State},
+        extract::{Query, State},
         http::{HeaderMap, HeaderValue, StatusCode},
         response::IntoResponse,
         routing::get,
@@ -1132,130 +1016,6 @@ mod http_registry_tests {
         Arc, Mutex,
         atomic::{AtomicUsize, Ordering},
     };
-
-    #[tokio::test]
-    async fn get_manifest_reads_single_platform_config_blob() {
-        async fn manifest() -> impl IntoResponse {
-            let mut headers = HeaderMap::new();
-            headers.insert(
-                "Docker-Content-Digest",
-                HeaderValue::from_static("sha256:manifest"),
-            );
-            (
-                headers,
-                Json(json!({
-                    "schemaVersion": 2,
-                    "mediaType": "application/vnd.oci.image.manifest.v1+json",
-                    "config": {
-                        "mediaType": "application/vnd.oci.image.config.v1+json",
-                        "digest": "sha256:config",
-                        "size": 123
-                    },
-                    "layers": []
-                })),
-            )
-        }
-
-        async fn blob(
-            State(requests): State<Arc<Mutex<Vec<String>>>>,
-            Path(digest): Path<String>,
-        ) -> impl IntoResponse {
-            requests.lock().unwrap().push(digest);
-            Json(json!({
-                "os": "linux",
-                "architecture": "amd64",
-                "variant": "v3"
-            }))
-        }
-
-        let listener = match tokio::net::TcpListener::bind("127.0.0.1:0").await {
-            Ok(listener) => listener,
-            Err(error) if error.kind() == std::io::ErrorKind::PermissionDenied => {
-                eprintln!("skipping network-bound test: {error}");
-                return;
-            }
-            Err(error) => panic!("failed to bind test listener: {error}"),
-        };
-        let addr = listener.local_addr().unwrap();
-        let requests = Arc::new(Mutex::new(Vec::new()));
-        let app = Router::new()
-            .route("/v2/testrepo/manifests/latest", get(manifest))
-            .route("/v2/testrepo/blobs/{digest}", get(blob))
-            .with_state(requests.clone());
-        let server_handle = tokio::spawn(async move {
-            axum::serve(listener, app).await.unwrap();
-        });
-
-        let client = HttpRegistryClient::new(None, HttpRegistryClientOptions::default())
-            .unwrap()
-            .with_test_registry_base_url(format!("http://{addr}"));
-        let image = ImageRef::parse("test.registry/testrepo:latest").unwrap();
-        let info = RegistryClient::get_manifest(&client, &image, "latest", "linux/amd64/v3")
-            .await
-            .unwrap();
-
-        assert_eq!(info.digest.as_deref(), Some("sha256:manifest"));
-        assert_eq!(info.arch, vec!["linux/amd64/v3"]);
-        assert_eq!(requests.lock().unwrap().as_slice(), ["sha256:config"]);
-
-        server_handle.abort();
-    }
-
-    #[tokio::test]
-    async fn get_manifest_preserves_unknown_when_config_blob_fails() {
-        async fn manifest() -> impl IntoResponse {
-            let mut headers = HeaderMap::new();
-            headers.insert(
-                "Docker-Content-Digest",
-                HeaderValue::from_static("sha256:manifest"),
-            );
-            (
-                headers,
-                Json(json!({
-                    "schemaVersion": 2,
-                    "config": { "digest": "sha256:config" },
-                    "layers": []
-                })),
-            )
-        }
-
-        async fn blob_failure() -> impl IntoResponse {
-            (StatusCode::INTERNAL_SERVER_ERROR, "config unavailable")
-        }
-
-        let listener = match tokio::net::TcpListener::bind("127.0.0.1:0").await {
-            Ok(listener) => listener,
-            Err(error) if error.kind() == std::io::ErrorKind::PermissionDenied => {
-                eprintln!("skipping network-bound test: {error}");
-                return;
-            }
-            Err(error) => panic!("failed to bind test listener: {error}"),
-        };
-        let addr = listener.local_addr().unwrap();
-        let app = Router::new()
-            .route("/v2/testrepo/manifests/latest", get(manifest))
-            .route("/v2/testrepo/blobs/{digest}", get(blob_failure));
-        let server_handle = tokio::spawn(async move {
-            axum::serve(listener, app).await.unwrap();
-        });
-
-        let client = HttpRegistryClient::new(None, HttpRegistryClientOptions::default())
-            .unwrap()
-            .with_test_registry_base_url(format!("http://{addr}"));
-        let image = ImageRef::parse("test.registry/testrepo:latest").unwrap();
-        let info = RegistryClient::get_manifest(&client, &image, "latest", "linux/amd64")
-            .await
-            .unwrap();
-
-        assert_eq!(info.digest.as_deref(), Some("sha256:manifest"));
-        assert!(info.arch.is_empty());
-        assert!(matches!(
-            compute_arch_match("linux/amd64", &info.arch),
-            ArchMatch::Unknown
-        ));
-
-        server_handle.abort();
-    }
 
     #[derive(Debug, Default)]
     struct TestState {
@@ -1574,70 +1334,6 @@ mod tests {
             parse_manifest_json(json, Some("sha256:deadbeef".to_string()), "linux/amd64").unwrap();
         assert_eq!(info.digest.as_deref(), Some("sha256:deadbeef"));
         assert_eq!(info.arch, vec!["linux/amd64", "linux/arm64"]);
-    }
-
-    #[test]
-    fn merge_config_blob_platform_reads_single_platform_manifest_config() {
-        let manifest = serde_json::json!({
-            "schemaVersion": 2,
-            "mediaType": "application/vnd.oci.image.manifest.v1+json",
-            "config": { "digest": "sha256:config" },
-            "layers": []
-        });
-        let config_blob = serde_json::json!({
-            "os": "linux",
-            "architecture": "amd64"
-        });
-        let mut info = parse_manifest_json(
-            &manifest.to_string(),
-            Some("sha256:manifest".to_string()),
-            "linux/amd64",
-        )
-        .unwrap();
-
-        assert!(info.arch.is_empty());
-        merge_config_blob_platform(&mut info, &manifest, &config_blob);
-
-        assert_eq!(info.digest.as_deref(), Some("sha256:manifest"));
-        assert_eq!(info.arch, vec!["linux/amd64"]);
-    }
-
-    #[test]
-    fn merge_config_blob_platform_preserves_unknown_for_incomplete_config() {
-        let manifest = serde_json::json!({
-            "config": { "digest": "sha256:config" }
-        });
-        let config_blob = serde_json::json!({ "os": "linux" });
-        let mut info = parse_manifest_json(&manifest.to_string(), None, "linux/amd64").unwrap();
-
-        merge_config_blob_platform(&mut info, &manifest, &config_blob);
-
-        assert!(info.arch.is_empty());
-        assert!(matches!(
-            compute_arch_match("linux/amd64", &info.arch),
-            ArchMatch::Unknown
-        ));
-    }
-
-    #[test]
-    fn merge_config_blob_platform_ignores_manifest_lists() {
-        let manifest = serde_json::json!({
-            "manifests": [{
-                "digest": "sha256:amd64",
-                "platform": { "os": "linux", "architecture": "amd64" }
-            }],
-            "config": { "digest": "sha256:index-config" }
-        });
-        let config_blob = serde_json::json!({
-            "os": "linux",
-            "architecture": "arm64"
-        });
-        let mut info = parse_manifest_json(&manifest.to_string(), None, "linux/amd64").unwrap();
-
-        merge_config_blob_platform(&mut info, &manifest, &config_blob);
-
-        assert_eq!(info.arch, vec!["linux/amd64"]);
-        assert_eq!(info.platform_digest.as_deref(), Some("sha256:amd64"));
     }
 
     #[test]
