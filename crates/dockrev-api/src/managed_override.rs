@@ -1,5 +1,5 @@
 use std::{
-    collections::BTreeSet,
+    collections::{BTreeMap, BTreeSet},
     fs::{self, OpenOptions},
     io::Write,
     path::{Path, PathBuf},
@@ -102,6 +102,25 @@ pub fn validate_image_only_yaml(
     contents: &str,
     allowed_services: &BTreeSet<String>,
 ) -> anyhow::Result<()> {
+    let images = parse_image_only_yaml(contents, allowed_services)?;
+    for (service, image) in images {
+        if !image.contains("@sha256:")
+            || image.split_once("@sha256:").is_none_or(|(_, digest)| {
+                digest.is_empty()
+                    || digest.len() != 64
+                    || !digest.chars().all(|c| c.is_ascii_hexdigit())
+            })
+        {
+            anyhow::bail!("managed override image must use a sha256 digest: {service}");
+        }
+    }
+    Ok(())
+}
+
+pub fn parse_image_only_yaml(
+    contents: &str,
+    allowed_services: &BTreeSet<String>,
+) -> anyhow::Result<BTreeMap<String, String>> {
     use serde_yaml_ng::Value;
 
     let root: Value = serde_yaml_ng::from_str(contents).context("parse managed override yaml")?;
@@ -120,10 +139,11 @@ pub fn validate_image_only_yaml(
         // Older snapshots used `services:` for an empty override. Treat that representation as
         // an empty, safe image-only document while keeping all populated documents strict.
         if services_value.is_null() {
-            return Ok(());
+            return Ok(BTreeMap::new());
         }
         anyhow::bail!("managed override services must be a mapping");
     };
+    let mut images = BTreeMap::new();
     for (service_key, service_value) in services {
         let service = service_key
             .as_str()
@@ -141,17 +161,9 @@ pub fn validate_image_only_yaml(
             .get(Value::String("image".to_string()))
             .and_then(Value::as_str)
             .ok_or_else(|| anyhow::anyhow!("managed override image must be a string: {service}"))?;
-        if !image.contains("@sha256:")
-            || image.split_once("@sha256:").is_none_or(|(_, digest)| {
-                digest.is_empty()
-                    || digest.len() != 64
-                    || !digest.chars().all(|c| c.is_ascii_hexdigit())
-            })
-        {
-            anyhow::bail!("managed override image must use a sha256 digest: {service}");
-        }
+        images.insert(service.to_string(), image.to_string());
     }
-    Ok(())
+    Ok(images)
 }
 
 pub fn atomic_commit(path: &Path, contents: &str) -> anyhow::Result<()> {

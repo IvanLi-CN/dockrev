@@ -252,22 +252,8 @@ pub(crate) fn build_override_file(
             .iter()
             .map(|service| service.name.clone())
             .collect::<BTreeSet<_>>();
-        managed_override::validate_image_only_yaml(&contents, &allowed)
-            .context("validate existing managed override")?;
-        let parsed: serde_yaml_ng::Value = serde_yaml_ng::from_str(&contents)?;
-        if let Some(services) = parsed
-            .get("services")
-            .and_then(serde_yaml_ng::Value::as_mapping)
-        {
-            for (service, config) in services {
-                if let (Some(service), Some(image)) = (
-                    service.as_str(),
-                    config.get("image").and_then(serde_yaml_ng::Value::as_str),
-                ) {
-                    images.insert(service.to_string(), image.to_string());
-                }
-            }
-        }
+        images = managed_override::parse_image_only_yaml(&contents, &allowed)
+            .context("parse existing managed override")?;
     }
 
     for svc in services {
@@ -299,6 +285,13 @@ pub(crate) fn build_override_file(
     }
     let entries = images.into_iter().collect::<Vec<_>>();
     let contents = managed_override::render_image_only_override(&entries)?;
+    let allowed = stack
+        .services
+        .iter()
+        .map(|service| service.name.clone())
+        .collect::<BTreeSet<_>>();
+    managed_override::validate_image_only_yaml(&contents, &allowed)
+        .context("validate generated managed override")?;
     let current_contents = std::fs::read_to_string(&path).ok();
     let snapshot_path = std::path::PathBuf::from(format!("{}.previous", path.display()));
     if !preserve_snapshot
