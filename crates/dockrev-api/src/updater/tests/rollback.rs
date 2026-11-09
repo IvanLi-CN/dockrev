@@ -114,6 +114,47 @@ fn managed_override_keeps_candidate_tag_with_its_digest() {
     std::fs::remove_dir_all(root).unwrap();
 }
 
+#[test]
+fn managed_override_replaces_legacy_tag_when_selected_service_has_digest_target() {
+    let root =
+        std::env::temp_dir().join(format!("dockrev-override-legacy-tag-{}", ulid::Ulid::new()));
+    std::fs::create_dir_all(&root).unwrap();
+    let stack = single_service_stack(
+        "ghcr.io/ivanli-cn/blog-26:latest",
+        Some(crate::api::types::Candidate {
+            tag: "latest".to_string(),
+            resolved_tag: None,
+            digest: "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+                .to_string(),
+            arch_match: crate::api::types::ArchMatch::Match,
+            arch: Vec::new(),
+        }),
+    );
+    let path = crate::managed_override::managed_override_path(&root, &stack.id);
+    crate::managed_override::atomic_commit(
+        &path,
+        "services:\n  web:\n    image: ghcr.io/ivanli-cn/blog-26:latest\n",
+    )
+    .unwrap();
+
+    let generated = build_override_file(
+        &stack,
+        &[&stack.services[0]],
+        &HashMap::new(),
+        Some(&root),
+        false,
+        &["web".to_string()],
+    )
+    .unwrap()
+    .unwrap();
+
+    assert_eq!(
+        std::fs::read_to_string(generated).unwrap(),
+        "services:\n  web:\n    image: ghcr.io/ivanli-cn/blog-26:latest@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\n"
+    );
+    std::fs::remove_dir_all(root).unwrap();
+}
+
 #[derive(Default)]
 struct HealthRollbackRunner {
     step: Mutex<usize>,
