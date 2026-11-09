@@ -10,6 +10,9 @@ use axum::{
 use serde_json::json;
 use std::sync::{Arc, Mutex};
 
+const CONFIG_DIGEST: &str =
+    "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+
 async fn spawn_server(app: Router) -> Option<(String, tokio::task::JoinHandle<()>)> {
     let listener = match tokio::net::TcpListener::bind("127.0.0.1:0").await {
         Ok(listener) => listener,
@@ -43,7 +46,7 @@ async fn single_platform_manifest() -> impl IntoResponse {
         Json(json!({
             "schemaVersion": 2,
             "mediaType": "application/vnd.oci.image.manifest.v1+json",
-            "config": { "digest": "sha256:config" },
+            "config": { "digest": CONFIG_DIGEST },
             "layers": []
         })),
     )
@@ -80,7 +83,7 @@ async fn get_manifest_reads_single_platform_config_blob() {
 
     assert_eq!(info.digest.as_deref(), Some("sha256:manifest"));
     assert_eq!(info.arch, vec!["linux/amd64"]);
-    assert_eq!(requests.lock().unwrap().as_slice(), ["sha256:config"]);
+    assert_eq!(requests.lock().unwrap().as_slice(), [CONFIG_DIGEST]);
     assert!(matches!(
         compute_arch_match("linux/amd64", &info.arch),
         ArchMatch::Match
@@ -119,7 +122,7 @@ async fn get_manifest_preserves_unknown_when_config_blob_fails() {
 
     assert_eq!(info.digest.as_deref(), Some("sha256:manifest"));
     assert!(info.arch.is_empty());
-    assert_eq!(requests.lock().unwrap().as_slice(), ["sha256:config"]);
+    assert_eq!(requests.lock().unwrap().as_slice(), [CONFIG_DIGEST]);
     assert!(matches!(
         compute_arch_match("linux/amd64", &info.arch),
         ArchMatch::Unknown
@@ -163,7 +166,7 @@ async fn get_manifest_preserves_manifest_result_when_config_blob_times_out() {
 
     assert_eq!(info.digest.as_deref(), Some("sha256:manifest"));
     assert!(info.arch.is_empty());
-    assert_eq!(requests.lock().unwrap().as_slice(), ["sha256:config"]);
+    assert_eq!(requests.lock().unwrap().as_slice(), [CONFIG_DIGEST]);
     server.abort();
 }
 
@@ -249,7 +252,7 @@ async fn get_manifest_does_not_fetch_config_blob_for_manifest_lists() {
 
 #[test]
 fn merge_config_blob_platform_reads_single_platform_manifest_config() {
-    let manifest = json!({ "config": { "digest": "sha256:config" } });
+    let manifest = json!({ "config": { "digest": CONFIG_DIGEST } });
     let config_blob = json!({ "os": "linux", "architecture": "amd64" });
     let mut info = parse_manifest_json(
         &manifest.to_string(),
@@ -266,7 +269,7 @@ fn merge_config_blob_platform_reads_single_platform_manifest_config() {
 
 #[test]
 fn merge_config_blob_platform_preserves_arm64_variant_for_default_host() {
-    let manifest = json!({ "config": { "digest": "sha256:config" } });
+    let manifest = json!({ "config": { "digest": CONFIG_DIGEST } });
     let config_blob = json!({
         "os": "linux",
         "architecture": "arm64",
@@ -285,7 +288,7 @@ fn merge_config_blob_platform_preserves_arm64_variant_for_default_host() {
 
 #[test]
 fn merge_config_blob_platform_preserves_unknown_for_incomplete_config() {
-    let manifest = json!({ "config": { "digest": "sha256:config" } });
+    let manifest = json!({ "config": { "digest": CONFIG_DIGEST } });
     let config_blob = json!({ "os": "linux" });
     let mut info = parse_manifest_json(&manifest.to_string(), None, "linux/amd64").unwrap();
 
@@ -305,7 +308,7 @@ fn merge_config_blob_platform_ignores_manifest_lists() {
             "digest": "sha256:amd64",
             "platform": { "os": "linux", "architecture": "amd64" }
         }],
-        "config": { "digest": "sha256:index-config" }
+        "config": { "digest": CONFIG_DIGEST }
     });
     let config_blob = json!({ "os": "linux", "architecture": "arm64" });
     let mut info = parse_manifest_json(&manifest.to_string(), None, "linux/amd64").unwrap();
@@ -314,4 +317,15 @@ fn merge_config_blob_platform_ignores_manifest_lists() {
 
     assert_eq!(info.arch, vec!["linux/amd64"]);
     assert_eq!(info.platform_digest.as_deref(), Some("sha256:amd64"));
+}
+
+#[test]
+fn merge_config_blob_platform_ignores_invalid_config_digest() {
+    let manifest = json!({ "config": { "digest": "not-a-digest" } });
+    let config_blob = json!({ "os": "linux", "architecture": "amd64" });
+    let mut info = parse_manifest_json(&manifest.to_string(), None, "linux/amd64").unwrap();
+
+    merge_config_blob_platform(&mut info, &manifest, &config_blob, "linux/amd64");
+
+    assert!(info.arch.is_empty());
 }

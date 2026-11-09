@@ -940,6 +940,15 @@ fn manifest_config_digest(value: &serde_json::Value) -> Option<String> {
         .get("config")
         .and_then(|config| config.get("digest"))
         .and_then(|digest| digest.as_str())
+        .map(str::trim)
+        .filter(|digest| {
+            let Some((algorithm, encoded)) = digest.split_once(':') else {
+                return false;
+            };
+            algorithm.eq_ignore_ascii_case("sha256")
+                && encoded.len() == 64
+                && encoded.bytes().all(|byte| byte.is_ascii_hexdigit())
+        })
         .map(str::to_string)
 }
 
