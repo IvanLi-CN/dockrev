@@ -815,3 +815,108 @@ async fn list_stable_candidate_display_tags_keeps_repo_track_provenance_separate
         Some(&std::collections::BTreeSet::from(["2.0.0".to_string()]))
     );
 }
+
+async fn fail_notification(db: &Db, id: &str, digest: &str) {
+    let record = pending(id, "svc_1", digest);
+    db.reserve_new_version_notification(&record).await.unwrap();
+    db.finalize_new_version_notification(
+        id,
+        &[],
+        Some("webPush: webPush.vapidPrivateKey missing"),
+        "2026-03-09T00:01:00Z",
+    )
+    .await
+    .unwrap();
+}
+
+#[tokio::test]
+async fn list_stable_candidate_display_tags_scopes_to_target_digests() {
+    let db = Db::open(Path::new(":memory:")).await.unwrap();
+    seed_service(&db, "svc_1", Some("sha256:new")).await;
+
+    fail_notification(&db, "nvn_new_1", "sha256:new").await;
+    fail_notification(&db, "nvn_new_2", "sha256:new").await;
+    fail_notification(&db, "nvn_other", "sha256:other").await;
+
+    let target = (
+        "svc_1".to_string(),
+        "ghcr.io/acme/web".to_string(),
+        "latest".to_string(),
+        "sha256:new".to_string(),
+    );
+    let resolved = db
+        .list_stable_candidate_display_tags_for_notification_targets(std::slice::from_ref(&target))
+        .await
+        .unwrap();
+    assert_eq!(resolved.len(), 1);
+    assert_eq!(
+        resolved.get(&target),
+        Some(&std::collections::BTreeSet::from(["1.1.0".to_string()]))
+    );
+
+    let unresolved = db
+        .list_stable_candidate_display_tags_for_notification_targets(&[(
+            "svc_1".to_string(),
+            "ghcr.io/acme/web".to_string(),
+            "latest".to_string(),
+            "sha256:missing".to_string(),
+        )])
+        .await
+        .unwrap();
+    assert!(unresolved.is_empty());
+}
+
+#[tokio::test]
+async fn purge_drops_duplicate_terminal_notifications_and_expired_history() {
+    let db = Db::open(Path::new(":memory:")).await.unwrap();
+    seed_service(&db, "svc_1", Some("sha256:new")).await;
+
+    fail_notification(&db, "nvn_failed_1", "sha256:new").await;
+    fail_notification(&db, "nvn_failed_2", "sha256:new").await;
+    fail_notification(&db, "nvn_failed_3", "sha256:new").await;
+
+    db.reserve_new_version_notification(&pending("nvn_sent", "svc_1", "sha256:new"))
+        .await
+        .unwrap();
+    db.finalize_new_version_notification(
+        "nvn_sent",
+        &["telegram".to_string()],
+        None,
+        "2026-03-09T00:02:00Z",
+    )
+    .await
+    .unwrap();
+
+    let deleted = db
+        .purge_new_version_notification_backlog("2026-03-01T00:00:00Z")
+        .await
+        .unwrap();
+    assert_eq!(deleted, 2);
+    let records = db
+        .list_new_version_notifications_for_service("svc_1")
+        .await
+        .unwrap();
+    assert_eq!(records.len(), 2);
+    assert!(
+        records
+            .iter()
+            .any(|record| record.id == "nvn_failed_3" && record.status == "failed")
+    );
+    assert!(
+        records
+            .iter()
+            .any(|record| record.id == "nvn_sent" && record.status == "sent")
+    );
+
+    let deleted = db
+        .purge_new_version_notification_backlog("2026-03-10T00:00:00Z")
+        .await
+        .unwrap();
+    assert_eq!(deleted, 1);
+    let records = db
+        .list_new_version_notifications_for_service("svc_1")
+        .await
+        .unwrap();
+    assert_eq!(records.len(), 1);
+    assert_eq!(records[0].id, "nvn_sent");
+}

@@ -1425,7 +1425,21 @@ fn has_enabled_delivery_channel(settings: &NotificationSettings) -> bool {
     settings.webhook_enabled
         || settings.telegram_enabled
         || settings.email_enabled
-        || settings.webpush_enabled
+        || (settings.webpush_enabled && web_push_channel_configured(settings))
+}
+
+/// Web Push needs a VAPID key pair before it can deliver anything. A channel that
+/// is toggled on while unconfigured must not be treated as an enabled delivery
+/// channel: attempting it fails every dispatch, and the failure keeps the outbox
+/// row unprocessed, which retries forever.
+pub(crate) fn web_push_channel_configured(settings: &NotificationSettings) -> bool {
+    let configured = |value: &Option<String>| {
+        value
+            .as_deref()
+            .is_some_and(|value| !value.trim().is_empty())
+    };
+    configured(&settings.webpush_vapid_private_key)
+        && configured(&settings.webpush_vapid_public_key)
 }
 
 fn successful_delivery_channels(results: &Value) -> Vec<String> {

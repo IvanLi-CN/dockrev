@@ -132,7 +132,10 @@ pub(crate) async fn send_new_versions_with_badge(
         results.insert("email".to_string(), result_value(r));
     }
 
-    if settings.webpush_enabled && !skip_channels.contains("webPush") {
+    if settings.webpush_enabled
+        && crate::notify::web_push_channel_configured(&settings)
+        && !skip_channels.contains("webPush")
+    {
         let r = async {
             let payload = build_new_version_payload_v2(
                 state,
@@ -244,7 +247,10 @@ pub(crate) async fn send_ghcr_webhook_anomaly_with_badge(
         results.insert("email".to_string(), result_value(r));
     }
 
-    if settings.webpush_enabled && !skip_channels.contains("webPush") {
+    if settings.webpush_enabled
+        && crate::notify::web_push_channel_configured(&settings)
+        && !skip_channels.contains("webPush")
+    {
         let r = async {
             let payload = build_ghcr_webhook_anomaly_payload_v2(
                 state,
@@ -748,16 +754,16 @@ async fn send_web_push_with_progress(
     payload: &Value,
     skip_subscriptions: &std::collections::BTreeSet<String>,
 ) -> anyhow::Result<WebPushDeliveryReport> {
-    let private_key = vapid_private_key.context("webPush.vapidPrivateKey missing")?;
-    let subject = vapid_subject.unwrap_or("mailto:dockrev@localhost");
-
     let subs = state.db.list_web_push_subscriptions().await?;
     if subs.is_empty() {
         return Ok(WebPushDeliveryReport {
             successful_subscriptions: Vec::new(),
-            error: Some("no web push subscriptions".to_string()),
+            error: None,
         });
     }
+
+    let private_key = vapid_private_key.context("webPush.vapidPrivateKey missing")?;
+    let subject = vapid_subject.unwrap_or("mailto:dockrev@localhost");
 
     let client = HyperWebPushClient::new();
     let content = serde_json::to_vec(payload)?;

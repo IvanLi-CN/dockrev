@@ -7,6 +7,8 @@ const STATUS_SUPERSEDED: &str = "superseded";
 const ACTIVE_INDEX_NAME: &str = "idx_new_version_notifications_active_service_digest";
 const TARGET_BATCH_SIZE: usize = 200;
 const DELIVERY_CLAIM_TTL_MINUTES: i64 = 5;
+const PURGE_BATCH_SIZE: usize = 20_000;
+const PURGE_MAX_BATCHES: usize = 20;
 
 pub(crate) type NotificationTargetKey = (String, String, String, String);
 pub(super) type StableCandidateDisplayTags = std::collections::BTreeSet<String>;
@@ -45,21 +47,30 @@ pub(crate) fn list_stable_candidate_display_tags_for_notification_targets_conn(
         .iter()
         .cloned()
         .collect::<std::collections::BTreeSet<_>>();
-    let service_ids = targets
-        .iter()
-        .map(|(service_id, _, _, _)| service_id.clone())
-        .collect::<std::collections::BTreeSet<_>>()
-        .into_iter()
-        .collect::<Vec<_>>();
 
     let mut resolved = StableCandidateDisplayTagsByNotificationTarget::new();
-    for chunk in service_ids.chunks(TARGET_BATCH_SIZE) {
-        let placeholders = std::iter::repeat_n("?", chunk.len())
+    for chunk in targets.chunks(TARGET_BATCH_SIZE) {
+        let service_ids = chunk
+            .iter()
+            .map(|(service_id, _, _, _)| service_id.clone())
+            .collect::<std::collections::BTreeSet<_>>()
+            .into_iter()
+            .collect::<Vec<_>>();
+        let candidate_digests = chunk
+            .iter()
+            .map(|(_, _, _, candidate_digest)| candidate_digest.clone())
+            .collect::<std::collections::BTreeSet<_>>()
+            .into_iter()
+            .collect::<Vec<_>>();
+        let service_placeholders = std::iter::repeat_n("?", service_ids.len())
+            .collect::<Vec<_>>()
+            .join(",");
+        let digest_placeholders = std::iter::repeat_n("?", candidate_digests.len())
             .collect::<Vec<_>>()
             .join(",");
         let sql = format!(
             r#"
-SELECT
+SELECT DISTINCT
   service_id,
   image_ref,
   image_tag,
@@ -67,13 +78,18 @@ SELECT
   candidate_tag,
   candidate_display_tag
 FROM new_version_notifications
-WHERE service_id IN ({placeholders})
+WHERE service_id IN ({service_placeholders})
+  AND candidate_digest IN ({digest_placeholders})
 "#,
         );
         let mut stmt = conn.prepare(&sql)?;
-        let mut params: Vec<&dyn rusqlite::ToSql> = Vec::with_capacity(chunk.len());
-        for service_id in chunk {
+        let mut params: Vec<&dyn rusqlite::ToSql> =
+            Vec::with_capacity(service_ids.len() + candidate_digests.len());
+        for service_id in &service_ids {
             params.push(service_id);
+        }
+        for candidate_digest in &candidate_digests {
+            params.push(candidate_digest);
         }
         let rows = stmt.query_map(params.as_slice(), |row| {
             Ok((
@@ -781,6 +797,77 @@ WHERE id IN ({placeholders})
         })
         .await
         .context("list current new version notification targets")
+    }
+
+    /// Drops terminal notification history that no longer informs any
+    /// candidate lookup:
+    ///
+    /// - terminal rows older than `terminal_older_than`
+    /// - duplicate terminal rows for the same `(service_id, candidate_digest)`,
+    ///   keeping only the newest row
+    ///
+    /// Duplicates accumulate because a failed delivery re-reserves the digest
+    /// and inserts a fresh row; without this purge a broken delivery channel
+    /// turns into unbounded table growth.
+    pub async fn purge_new_version_notification_backlog(
+        &self,
+        terminal_older_than: &str,
+    ) -> anyhow::Result<usize> {
+        let terminal_older_than = terminal_older_than.to_string();
+        self.call(move |conn| {
+            let mut deleted = 0usize;
+            for _ in 0..PURGE_MAX_BATCHES {
+                let removed = conn.execute(
+                    r#"
+DELETE FROM new_version_notifications
+WHERE id IN (
+  SELECT id
+  FROM new_version_notifications
+  WHERE status IN (?1, ?2)
+    AND created_at < ?3
+  LIMIT ?4
+)
+"#,
+                    params![
+                        STATUS_FAILED,
+                        STATUS_SUPERSEDED,
+                        terminal_older_than,
+                        PURGE_BATCH_SIZE as i64
+                    ],
+                )?;
+                deleted += removed;
+                if removed < PURGE_BATCH_SIZE {
+                    break;
+                }
+            }
+            for _ in 0..PURGE_MAX_BATCHES {
+                let removed = conn.execute(
+                    r#"
+DELETE FROM new_version_notifications
+WHERE id IN (
+  SELECT id
+  FROM new_version_notifications
+  WHERE status IN (?1, ?2)
+    AND id NOT IN (
+      SELECT MAX(id)
+      FROM new_version_notifications
+      WHERE status IN (?1, ?2)
+      GROUP BY service_id, candidate_digest
+    )
+  LIMIT ?3
+)
+"#,
+                    params![STATUS_FAILED, STATUS_SUPERSEDED, PURGE_BATCH_SIZE as i64],
+                )?;
+                deleted += removed;
+                if removed < PURGE_BATCH_SIZE {
+                    break;
+                }
+            }
+            Ok(deleted)
+        })
+        .await
+        .context("purge new version notification backlog")
     }
 
     #[cfg(test)]
