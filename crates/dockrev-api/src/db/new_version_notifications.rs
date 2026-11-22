@@ -178,28 +178,76 @@ fn reserve_new_version_notification_tx(
 ) -> anyhow::Result<NewVersionNotificationReserveResult> {
     let candidate_digest = normalize_candidate_digest(Some(&pending.candidate_digest))
         .ok_or_else(|| rusqlite::Error::InvalidParameterName("candidate_digest".into()))?;
-    let previous = tx
+    // A retry reuses the failed row instead of inserting a new one. Inserting a
+    // fresh row per attempt is what turned a broken delivery channel into
+    // hundreds of thousands of duplicate rows for a single
+    // (service, candidate_digest) pair.
+    let reusable_failed_id = tx
         .query_row(
             r#"
-SELECT job_id, sent_channels_json
+SELECT id
 FROM new_version_notifications
 WHERE service_id = ?1
   AND candidate_digest = ?2
   AND status = ?3
+  AND NOT EXISTS (
+    SELECT 1
+    FROM new_version_notifications active
+    WHERE active.service_id = ?1
+      AND active.candidate_digest = ?2
+      AND active.status IN (?4, ?5)
+  )
 ORDER BY created_at DESC, id DESC
 LIMIT 1
 "#,
-            params![pending.service_id, candidate_digest, STATUS_FAILED],
-            |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)),
+            params![
+                pending.service_id,
+                candidate_digest,
+                STATUS_FAILED,
+                STATUS_PENDING,
+                STATUS_SENT
+            ],
+            |row| row.get::<_, String>(0),
         )
         .optional()?;
-    let (job_id, sent_channels_json) = match previous {
-        Some((job_id, raw)) => (
-            job_id,
-            serde_json::to_string(&serde_json::from_str::<Vec<String>>(&raw).unwrap_or_default())?,
-        ),
-        None => (pending.job_id.clone(), "[]".to_string()),
-    };
+    if let Some(id) = reusable_failed_id {
+        let changed = tx.execute(
+            r#"
+UPDATE new_version_notifications
+SET reason = ?2,
+    image_ref = ?3,
+    image_tag = ?4,
+    current_tag = ?5,
+    current_display_tag = ?6,
+    candidate_tag = ?7,
+    candidate_display_tag = ?8,
+    status = ?9,
+    created_at = ?10,
+    last_error = NULL,
+    superseded_at = NULL,
+    delivery_claim_token = NULL,
+    delivery_claim_expires_at = NULL
+WHERE id = ?1 AND status = ?11
+"#,
+            params![
+                id,
+                pending.reason,
+                pending.image_ref,
+                pending.image_tag,
+                pending.current_tag,
+                pending.current_display_tag,
+                pending.candidate_tag,
+                pending.candidate_display_tag,
+                STATUS_PENDING,
+                pending.created_at,
+                STATUS_FAILED,
+            ],
+        )?;
+        if changed > 0 {
+            return Ok(NewVersionNotificationReserveResult::Reserved(id));
+        }
+    }
+
     let insert = tx.execute(
         r#"
 INSERT INTO new_version_notifications (
@@ -222,7 +270,7 @@ INSERT INTO new_version_notifications (
         params![
             pending.id,
             pending.service_id,
-            job_id,
+            pending.job_id,
             pending.reason,
             pending.image_ref,
             pending.image_tag,
@@ -232,7 +280,7 @@ INSERT INTO new_version_notifications (
             pending.candidate_display_tag,
             candidate_digest,
             STATUS_PENDING,
-            sent_channels_json,
+            "[]".to_string(),
             pending.created_at,
         ],
     );

@@ -285,7 +285,7 @@ async fn pending_reservation_with_different_batch_does_not_duplicate_inbox_item(
 }
 
 #[tokio::test]
-async fn failed_record_does_not_hold_active_slot() {
+async fn failed_record_is_reused_on_retry() {
     let db = Db::open(Path::new(":memory:")).await.unwrap();
     seed_service(&db, "svc_1", Some("sha256:new")).await;
     let first = pending("nvn_1", "svc_1", "sha256:new");
@@ -311,8 +311,14 @@ async fn failed_record_does_not_hold_active_slot() {
     let retried = db.reserve_new_version_notification(&second).await.unwrap();
     assert_eq!(
         retried,
-        NewVersionNotificationReserveResult::Reserved("nvn_2".to_string())
+        NewVersionNotificationReserveResult::Reserved("nvn_1".to_string())
     );
+    let records = db
+        .list_new_version_notifications_for_service("svc_1")
+        .await
+        .unwrap();
+    assert_eq!(records.len(), 1);
+    assert_eq!(records[0].status, "pending");
 }
 
 #[tokio::test]
@@ -401,21 +407,26 @@ async fn partial_delivery_failure_does_not_hold_active_slot() {
     let retried = db.reserve_new_version_notification(&second).await.unwrap();
     assert_eq!(
         retried,
-        NewVersionNotificationReserveResult::Reserved("nvn_2".to_string())
+        NewVersionNotificationReserveResult::Reserved("nvn_1".to_string())
     );
     let sent_channels = db
-        .list_new_version_notification_sent_channels(&["nvn_2".to_string()])
+        .list_new_version_notification_sent_channels(&["nvn_1".to_string()])
         .await
         .unwrap();
     assert_eq!(
-        sent_channels.get("nvn_2"),
+        sent_channels.get("nvn_1"),
         Some(&vec!["webhook".to_string()])
     );
     let job_ids = db
-        .list_new_version_notification_job_ids(&["nvn_2".to_string()])
+        .list_new_version_notification_job_ids(&["nvn_1".to_string()])
         .await
         .unwrap();
-    assert_eq!(job_ids.get("nvn_2"), Some(&"chk_1".to_string()));
+    assert_eq!(job_ids.get("nvn_1"), Some(&"chk_1".to_string()));
+    let records = db
+        .list_new_version_notifications_for_service("svc_1")
+        .await
+        .unwrap();
+    assert_eq!(records.len(), 1);
 }
 
 #[tokio::test]
@@ -818,15 +829,36 @@ async fn list_stable_candidate_display_tags_keeps_repo_track_provenance_separate
 
 async fn fail_notification(db: &Db, id: &str, digest: &str) {
     let record = pending(id, "svc_1", digest);
-    db.reserve_new_version_notification(&record).await.unwrap();
+    let reserved = db.reserve_new_version_notification(&record).await.unwrap();
+    let record_id = match reserved {
+        NewVersionNotificationReserveResult::Reserved(record_id) => record_id,
+        other => panic!("unexpected reservation result: {other:?}"),
+    };
     db.finalize_new_version_notification(
-        id,
+        &record_id,
         &[],
         Some("webPush: webPush.vapidPrivateKey missing"),
         "2026-03-09T00:01:00Z",
     )
     .await
     .unwrap();
+}
+
+#[tokio::test]
+async fn repeated_failed_deliveries_keep_one_notification_row() {
+    let db = Db::open(Path::new(":memory:")).await.unwrap();
+    seed_service(&db, "svc_1", Some("sha256:new")).await;
+
+    for idx in 0..5 {
+        fail_notification(&db, &format!("nvn_retry_{idx}"), "sha256:new").await;
+    }
+
+    let records = db
+        .list_new_version_notifications_for_service("svc_1")
+        .await
+        .unwrap();
+    assert_eq!(records.len(), 1);
+    assert_eq!(records[0].status, "failed");
 }
 
 #[tokio::test]
@@ -869,23 +901,40 @@ async fn list_stable_candidate_display_tags_scopes_to_target_digests() {
 #[tokio::test]
 async fn purge_drops_duplicate_terminal_notifications_and_expired_history() {
     let db = Db::open(Path::new(":memory:")).await.unwrap();
-    seed_service(&db, "svc_1", Some("sha256:new")).await;
+    // The service candidate points at a different digest, so finalize() supersedes
+    // the notification rows. Superseded rows are not reused by reserve(), which is
+    // how legacy duplicates were produced before retries started reusing records.
+    seed_service(&db, "svc_1", Some("sha256:other")).await;
 
-    fail_notification(&db, "nvn_failed_1", "sha256:new").await;
-    fail_notification(&db, "nvn_failed_2", "sha256:new").await;
-    fail_notification(&db, "nvn_failed_3", "sha256:new").await;
-
-    db.reserve_new_version_notification(&pending("nvn_sent", "svc_1", "sha256:new"))
+    for idx in 0..3 {
+        let id = format!("nvn_superseded_{idx}");
+        db.reserve_new_version_notification(&pending(&id, "svc_1", "sha256:new"))
+            .await
+            .unwrap();
+        db.finalize_new_version_notification(
+            &id,
+            &[],
+            Some("webPush: webPush.vapidPrivateKey missing"),
+            "2026-03-09T00:01:00Z",
+        )
         .await
         .unwrap();
-    db.finalize_new_version_notification(
-        "nvn_sent",
-        &["telegram".to_string()],
-        None,
-        "2026-03-09T00:02:00Z",
-    )
-    .await
-    .unwrap();
+    }
+    db.reserve_new_version_notification(&pending("nvn_pending", "svc_1", "sha256:keep"))
+        .await
+        .unwrap();
+    let records = db
+        .list_new_version_notifications_for_service("svc_1")
+        .await
+        .unwrap();
+    assert_eq!(records.len(), 4);
+    assert_eq!(
+        records
+            .iter()
+            .filter(|record| record.status == "superseded")
+            .count(),
+        3
+    );
 
     let deleted = db
         .purge_new_version_notification_backlog("2026-03-01T00:00:00Z")
@@ -900,12 +949,12 @@ async fn purge_drops_duplicate_terminal_notifications_and_expired_history() {
     assert!(
         records
             .iter()
-            .any(|record| record.id == "nvn_failed_3" && record.status == "failed")
+            .any(|record| record.id == "nvn_superseded_2" && record.status == "superseded")
     );
     assert!(
         records
             .iter()
-            .any(|record| record.id == "nvn_sent" && record.status == "sent")
+            .any(|record| record.id == "nvn_pending" && record.status == "pending")
     );
 
     let deleted = db
@@ -918,5 +967,5 @@ async fn purge_drops_duplicate_terminal_notifications_and_expired_history() {
         .await
         .unwrap();
     assert_eq!(records.len(), 1);
-    assert_eq!(records[0].id, "nvn_sent");
+    assert_eq!(records[0].id, "nvn_pending");
 }
