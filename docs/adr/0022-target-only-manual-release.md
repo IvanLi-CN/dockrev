@@ -43,6 +43,10 @@ ref, publication lock, completion check, or release abort operation.
 ## Consequences
 
 - The flow needs no extra token and no owner action after the dispatch.
+- The version tag must exist before dispatch: `GITHUB_TOKEN` cannot create a ref
+  that introduces `.github/workflows/**` changes, and `workflows` is not a
+  `GITHUB_TOKEN` permission key. The workflow fails closed when the tag is
+  missing or points at another source.
 - Required PR checks (`Review Policy Gate`, `Quality Gates Contract`) still
   protect the product pull requests that produce the release source; they do not
   run on a synthetic release PR because none exists.

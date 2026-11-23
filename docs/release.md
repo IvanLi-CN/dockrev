@@ -62,9 +62,19 @@ The workflow builds one identity-bound bundle containing all architecture
 binaries, release archives, checksums, and a content manifest. The GitHub
 artifact SHA-256 and the bundle file hashes are verified before publication.
 
-The release job needs `contents: write` and `packages: write`. GitHub rejects a
-tag ref that introduces workflow files unless the token may update workflows,
-so the version tag is created with the owner credential, not the workflow token.
+The release job needs `contents: write` and `packages: write`. The version tag
+is created by the owner before dispatch, because `GITHUB_TOKEN` cannot create a
+ref whose commit introduces `.github/workflows/**` changes; GitHub answers
+`403 Resource not accessible by integration` for both the tag and the release
+creation while the tag is missing. `workflows` is not a valid `GITHUB_TOKEN`
+permission key, so the workflow cannot grant itself that capability.
+
+Owner step, once per release before dispatching:
+
+```sh
+gh api --method POST repos/IvanLi-CN/dockrev/git/refs \
+  -f ref=refs/tags/v<VERSION> -f sha=<dispatch source SHA>
+```
 
 Images are built once with the immutable version tag and a `sha-<source>` tag.
 If both tags already exist and resolve to the same digest, the workflow reuses

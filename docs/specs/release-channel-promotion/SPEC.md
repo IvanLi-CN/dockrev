@@ -73,7 +73,10 @@ closed. The range from the baseline source to the release source MUST be
 non-empty and fully comparable.
 
 `Release` MUST NOT create or merge a pull request, write to `main`, or create a
-reservation, publication lock, or completion ref.
+reservation, publication lock, or completion ref. Because `GITHUB_TOKEN` cannot
+create a ref that introduces workflow changes, the version tag MUST exist before
+dispatch and MUST point at the release source; a missing or foreign tag MUST
+fail closed.
 
 ### REQ-MVRD-005: Publication, integrity, and retry
 
