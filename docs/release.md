@@ -62,9 +62,9 @@ The workflow builds one identity-bound bundle containing all architecture
 binaries, release archives, checksums, and a content manifest. The GitHub
 artifact SHA-256 and the bundle file hashes are verified before publication.
 
-The release job needs `contents: write`, `packages: write` and `workflows: write`:
-the version tag points at a source commit that may contain workflow changes, and
-GitHub rejects a ref that introduces workflow files without that permission.
+The release job needs `contents: write` and `packages: write`. GitHub rejects a
+tag ref that introduces workflow files unless the token may update workflows,
+so the version tag is created with the owner credential, not the workflow token.
 
 Images are built once with the immutable version tag and a `sha-<source>` tag.
 If both tags already exist and resolve to the same digest, the workflow reuses

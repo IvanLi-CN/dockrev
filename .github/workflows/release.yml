@@ -16,7 +16,6 @@ permissions:
   actions: read
   contents: write
   packages: write
-  workflows: write
 
 env:
   REGISTRY: ghcr.io
@@ -283,7 +282,6 @@ jobs:
       actions: read
       contents: write
       packages: write
-      workflows: write
     env:
       VERSION: ${{ needs.preflight.outputs.version }}
       RELEASE_TAG: ${{ needs.preflight.outputs.release_tag }}
@@ -441,17 +439,18 @@ jobs:
           echo "supervisor_digest=${supervisor_digest}" >> "$GITHUB_OUTPUT"
         id: verify_images
 
-      - name: Create the immutable tag
+      - name: Check existing tag ownership
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
-          existing="$(git ls-remote --tags origin "refs/tags/${RELEASE_TAG}" | awk '{print $1}')"
-          if [ -n "${existing}" ]; then
-            test "${existing}" = "${SOURCE_SHA}" || { echo "tag ${RELEASE_TAG} belongs to ${existing}" >&2; exit 1; }
+          if existing="$(gh api "repos/${GITHUB_REPOSITORY}/git/ref/tags/${RELEASE_TAG}" 2>/dev/null)"; then
+            owner_sha="$(python3 -c 'import json,sys; print(json.load(sys.stdin)["object"]["sha"])' <<<"${existing}")"
+            test "${owner_sha}" = "${SOURCE_SHA}" || { echo "tag ${RELEASE_TAG} belongs to ${owner_sha}" >&2; exit 1; }
           else
-            git tag "${RELEASE_TAG}" "${SOURCE_SHA}"
-            git push origin "refs/tags/${RELEASE_TAG}"
+            status=$?
+            [ "${status}" -eq 1 ] || exit "${status}"
+            echo "tag ${RELEASE_TAG} is absent; the release action creates it"
           fi
 
       - name: Record published image digests

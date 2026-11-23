@@ -42,8 +42,9 @@ assert "release-images.json" in release
 assert "release-bundle-${{ needs.preflight.outputs.source_sha }}" in release
 assert "existing" in release and "refusing to overwrite" in release
 assert "release-plan" not in release
-assert 'git ls-remote --tags origin' in release
-assert 'git push origin "refs/tags/${RELEASE_TAG}"' in release
+assert "Check existing tag ownership" in release
+assert "the release action creates it" in release
+assert "commit: ${{ env.SOURCE_SHA }}" in release
 assert "Promote stable image aliases" in release
 assert release.index("Publish GitHub Release and assets") < release.index("Promote stable image aliases")
 for obsolete in ("release-reservation/v", "release-publication-lock/v", "identity_json", "artifact_run_id"):
