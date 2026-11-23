@@ -415,7 +415,7 @@ jobs:
             ${{ env.REGISTRY }}/${{ steps.ghcr-owner.outputs.owner }}/${{ env.SUPERVISOR_IMAGE_NAME }}:sha-${{ env.SOURCE_SHA }}
           build-args: APP_EFFECTIVE_VERSION=${{ env.VERSION }}
 
-      - name: Verify image digests and aliases
+      - name: Verify image digests
         run: |
           set -euo pipefail
           inspect() {
@@ -429,16 +429,6 @@ jobs:
             test "$(inspect "${REGISTRY}/${{ steps.ghcr-owner.outputs.owner }}/${IMAGE_NAME}:${tag}")" = "${dockrev_digest}"
             test "$(inspect "${REGISTRY}/${{ steps.ghcr-owner.outputs.owner }}/${SUPERVISOR_IMAGE_NAME}:${tag}")" = "${supervisor_digest}"
           done
-          if [ "${CHANNEL}" = "stable" ]; then
-            docker buildx imagetools create \
-              --tag "${REGISTRY}/${{ steps.ghcr-owner.outputs.owner }}/${IMAGE_NAME}:latest" \
-              "${REGISTRY}/${{ steps.ghcr-owner.outputs.owner }}/${IMAGE_NAME}:${VERSION}"
-            docker buildx imagetools create \
-              --tag "${REGISTRY}/${{ steps.ghcr-owner.outputs.owner }}/${SUPERVISOR_IMAGE_NAME}:latest" \
-              "${REGISTRY}/${{ steps.ghcr-owner.outputs.owner }}/${SUPERVISOR_IMAGE_NAME}:${VERSION}"
-            test "$(inspect "${REGISTRY}/${{ steps.ghcr-owner.outputs.owner }}/${IMAGE_NAME}:latest")" = "${dockrev_digest}"
-            test "$(inspect "${REGISTRY}/${{ steps.ghcr-owner.outputs.owner }}/${SUPERVISOR_IMAGE_NAME}:latest")" = "${supervisor_digest}"
-          fi
           echo "dockrev_digest=${dockrev_digest}" >> "$GITHUB_OUTPUT"
           echo "supervisor_digest=${supervisor_digest}" >> "$GITHUB_OUTPUT"
         id: verify_images
@@ -448,11 +438,12 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
-          existing="$(gh api "repos/${GITHUB_REPOSITORY}/git/ref/tags/${RELEASE_TAG}" 2>/dev/null || true)"
-          if [ -n "${existing}" ]; then
+          if existing="$(gh api "repos/${GITHUB_REPOSITORY}/git/ref/tags/${RELEASE_TAG}" 2>/dev/null)"; then
             owner_sha="$(python3 -c 'import json,sys; print(json.load(sys.stdin)["object"]["sha"])' <<<"${existing}")"
             test "${owner_sha}" = "${SOURCE_SHA}" || { echo "tag ${RELEASE_TAG} belongs to ${owner_sha}" >&2; exit 1; }
           else
+            status=$?
+            [ "${status}" -eq 1 ] || exit "${status}"
             gh api --method POST "repos/${GITHUB_REPOSITORY}/git/refs" -f "ref=refs/tags/${RELEASE_TAG}" -f "sha=${SOURCE_SHA}"
           fi
 
@@ -480,6 +471,23 @@ jobs:
           artifacts: release-bundle/dist/release/*.tar.gz,release-bundle/dist/release/*.sha256,release-images.json
           artifactErrorsFailBuild: true
           generateReleaseNotes: true
+
+      - name: Promote stable image aliases
+        if: env.CHANNEL == 'stable'
+        run: |
+          set -euo pipefail
+          owner="${{ steps.ghcr-owner.outputs.owner }}"
+          inspect() {
+            docker buildx imagetools inspect "$1" | awk '/Digest:/ {print $2; exit}'
+          }
+          docker buildx imagetools create \
+            --tag "${REGISTRY}/${owner}/${IMAGE_NAME}:latest" \
+            "${REGISTRY}/${owner}/${IMAGE_NAME}:${VERSION}"
+          docker buildx imagetools create \
+            --tag "${REGISTRY}/${owner}/${SUPERVISOR_IMAGE_NAME}:latest" \
+            "${REGISTRY}/${owner}/${SUPERVISOR_IMAGE_NAME}:${VERSION}"
+          test "$(inspect "${REGISTRY}/${owner}/${IMAGE_NAME}:latest")" = "${{ steps.verify_images.outputs.dockrev_digest }}"
+          test "$(inspect "${REGISTRY}/${owner}/${SUPERVISOR_IMAGE_NAME}:latest")" = "${{ steps.verify_images.outputs.supervisor_digest }}"
 
   failure-context:
     name: Record release failure context
