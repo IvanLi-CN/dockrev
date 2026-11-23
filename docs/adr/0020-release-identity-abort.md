@@ -2,7 +2,7 @@
 
 ## Status
 
-Accepted. Extends ADR 0015.
+Superseded by ADR 0022; version reservations no longer exist.
 
 ## Context
 

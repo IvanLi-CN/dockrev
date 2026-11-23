@@ -1,9 +1,10 @@
 {
-  "schema_version": 1,
+  "schema_version": 2,
   "baseline": {
-    "ref": "main",
-    "file": "VERSION"
+    "source": "github-final-release",
+    "base_branch": "main"
   },
+  "source_ci_workflow": "CI (main)",
   "intents": [
     "major",
     "minor",
@@ -34,24 +35,17 @@
     "beta:beta,rc",
     "rc:rc,stable"
   ],
-  "identity": {
-    "changed_files": [
-      "VERSION"
-    ],
-    "signed": true,
-    "immutable_version_reservation": true,
-    "preparation_branch_prefix": "release-preparation/v",
-    "reservation_branch_prefix": "release-reservation/v"
-  },
   "publication": {
     "stable": {
       "github_release": true,
       "ghcr_version": true,
+      "ghcr_source_sha": true,
       "ghcr_latest": true
     },
     "prerelease": {
       "github_prerelease": true,
       "ghcr_version": true,
+      "ghcr_source_sha": true,
       "ghcr_latest": false
     }
   }

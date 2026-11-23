@@ -1,0 +1,63 @@
+name: CI (main)
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-main
+  cancel-in-progress: false
+
+env:
+  RUST_TOOLCHAIN: "1.91.0"
+
+jobs:
+  validate:
+    name: Validate main
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install system dependencies
+        run: sudo apt-get update && sudo apt-get install -y pkg-config libsqlite3-dev
+
+      - name: Set up Rust toolchain
+        uses: dtolnay/rust-toolchain@v1
+        with:
+          toolchain: ${{ env.RUST_TOOLCHAIN }}
+          components: rustfmt, clippy
+
+      - name: Cargo fmt check
+        run: cargo fmt --all -- --check
+
+      - name: File budget check
+        run: python3 ./.github/scripts/check-file-budgets.py
+
+      - name: Cargo clippy
+        run: cargo clippy --workspace --all-targets --all-features -- -D warnings
+
+      - name: Cargo test
+        run: cargo test --workspace --locked --all-features -- --test-threads=2
+
+      - name: Release channel contract check
+        run: bash ./.github/scripts/release-channel-contract-check.sh
+
+      - name: Docs Pages workflow contract check
+        run: python3 ./.github/scripts/test_docs_pages_workflow_contract.py
+
+      - name: Workflow failure notification contract check
+        run: python3 ./.github/scripts/test_workflow_failure_notification_contract.py
+
+      - name: Live quality-gates check
+        env:
+          QUALITY_GATES_LIVE_RULES_MODE: require
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          python3 ./.github/scripts/check-live-quality-gates.py \
+            --declaration .github/quality-gates.json \
+            --repo "${GITHUB_REPOSITORY}"

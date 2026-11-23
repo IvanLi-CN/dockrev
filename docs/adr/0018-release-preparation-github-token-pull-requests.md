@@ -2,7 +2,7 @@
 
 ## Status
 
-Accepted. Extends ADR 0015.
+Superseded by ADR 0022; no pull request is created by the release workflow.
 
 ## Context
 

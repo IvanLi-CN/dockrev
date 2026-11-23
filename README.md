@@ -207,12 +207,12 @@ See `deploy/README.md` for a minimal Docker Compose deployment.
 - GHCR (Dockrev): `ghcr.io/ivanli-cn/dockrev:<semver>`
 - GHCR (Supervisor): `ghcr.io/ivanli-cn/dockrev-supervisor:<semver>`
 - The complete maintainer contract is in [`docs/release.md`](docs/release.md).
-- `Release Preparation` has one required `version` input: `major`, `minor`, `patch`, `alpha`, `beta`, `rc`, or a supported exact SemVer value. It reads the latest root `VERSION` on `main` as the only allocation baseline; missing or invalid `VERSION` blocks preparation.
-- Numeric intents calculate the next major, minor, or patch from that baseline. Alpha and beta begin on the next patch core; channel progression is alpha -> beta -> rc -> stable, with stable allowed to start beta directly. RC can only promote to stable on the same core. `dev` and `none` are unsupported.
-- Preparation creates a signed, single-parent commit that changes only root `VERSION`, reserves its target at `release-reservation/v<VERSION>`, and opens a protected PR. `Release completion` validates the frozen identity; merging it advances the next baseline.
-- `Release` publishes stable GitHub Releases and versioned GHCR images, advancing `latest` only for the newest stable release. Alpha, beta, and RC publish GitHub prereleases and versioned GHCR images without changing `latest`.
-- One identity-bound artifact bundle supplies all Linux binaries, archives, checksums, and both container images. Publication and same-identity recovery verify its file hashes and GitHub artifact SHA-256. Recovery never recalculates the version or replaces an existing complete bundle.
-- Failed publication context is uploaded as structured JSON and delivered through the selected OIDC/Oidrune notifier. Historical identity backfill and release queues are not part of this contract.
+- `Release` has one required `target` input: `major`, `minor`, `patch`, `alpha`, `beta`, `rc`, or a supported exact SemVer value. The only allocation baseline is the highest verified final GitHub Release; there is no `VERSION` file.
+- Numeric intents calculate the next major, minor, or patch from that baseline. Prerelease intents resolve the next lineage from existing `vX.Y.Z-<channel>.N` tags; a stable baseline may start any prerelease channel directly. Reverse and skipped transitions inside a lineage fail closed. `dev` and `none` are unsupported.
+- Preflight requires the dispatch source to be `main`, signed, reachable from `main`, and covered by a successful `CI (main)` run. `Release` never creates or merges a pull request and never writes to `main`.
+- `Release` publishes stable GitHub Releases and versioned GHCR images, advancing `latest` only for a stable release. Alpha, beta, and RC publish GitHub prereleases and versioned GHCR images without changing `latest`.
+- One identity-bound artifact bundle supplies all Linux binaries, archives, checksums, and both container images. Publication verifies its file hashes and GitHub artifact SHA-256, records image digests in `release-images.json`, and reuses existing tags or digests only when they belong to the same source.
+- Failed publication context is uploaded as structured JSON and delivered through the selected OIDC/Oidrune notifier. Version files, reservation refs, completion checks, historical identity backfill and release queues are not part of this contract.
 - GitHub Releases include Linux binaries for `dockrev` and `dockrev-supervisor` (amd64/arm64 × gnu/musl) as `.tar.gz` + `.sha256`
 - Release assets are validated as executable binaries (the workflow enforces `chmod +x` before packaging to avoid artifacts losing exec bits)
 
