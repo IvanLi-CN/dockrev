@@ -192,6 +192,9 @@ def required_check_migration_state(declaration: dict, live_required_checks: list
     target = sorted(declaration.get("required_checks", []))
     if live_required_checks == target:
         return "target"
+    pending = sorted(declaration.get("pending_required_checks", []))
+    if pending and live_required_checks == sorted(set(target) - set(pending)):
+        return "pending"
     migration = declaration.get("required_check_migration", {})
     source = migration.get("source_required_checks", []) if isinstance(migration, dict) else []
     if live_required_checks == sorted(source):
@@ -221,6 +224,7 @@ def migration_readiness_record(
         "trusted_target_workflow_on_main": workflow_status == "trusted",
         "target_context_required": context_required,
         "target_gate_active": state == "target" and context_required,
+        "pending_cutover": state == "pending",
     }
 
 
@@ -300,6 +304,26 @@ def validate_rules(declaration: dict, rules: list[dict], branch: str) -> list[st
             if merge_method_block:
                 errors.append(f"{branch}: merge commits must remain allowed")
 
+    if branch_policy.get("strict_required_status_checks"):
+        status_rules = grouped.get("required_status_checks", [])
+        if not status_rules:
+            errors.append(f"{branch}: strict required status checks declared without a required_status_checks rule")
+        for rule in status_rules:
+            parameters = rule.get("parameters") or {}
+            if not isinstance(parameters, dict) or not bool_field(parameters, "strict_required_status_checks_policy"):
+                errors.append(f"{branch}: strict_required_status_checks_policy must stay enabled")
+                break
+
+    if branch_policy.get("require_extra_approval_for_unattributed_changes"):
+        pull_request_rules = grouped.get("pull_request", [])
+        if not pull_request_rules:
+            errors.append(f"{branch}: extra approval for unattributed changes declared without a pull_request rule")
+        elif not any(
+            bool_field(rule.get("parameters") or {}, "require_extra_approval_for_unattributed_changes")
+            for rule in pull_request_rules
+        ):
+            errors.append(f"{branch}: require_extra_approval_for_unattributed_changes must stay enabled")
+
     if enforcement_mode not in {"github-native", "required-check"}:
         errors.append(f"{branch}: unsupported review_policy.enforcement.mode={enforcement_mode!r}")
     elif enforcement_mode == "github-native":
@@ -377,6 +401,13 @@ def main() -> int:
                     "the Manual Version Release Completion cutover remains pending",
                     file=sys.stderr,
                 )
+            if migration_states[branch] == "pending":
+                pending = sorted(declaration.get("pending_required_checks", []))
+                print(
+                    f"[live-quality-gates] {branch}: declared checks not yet required by the live ruleset: "
+                    f"{', '.join(pending)}; update the ruleset to complete the cutover",
+                    file=sys.stderr,
+                )
     except ValidationError as exc:
         print(f"[live-quality-gates] {exc}", file=sys.stderr)
         return 1
@@ -394,6 +425,8 @@ def main() -> int:
     ]
     if "source" in migration_states.values():
         notes.append("The source state is pending; the target check is not required by the live ruleset yet.")
+    if "pending" in migration_states.values():
+        notes.append("Pending required checks are declared but not yet enforced by the live ruleset.")
     if "target" in migration_states.values():
         notes.append("The active target context must succeed on each PR before GitHub permits merge.")
 
@@ -402,7 +435,7 @@ def main() -> int:
             {
                 "status": (
                     "transition_in_progress"
-                    if "source" in migration_states.values()
+                    if {"source", "pending"} & set(migration_states.values())
                     else "ok"
                 ),
                 "repo": args.repo,

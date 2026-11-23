@@ -52,6 +52,7 @@ def unavailable_identity_failure_context(
 def resolved_identity_failure_context(
     identity: dict[str, Any], *, repository: str, server: str, run_id: str,
     attempt: str, event: str, ref: str, actor: str, artifact_digest: str = "",
+    image_digests: dict[str, str] | None = None,
 ) -> dict[str, Any]:
     release_policy.validate_identity(identity)
     merge_sha = str(identity["merge_commit_sha"])
@@ -66,6 +67,7 @@ def resolved_identity_failure_context(
         "tag": str(identity["release_tag"]),
         "artifact_names": expected_artifacts(str(identity["version"])),
         "artifact_digest": artifact_digest,
+        **({"image_digests": release_policy.validate_image_digests(image_digests)} if image_digests else {}),
         "run_url": f"{server}/{repository}/actions/runs/{run_id}",
         "recovery_instruction": f"workflow_dispatch merge_sha={merge_sha} recovery_reason=<required>",
         "repository": repository,
@@ -78,6 +80,12 @@ def resolved_identity_failure_context(
 
 
 def notification_summary(payload: dict[str, Any]) -> str:
+    def format_image_digests(value: Any) -> str:
+        digests = release_policy.validate_image_digests(value)
+        if not digests:
+            return "not published before this failure"
+        return ", ".join(f"{name}={digest}" for name, digest in sorted(digests.items()))
+
     release_policy.validate_failure_context(
         payload,
         expected_repository=os.environ.get("GITHUB_REPOSITORY"),
@@ -119,6 +127,7 @@ def notification_summary(payload: dict[str, Any]) -> str:
         f"merge sha: {payload['merge_commit_sha']}",
         f"tag: {payload['tag']}",
         f"artifact digest: {payload.get('artifact_digest') or 'not created before this failure'}",
+        f"image digests: {format_image_digests(payload.get('image_digests'))}",
         "assets: " + ", ".join(payload["artifact_names"]),
         f"run: {payload['run_url']}",
         f"recovery: {payload['recovery_instruction']}",
@@ -139,6 +148,7 @@ def main() -> int:
     parser.add_argument("--ref")
     parser.add_argument("--actor")
     parser.add_argument("--artifact-digest", default="")
+    parser.add_argument("--image-digests", default="")
     parser.add_argument("--output", type=Path)
     args = parser.parse_args()
     if args.unresolved_run:
@@ -190,6 +200,7 @@ def main() -> int:
             ref=args.ref,
             actor=args.actor,
             artifact_digest=args.artifact_digest,
+            image_digests=json.loads(args.image_digests) if args.image_digests.strip() else None,
         )
         args.output.write_text(json.dumps(payload, sort_keys=True) + "\n", encoding="utf-8")
         return 0

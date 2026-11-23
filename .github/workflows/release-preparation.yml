@@ -64,3 +64,15 @@ jobs:
           path: release-identity.json
           if-no-files-found: error
           retention-days: 90
+      - name: Report release preparation prerequisites
+        if: failure()
+        run: |
+          cat >> "$GITHUB_STEP_SUMMARY" <<'EOF'
+          ## Release Preparation failed
+
+          If the log shows `HTTP 403` on `POST /pulls`, GitHub Actions is not allowed to create pull requests for this repository.
+
+          Owner action: Settings > Actions > General > Workflow permissions > enable "Allow GitHub Actions to create and approve pull requests".
+
+          The identity commit and `release-reservation/v<version>` may already exist. Re-run `Release Preparation` with the same `version` input to reuse them; do not prepare a different version.
+          EOF

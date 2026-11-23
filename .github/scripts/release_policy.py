@@ -31,6 +31,8 @@ TRAILER_KEYS = {
     "Release-Baseline-Version",
     "Release-Intent",
 }
+IMAGE_DIGEST_NAMES = {"dockrev", "dockrev-supervisor"}
+IMAGE_DIGEST_RE = re.compile(r"^sha256:[0-9a-f]{64}$")
 
 
 class PolicyError(ValueError):
@@ -120,6 +122,19 @@ def validate_channel_version(version: str, channel: str) -> None:
 def validate_sha(value: str, field: str = "sha") -> None:
     if not SHA_RE.fullmatch(value):
         raise PolicyError(f"{field} must be a 40-character lowercase commit SHA")
+
+
+def validate_image_digests(value: Any) -> dict[str, str]:
+    if value in (None, {}):
+        return {}
+    if not isinstance(value, dict):
+        raise PolicyError("image digests must be a mapping of image name to sha256 digest")
+    if set(value) != IMAGE_DIGEST_NAMES:
+        raise PolicyError("image digests must cover dockrev and dockrev-supervisor")
+    for name, digest in value.items():
+        if not isinstance(digest, str) or not IMAGE_DIGEST_RE.fullmatch(digest):
+            raise PolicyError(f"image digest for {name} must be a sha256 digest")
+    return value
 
 
 def next_core(version: str, intent: str) -> tuple[int, int, int]:
@@ -303,6 +318,7 @@ def validate_failure_context(
         raise PolicyError("failure context run_attempt does not match the expected attempt")
     if payload.get("recovery_instruction") != f"workflow_dispatch merge_sha={payload['merge_commit_sha']} recovery_reason=<required>":
         raise PolicyError("failure context recovery instruction must retry the immutable merge identity")
+    validate_image_digests(payload.get("image_digests"))
     return payload
 
 

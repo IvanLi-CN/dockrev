@@ -61,7 +61,14 @@ for obsolete in (
     assert not (ROOT / obsolete).exists(), obsolete
 
 quality = json.loads(read(".github/quality-gates.json"))
-assert quality["required_checks"] == ["Review Policy Gate", "Manual Version Release Completion"]
+assert quality["required_checks"] == [
+    "Review Policy Gate",
+    "Manual Version Release Completion",
+    "Quality Gates Contract",
+]
+assert quality["pending_required_checks"] == ["Quality Gates Contract"]
+assert quality["policy"]["branch_protection"]["strict_required_status_checks"] is True
+assert quality["policy"]["branch_protection"]["require_extra_approval_for_unattributed_changes"] is True
 assert quality["required_check_migration"]["source_required_checks"] == [
     "Review Policy Gate", "Label Gate", "Release completion"
 ]
@@ -84,6 +91,9 @@ assert quality_gate_checker.required_check_migration_state(
 ) == "source"
 assert quality_gate_checker.required_check_migration_state(
     quality, ["Manual Version Release Completion", "Review Policy Gate"]
+) == "pending"
+assert quality_gate_checker.required_check_migration_state(
+    quality, ["Manual Version Release Completion", "Quality Gates Contract", "Review Policy Gate"]
 ) == "target"
 assert quality_gate_checker.required_check_migration_state(
     quality, ["Review Policy Gate"]
@@ -101,11 +111,12 @@ assert source_readiness["target_context_required"] is False
 assert source_readiness["target_gate_active"] is False
 target_readiness = quality_gate_checker.migration_readiness_record(
     "target", "trusted", "Manual Version Release Completion",
-    ["Manual Version Release Completion", "Review Policy Gate"],
+    ["Manual Version Release Completion", "Quality Gates Contract", "Review Policy Gate"],
 )
 assert target_readiness["target_context_required"] is True
 assert target_readiness["target_gate_active"] is True
 workflow_paths = {
+    "Quality Gates Contract": ".github/workflows/quality-gates-contract.yml",
     "Review Policy": ".github/workflows/review-policy.yml",
     "Release completion": ".github/workflows/release-completion-pr.yml",
     "CI (PR)": ".github/workflows/ci-pr.yml",
@@ -195,5 +206,53 @@ assert {"Release", "Release Preparation", "Release completion"} <= set(notificat
 generic_notifier = read(".github/workflows/notify-failed-workflow.yml")
 assert "Label Gate" not in generic_notifier
 assert "Release Preparation" in generic_notifier
+
+quality_contract = read(".github/workflows/quality-gates-contract.yml")
+assert "pull_request_target:" in quality_contract and "\n  pull_request:" not in quality_contract
+assert "ref: ${{ github.workflow_sha }}" in quality_contract
+assert "name: Quality Gates Contract" in quality_contract
+assert "queue: max" in quality_contract
+assert "cancel-in-progress" not in quality_contract
+assert "QUALITY_GATES_LIVE_RULES_MODE: require" in quality_contract
+
+review_policy_workflow = read(".github/workflows/review-policy.yml")
+assert "queue: max" in review_policy_workflow
+assert "cancel-in-progress: true" not in review_policy_workflow
+
+abort_workflow = read(".github/workflows/release-abort.yml")
+assert "name: Release abort" in abort_workflow
+assert "release_abort.py" in abort_workflow
+assert "if: github.ref == 'refs/heads/main'" in abort_workflow
+abort_script = read(".github/scripts/release_abort.py")
+for guard in (
+    "published identities cannot be aborted",
+    "publication already started",
+    "use the Release recovery path instead",
+):
+    assert guard in abort_script, guard
+
+assert "release_eligibility.py" in release
+assert "Verify publication gate on the merged identity" in release
+eligibility_script = read(".github/scripts/release_eligibility.py")
+assert "pending_required_checks" in eligibility_script
+assert "release identity did not pass required checks" in eligibility_script
+assert "release identity is not a parent of the merged commit" in eligibility_script
+
+assert "release_image_digests.py" in release
+assert "Verify published images match the recorded identity digests" in release
+assert "Record published image digests" in release
+assert "release-images.json" in release
+assert "release-images-${{ env.MERGE_SHA }}" in release
+image_digest_script = read(".github/scripts/release_image_digests.py")
+assert "verify_remote" in image_digest_script and "published digest" in image_digest_script
+
+preparation_script = read(".github/scripts/release_preparation.py")
+assert "PULL_REQUEST_PERMISSION_HINT" in preparation_script
+assert "Allow GitHub Actions to create and approve pull requests" in preparation_script
+assert not re.search(r"[\u4e00-\u9fff]", preparation_script), "403 hint must stay English-only"
+preparation_workflow = read(".github/workflows/release-preparation.yml")
+assert "Report release preparation prerequisites" in preparation_workflow
+assert "Allow GitHub Actions to create and approve pull requests" in preparation_workflow
+assert not re.search(r"[\u4e00-\u9fff]", preparation_workflow), "403 hint must stay English-only"
 
 print("PASS: manual version release workflow and publication contracts")

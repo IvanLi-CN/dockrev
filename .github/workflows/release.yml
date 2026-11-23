@@ -38,6 +38,7 @@ jobs:
       contents: read
       pull-requests: read
       actions: read
+      checks: read
     outputs:
       release_enabled: ${{ steps.resolve.outputs.release_enabled }}
       pull_request: ${{ steps.resolve.outputs.pull_request }}
@@ -55,6 +56,7 @@ jobs:
       artifact_run_id: ${{ steps.resolve.outputs.artifact_run_id }}
       artifact_id: ${{ steps.resolve.outputs.artifact_id }}
       artifact_digest: ${{ steps.resolve.outputs.artifact_digest }}
+      image_digests: ${{ steps.resolve.outputs.image_digests }}
     steps:
       - name: Checkout merged main commit
         uses: actions/checkout@v4
@@ -133,6 +135,8 @@ jobs:
           print(f"artifact_run_id={recovery.get('artifact_run_id', '')}")
           print(f"artifact_id={recovery.get('artifact_id', '')}")
           print(f"artifact_digest={recovery.get('artifact_digest', '')}")
+          recorded_images = recovery.get("image_digests") or {}
+          print(f"image_digests={json.dumps(recorded_images, sort_keys=True) if recorded_images else ''}")
           print("identity_json<<EOF")
           print(json.dumps(payload, sort_keys=True))
           print("EOF")
@@ -227,6 +231,20 @@ jobs:
             fi
           done
 
+      - name: Verify publication gate on the merged identity
+        id: verify_gate
+        if: steps.resolve.outcome == 'success' && steps.resolve.outputs.release_enabled == 'true'
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          python3 .workflow-src/.github/scripts/release_eligibility.py \
+            --repository "${GITHUB_REPOSITORY}" \
+            --merge-sha "${{ steps.resolve.outputs.merge_sha }}" \
+            --identity-sha "${{ steps.resolve.outputs.identity_sha }}" \
+            --token "${GITHUB_TOKEN}" \
+            --output release-eligibility.json
+
       - name: Capture resolved identity step failure context
         id: capture_resolved
         if: >-
@@ -279,7 +297,7 @@ jobs:
         if: >-
           always() && steps.resolve.outcome == 'success' &&
           steps.resolve.outputs.release_enabled == 'true' &&
-          steps.reserve_tag.outcome == 'failure'
+          (steps.reserve_tag.outcome == 'failure' || steps.verify_gate.outcome == 'failure')
         uses: actions/upload-artifact@v4
         with:
           name: release-identity-failure-context-${{ github.run_id }}-${{ github.run_attempt }}
@@ -477,6 +495,7 @@ jobs:
       MERGE_SHA: ${{ needs.identity.outputs.merge_sha }}
       ARTIFACT_RUN_ID: ${{ needs.identity.outputs.artifact_run_id || github.run_id }}
       ARTIFACT_DIGEST: ${{ needs.identity.outputs.artifact_digest || needs.package-assets.outputs.artifact_digest }}
+      IMAGE_DIGESTS: ${{ needs.identity.outputs.image_digests }}
     steps:
       - name: Checkout merge identity
         uses: actions/checkout@v4
@@ -653,7 +672,22 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
+      - name: Verify published images match the recorded identity digests
+        if: env.IMAGE_DIGESTS != ''
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          printf '%s' "${IMAGE_DIGESTS}" > recorded-image-digests.json
+          python3 .github/scripts/release_image_digests.py verify-remote \
+            --repository "${GITHUB_REPOSITORY}" \
+            --version "${VERSION}" \
+            --path recorded-image-digests.json \
+            --token "${GH_TOKEN}"
+
       - name: Build and push Dockrev image (artifact-first)
+        id: push_app
+        if: env.IMAGE_DIGESTS == ''
         uses: docker/build-push-action@v6
         with:
           context: .
@@ -666,6 +700,8 @@ jobs:
           build-args: APP_EFFECTIVE_VERSION=${{ env.VERSION }}
 
       - name: Build and push supervisor image (artifact-first)
+        id: push_supervisor
+        if: env.IMAGE_DIGESTS == ''
         uses: docker/build-push-action@v6
         with:
           context: .
@@ -677,6 +713,26 @@ jobs:
             ${{ env.REGISTRY }}/${{ steps.ghcr-owner.outputs.owner }}/${{ env.SUPERVISOR_IMAGE_NAME }}:${{ env.VERSION }}
           build-args: APP_EFFECTIVE_VERSION=${{ env.VERSION }}
 
+      - name: Record published image digests
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          python3 .github/scripts/release_image_digests.py create \
+            --identity expected-release-identity.json \
+            --recorded "${IMAGE_DIGESTS}" \
+            --dockrev-digest "${{ steps.push_app.outputs.digest }}" \
+            --supervisor-digest "${{ steps.push_supervisor.outputs.digest }}" \
+            --output release-images.json
+
+      - name: Upload published image digests
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-images-${{ env.MERGE_SHA }}
+          path: release-images.json
+          if-no-files-found: error
+          retention-days: 30
+
       - name: Publish GitHub Release and assets
         uses: ncipollo/release-action@v1
         with:
@@ -686,7 +742,7 @@ jobs:
           prerelease: ${{ env.CHANNEL != 'stable' }}
           allowUpdates: true
           replacesArtifacts: true
-          artifacts: release-bundle/dist/release/*.tar.gz,release-bundle/dist/release/*.sha256
+          artifacts: release-bundle/dist/release/*.tar.gz,release-bundle/dist/release/*.sha256,release-images.json
           artifactErrorsFailBuild: true
           generateReleaseNotes: true
 
@@ -723,6 +779,13 @@ jobs:
     permissions:
       actions: write
     steps:
+      - name: Download published image digests
+        uses: actions/download-artifact@v4
+        continue-on-error: true
+        with:
+          name: release-images-${{ needs.identity.outputs.merge_sha }}
+          path: release-images
+
       - name: Download identity failure context
         if: needs.identity.result == 'failure'
         uses: actions/download-artifact@v4
@@ -758,6 +821,7 @@ jobs:
           python3 - <<'PY'
           import json
           import os
+          from pathlib import Path
           version = os.environ["RESOLVED_VERSION"]
           merge_sha = os.environ["RESOLVED_MERGE"]
           expected = [
@@ -792,6 +856,10 @@ jobs:
               "run_attempt": int(os.environ["GITHUB_RUN_ATTEMPT"]),
               "actor": os.environ["GITHUB_ACTOR"],
           }
+          images_path = Path("release-images/release-images.json")
+          image_digests = json.loads(images_path.read_text(encoding="utf-8")).get("images", {}) if images_path.exists() else {}
+          if image_digests:
+              payload["image_digests"] = image_digests
           with open("release-failure-context.json", "w", encoding="utf-8") as handle:
               json.dump(payload, handle, sort_keys=True)
               handle.write("\n")
@@ -820,6 +888,7 @@ jobs:
           python3 - <<'PY'
           import json
           import os
+          from pathlib import Path
           version = os.environ["RELEASE_VERSION"]
           expected = [
               suffix
@@ -852,6 +921,10 @@ jobs:
               "run_attempt": int(os.environ["GITHUB_RUN_ATTEMPT"]),
               "actor": os.environ["GITHUB_ACTOR"],
           }
+          images_path = Path("release-images/release-images.json")
+          image_digests = json.loads(images_path.read_text(encoding="utf-8")).get("images", {}) if images_path.exists() else {}
+          if image_digests:
+              payload["image_digests"] = image_digests
           with open("release-failure-context.json", "w", encoding="utf-8") as handle:
               json.dump(payload, handle, sort_keys=True)
               handle.write("\n")

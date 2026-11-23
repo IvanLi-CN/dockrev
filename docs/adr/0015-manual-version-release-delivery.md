@@ -63,7 +63,8 @@ the Dockrev project snapshot records the repository-specific implementation.
 - The root `VERSION` file must exist and be valid before release preparation.
 - Version intent, target, baseline, identity, and recovery all have a
   deterministic repository contract.
-- Release Preparation-created PR workflows require approval by a user with
-  write access because the PR is opened with `GITHUB_TOKEN`.
+- Release Preparation opens its identity PR with `GITHUB_TOKEN`, so the
+  repository must allow GitHub Actions to create pull requests (ADR 0018); a
+  write-access user must also approve the resulting workflow runs.
 - Existing label-driven policy, label-gate checks, and historical backfill
   exceptions no longer define current release behavior.

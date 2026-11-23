@@ -7,7 +7,9 @@
       "protected_branches": ["main"],
       "require_pull_request": true,
       "disallow_direct_pushes": true,
-      "require_merge_queue": false
+      "require_merge_queue": false,
+      "strict_required_status_checks": true,
+      "require_extra_approval_for_unattributed_changes": true
     },
     "review_policy": {
       "mode": "conditional-required",
@@ -18,10 +20,19 @@
       "enforcement": {"mode": "required-check", "check_name": "Review Policy Gate"}
     }
   },
-  "required_checks": ["Review Policy Gate", "Manual Version Release Completion"],
+  "required_checks": [
+    "Review Policy Gate",
+    "Manual Version Release Completion",
+    "Quality Gates Contract"
+  ],
+  "pending_required_checks": ["Quality Gates Contract"],
   "required_check_migration": {
     "source_required_checks": ["Review Policy Gate", "Label Gate", "Release completion"],
-    "target_required_checks": ["Review Policy Gate", "Manual Version Release Completion"],
+    "target_required_checks": [
+      "Review Policy Gate",
+      "Manual Version Release Completion",
+      "Quality Gates Contract"
+    ],
     "target_workflow": {
       "branch": "main",
       "path": ".github/workflows/release-completion-pr.yml",
@@ -32,7 +43,7 @@
         "name: Manual Version Release Completion"
       ]
     },
-    "cutover_condition": "trusted target workflow is present on main; its required check must succeed for each PR before merge"
+    "cutover_condition": "trusted target workflow is present on main; its required check must succeed for each PR before merge; pending_required_checks stay declared until the live ruleset requires them"
   },
   "informational_checks": [
     "Detect changes", "Lint & Checks", "Worktree bootstrap smoke", "Backend Tests",
@@ -41,6 +52,7 @@
   ],
   "waivers": [],
   "expected_pr_workflows": [
+    {"workflow": "Quality Gates Contract", "jobs": ["Quality Gates Contract"]},
     {"workflow": "Review Policy", "jobs": ["Review Policy Gate"]},
     {"workflow": "Release completion", "jobs": ["Manual Version Release Completion"]},
     {"workflow": "CI (PR)", "jobs": ["Detect changes", "Lint & Checks", "Worktree bootstrap smoke", "Backend Tests", "Deploy Smoke", "Frontend lint + build", "Frontend Storybook build", "Frontend Storybook test", "Release build check (PR)"]}
