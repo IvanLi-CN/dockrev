@@ -9,6 +9,19 @@ fn web_push_subscription_key(endpoint: &str) -> String {
     format!("webPush:{endpoint}")
 }
 
+/// Web Push needs a VAPID key pair before it can deliver anything. A channel that
+/// is toggled on while unconfigured must not be attempted: the failure keeps the
+/// outbox row unprocessed and retries forever.
+pub(crate) fn web_push_channel_configured(settings: &NotificationSettings) -> bool {
+    let configured = |value: &Option<String>| {
+        value
+            .as_deref()
+            .is_some_and(|value| !value.trim().is_empty())
+    };
+    configured(&settings.webpush_vapid_private_key)
+        && configured(&settings.webpush_vapid_public_key)
+}
+
 fn require_web_push_success(report: WebPushDeliveryReport) -> anyhow::Result<()> {
     match report.error {
         Some(error) => Err(anyhow::anyhow!(error)),
@@ -133,7 +146,7 @@ pub(crate) async fn send_new_versions_with_badge(
     }
 
     if settings.webpush_enabled
-        && crate::notify::web_push_channel_configured(&settings)
+        && web_push_channel_configured(&settings)
         && !skip_channels.contains("webPush")
     {
         let r = async {
@@ -248,7 +261,7 @@ pub(crate) async fn send_ghcr_webhook_anomaly_with_badge(
     }
 
     if settings.webpush_enabled
-        && crate::notify::web_push_channel_configured(&settings)
+        && web_push_channel_configured(&settings)
         && !skip_channels.contains("webPush")
     {
         let r = async {
