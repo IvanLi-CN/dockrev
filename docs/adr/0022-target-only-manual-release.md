@@ -52,3 +52,7 @@ ref, publication lock, completion check, or release abort operation.
 - `VERSION` is no longer a release input; `/api/version` continues to use `APP_EFFECTIVE_VERSION`
   and `CARGO_PKG_VERSION`.
 - The baseline is the published release history, not a working-tree file.
+- Existing final releases predate `CI (main)`, so the baseline only requires a
+  signature and `main` reachability; a baseline with failing `CI (main)` runs is
+  rejected. The release source itself always requires a successful `CI (main)`
+  run, so the numeric baseline never substitutes for source proof.

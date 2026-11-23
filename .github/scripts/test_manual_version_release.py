@@ -236,6 +236,16 @@ with patch.object(release_intent, "api_json", lambda *args: {"workflow_runs": [{
         "https://api.github.test", "token", "IvanLi-CN/dockrev", "c" * 40, "ci-main.yml",
         error=release_intent.IntentError,
     )
+with patch.object(release_intent, "api_json", lambda *args: {"workflow_runs": []}):
+    release_intent.baseline_ci_ok(
+        "https://api.github.test", "token", "IvanLi-CN/dockrev", "c" * 40, "ci-main.yml",
+    )
+with patch.object(release_intent, "api_json", lambda *args: {"workflow_runs": [{"conclusion": "failure"}]}):
+    expect_error(
+        release_intent.baseline_ci_ok,
+        "https://api.github.test", "token", "IvanLi-CN/dockrev", "c" * 40, "ci-main.yml",
+        error=release_intent.IntentError,
+    )
 
 with patch.object(release_baseline, "latest_qualified_final_release_version", return_value="0.81.0"), \
      patch.object(release_baseline, "tagged_commit_sha", return_value="c" * 40), \

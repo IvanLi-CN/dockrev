@@ -68,6 +68,26 @@ def ci_success(api_root: str, token: str, repository: str, commit_sha: str, work
         raise IntentError(f"{workflow_path} has no successful completed run for {commit_sha}")
 
 
+def baseline_ci_ok(
+    api_root: str, token: str, repository: str, commit_sha: str, workflow_path: str,
+) -> None:
+    """Legacy final releases predate the main CI workflow and only supply the baseline."""
+    owner, name = repository_parts(repository)
+    quoted = urllib.parse.quote(commit_sha, safe="")
+    payload = api_json(
+        api_root, token,
+        f"/repos/{owner}/{name}/actions/workflows/{urllib.parse.quote(workflow_path, safe='')}"
+        f"/runs?head_sha={quoted}&status=completed&per_page=100",
+    )
+    runs = (payload or {}).get("workflow_runs")
+    if not isinstance(runs, list):
+        raise IntentError(f"GitHub did not return runs for {workflow_path}")
+    completed = [run for run in runs if isinstance(run, dict)]
+    if not completed or any(run.get("conclusion") == "success" for run in completed):
+        return
+    raise IntentError(f"baseline {commit_sha} has failing {workflow_path} runs")
+
+
 def resolve_intent(
     api_root: str, token: str, repository: str, source_sha: str, ref: str, target: str,
     workflow_path: str,
@@ -88,7 +108,7 @@ def resolve_intent(
     release_policy.validate_sha(main_sha, "main SHA")
     comparison = api_json(
         api_root, token,
-        f"/repos/{owner}/{name}/compare/{urllib.parse.quote(source_sha, safe='')}...{main_sha}",
+        f"/repos/{owner}/{name}/compare/{urllib.parse.quote(source_sha, safe='')}...{main_sha}?per_page=1",
     )
     if not isinstance(comparison, dict) or comparison.get("status") not in {"ahead", "identical"}:
         raise IntentError(f"dispatch source {source_sha} is not reachable from main")
@@ -104,7 +124,7 @@ def resolve_baseline(api_root: str, token: str, repository: str, workflow_path: 
     source_sha = release_baseline.tagged_commit_sha(api, repository, f"v{version}")
     if source_sha is None:
         raise IntentError(f"baseline v{version} has no resolvable commit")
-    ci_success(api_root, token, repository, source_sha, workflow_path)
+    baseline_ci_ok(api_root, token, repository, source_sha, workflow_path)
     return {"version": version, "tag": f"v{version}", "source_sha": source_sha}
 
 
@@ -117,7 +137,7 @@ def resolve_range(
     comparison = api_json(
         api_root, token,
         f"/repos/{owner}/{name}/compare/{urllib.parse.quote(baseline_sha, safe='')}"
-        f"...{urllib.parse.quote(source_sha, safe='')}",
+        f"...{urllib.parse.quote(source_sha, safe='')}?per_page=100",
     )
     if not isinstance(comparison, dict):
         raise IntentError("release range comparison is unavailable")

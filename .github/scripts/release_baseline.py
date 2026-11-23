@@ -147,7 +147,7 @@ def is_main_reachable(fetch: Fetch, repository: str, commit_sha: str) -> bool:
     owner, name = repository_parts(repository)
     comparison = _optional_fetch(
         fetch,
-        f"/repos/{owner}/{name}/compare/{urllib.parse.quote(f'{commit_sha}...main', safe='')}",
+        f"/repos/{owner}/{name}/compare/{urllib.parse.quote(f'{commit_sha}...main', safe='')}?per_page=1",
     )
     if comparison is None:
         return False

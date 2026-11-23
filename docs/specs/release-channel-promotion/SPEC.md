@@ -63,12 +63,14 @@ advance stable `latest`.
 
 ### REQ-MVRD-004: Preflight and source binding
 
-Preflight MUST fail closed unless the dispatch ref is `refs/heads/main`, the
+Release MUST fail closed unless the dispatch ref is `refs/heads/main`, the
 source commit has a verified signature, the source is reachable from `main`, and
 `CI (main)` has a successful completed run for the source. The baseline release
-MUST satisfy the same signature, reachability and CI checks, and its published
-assets MUST remain verifiable. The range from the baseline source to the release
-source MUST be non-empty and fully comparable.
+MUST be signed, `main`-reachable and final, and its published assets MUST remain
+verifiable. A baseline that predates `CI (main)` MAY be accepted because it only
+supplies the numeric baseline; a baseline with failing `CI (main)` runs MUST fail
+closed. The range from the baseline source to the release source MUST be
+non-empty and fully comparable.
 
 `Release` MUST NOT create or merge a pull request, write to `main`, or create a
 reservation, publication lock, or completion ref.
