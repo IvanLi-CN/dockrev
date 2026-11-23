@@ -223,9 +223,35 @@ def resolve_range(
     return {"baseline_sha": baseline_sha, "source_sha": source_sha, "commits": len(seen)}
 
 
-def resolve_version(baseline_version: str, target: str, tags_path: Path | None) -> dict[str, Any]:
-    tags = tags_path.read_text(encoding="utf-8").split() if tags_path else []
-    decision = release_policy.compute_target(baseline_version, target, tags)
+def parse_tag_lines(path: Path) -> tuple[list[str], dict[str, str]]:
+    """Read `<tag> <object> [<peeled>]` lines; a bare tag name has no known SHA."""
+    names: list[str] = []
+    shas: dict[str, str] = {}
+    for line in path.read_text(encoding="utf-8").splitlines():
+        parts = line.split()
+        if not parts:
+            continue
+        name = parts[0]
+        names.append(name)
+        if len(parts) >= 2:
+            commit_sha = parts[2] if len(parts) >= 3 else parts[1]
+            if len(commit_sha) == 40:
+                shas[name] = commit_sha
+    return names, shas
+
+
+def resolve_version(
+    baseline_version: str, target: str, tags_path: Path | None, source_sha: str = "",
+) -> dict[str, Any]:
+    if tags_path is None:
+        names: list[str] = []
+        shas: dict[str, str] = {}
+    else:
+        names, shas = parse_tag_lines(tags_path)
+    if source_sha:
+        release_policy.validate_sha(source_sha, "source SHA")
+        names = release_policy.reservation_tags(names, source_sha, shas)
+    decision = release_policy.compute_target(baseline_version, target, names)
     return {**decision, "release_tag": f"v{decision['version']}"}
 
 
@@ -252,6 +278,7 @@ def main() -> int:
     resolve.add_argument("--baseline-version", required=True)
     resolve.add_argument("--target", required=True)
     resolve.add_argument("--tags", type=Path, default=None)
+    resolve.add_argument("--source-sha", default="")
 
     args = parser.parse_args()
     if not args.token:
@@ -270,7 +297,7 @@ def main() -> int:
                 args.api_root, args.token, args.repository, args.baseline_sha, args.source_sha,
             )
         else:
-            result = resolve_version(args.baseline_version, args.target, args.tags)
+            result = resolve_version(args.baseline_version, args.target, args.tags, args.source_sha)
     except (IntentError, release_policy.PolicyError, OSError) as error:
         print(str(error), file=sys.stderr)
         return 2

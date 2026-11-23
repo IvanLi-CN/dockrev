@@ -128,6 +128,7 @@ def next_core(version: str, intent: str) -> tuple[int, int, int]:
 
 
 def _prerelease_state(tags: Iterable[str]) -> dict[tuple[int, int, int], dict[str, int]]:
+    """Map each prerelease core to its highest existing sequence per channel."""
     state: dict[tuple[int, int, int], dict[str, int]] = {}
     for tag in tags:
         version = tag[1:] if tag.startswith("v") else tag
@@ -140,6 +141,15 @@ def _prerelease_state(tags: Iterable[str]) -> dict[tuple[int, int, int], dict[st
         channels = state.setdefault((major, minor, patch), {})
         channels[channel] = max(channels.get(channel, 0), sequence)
     return state
+
+
+def reservation_tags(tags: Iterable[str], target_sha: str, tag_sha: dict[str, str]) -> list[str]:
+    """Drop tags reserved for this dispatch, so the pre-created tag is not a prior lineage."""
+    reserved = {
+        tag for tag in tags
+        if tag in tag_sha and tag_sha[tag] == target_sha
+    }
+    return [tag for tag in tags if tag not in reserved]
 
 
 def _next_prerelease_version(
