@@ -190,22 +190,37 @@ def resolve_range(
     release_policy.validate_sha(baseline_sha, "baseline SHA")
     release_policy.validate_sha(source_sha, "source SHA")
     owner, name = repository_parts(repository)
-    comparison = api_retry(
-        api_root, token,
-        f"/repos/{owner}/{name}/compare/{urllib.parse.quote(baseline_sha, safe='')}"
-        f"...{urllib.parse.quote(source_sha, safe='')}?per_page=100",
-    )
-    if not isinstance(comparison, dict):
-        raise IntentError("release range comparison is unavailable")
-    if comparison.get("status") != "ahead":
-        raise IntentError("release source must be a non-empty descendant of the trusted baseline")
-    commits = comparison.get("commits")
-    if not isinstance(commits, list) or not commits:
+    base = f"/repos/{owner}/{name}/compare/{urllib.parse.quote(baseline_sha, safe='')}"
+    source = urllib.parse.quote(source_sha, safe="")
+    seen: dict[str, None] = {}
+    page = 1
+    while True:
+        comparison = api_retry(api_root, token, f"{base}...{source}?per_page=100&page={page}")
+        if not isinstance(comparison, dict):
+            raise IntentError("release range comparison is unavailable")
+        if comparison.get("status") != "ahead":
+            raise IntentError("release source must be a non-empty descendant of the trusted baseline")
+        commits = comparison.get("commits")
+        if not isinstance(commits, list):
+            raise IntentError("release range comparison is invalid")
+        for commit in commits:
+            sha = str((commit or {}).get("sha", "")) if isinstance(commit, dict) else ""
+            release_policy.validate_sha(sha, "release range commit")
+            seen[sha] = None
+        total = comparison.get("total_commits")
+        if isinstance(total, int):
+            if len(seen) >= total:
+                break
+            if not commits:
+                raise IntentError("release range comparison returned an empty page before the reported total")
+        elif len(commits) < 100:
+            break
+        page += 1
+        if page > 50:
+            raise IntentError("release range exceeds 5000 commits and cannot be fully verified")
+    if not seen:
         raise IntentError("release range has no commits")
-    total = comparison.get("total_commits")
-    if isinstance(total, int) and total > len(commits):
-        raise IntentError("release range exceeds the compare API page and cannot be fully verified")
-    return {"baseline_sha": baseline_sha, "source_sha": source_sha, "commits": len(commits)}
+    return {"baseline_sha": baseline_sha, "source_sha": source_sha, "commits": len(seen)}
 
 
 def resolve_version(baseline_version: str, target: str, tags_path: Path | None) -> dict[str, Any]:
