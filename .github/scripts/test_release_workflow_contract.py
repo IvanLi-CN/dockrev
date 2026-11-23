@@ -44,6 +44,8 @@ assert "existing" in release and "refusing to overwrite" in release
 assert "release-plan" not in release
 assert "Check existing tag ownership" in release
 assert "the release action creates it" in release
+assert "Require the version tag to exist" in release
+assert "must exist before dispatch" in release
 assert "commit: ${{ env.SOURCE_SHA }}" not in release
 assert "skipIfReleaseExists: false" in release
 assert "Promote stable image aliases" in release

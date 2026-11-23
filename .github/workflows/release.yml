@@ -118,6 +118,22 @@ jobs:
             echo "prerelease=$(jq -r '.channel != "stable"' version.json)"
           } >> "$GITHUB_OUTPUT"
 
+      - name: Require the version tag to exist
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          SOURCE_SHA: ${{ steps.source.outputs.source_sha }}
+          RELEASE_TAG: ${{ steps.version.outputs.release_tag }}
+        run: |
+          set -euo pipefail
+          if existing="$(gh api "repos/${GITHUB_REPOSITORY}/git/ref/tags/${RELEASE_TAG}" --jq '.object.sha' 2>/dev/null)"; then
+            test "${existing}" = "${SOURCE_SHA}" || { echo "tag ${RELEASE_TAG} belongs to ${existing}" >&2; exit 1; }
+          else
+            status=$?
+            [ "${status}" -eq 1 ] || exit "${status}"
+            echo "tag ${RELEASE_TAG} must exist before dispatch; GITHUB_TOKEN cannot create a ref that introduces workflow changes" >&2
+            exit 1
+          fi
+
   build-binaries:
     name: Build ${{ matrix.arch }} release assets
     needs: [preflight]
