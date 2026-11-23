@@ -11,23 +11,15 @@ The PR-time Dockerfile source build and Compose deployment topology smoke (`Depl
 _Avoid_: publication gate, post-release validation
 
 **publication gate**:
-The checks declared in `.github/quality-gates.json` that must report `success` on the merged release identity before `Release` may publish. Checks listed in `pending_required_checks` stay outside the gate until the live ruleset requires them.
-_Avoid_: green CI, Release page exists
+The preflight conditions that must hold before `Release` may publish: dispatch from `main`, a signed source reachable from `main` with a successful `CI (main)` run, a verified final-release baseline with the same proof, and a non-empty comparable release range.
+_Avoid_: green CI, Release page exists, required PR checks
 
 **release identity**:
-The signed, single-parent commit that changes only `VERSION`, together with its immutable version reservation. It binds one owner version decision to one source commit and one merged commit.
-_Avoid_: release branch, version bump
-
-**version reservation**:
-The `release-reservation/v<version>` branch that points at a release identity. It makes the target version unavailable to any other identity until that identity is published or explicitly aborted.
-_Avoid_: version lock file, pending release
-
-**release abort**:
-The explicit operation that abandons an unmerged, unpublished release identity and deletes its preparation branch and version reservation. It never deletes a tag, GitHub Release, or image.
-_Avoid_: version rollback, release cancellation
+The tuple of dispatch source SHA, canonical version, release tag, artifact bundle digest, and published image digests. It is proven by the tag, GitHub Release, bundle manifest, and `release-images.json` rather than by a repository-side version file or claim ref.
+_Avoid_: release branch, version bump, reservation
 
 **image digest record**:
-The `release-images.json` evidence that binds one release identity to the published container image digests. It lets recovery reuse those digests instead of publishing the same version twice.
+The `release-images.json` evidence that binds one release identity to the published container image digests. It lets a retry reuse those digests instead of publishing the same version twice.
 _Avoid_: image tag, build log
 
 ## Backup Retention

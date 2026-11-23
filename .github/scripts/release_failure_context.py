@@ -1,117 +1,21 @@
 #!/usr/bin/env python3
-"""Validate and render the immutable identity carried by release failures."""
+"""Validate and render the release failure context for notifications."""
 
 from __future__ import annotations
 
 import argparse
 import json
-import os
+import sys
 from pathlib import Path
 from typing import Any
 
 import release_policy
 
 
-UNRESOLVED_RECOVERY = (
-    "verify the merged VERSION identity; retry Release with the same merge SHA only after identity is confirmed"
-)
-
-
-def expected_artifacts(version: str) -> list[str]:
-    return [
-        suffix
-        for base in [
-            f"{binary}_{version}_linux_{arch}_{libc}"
-            for arch in ("amd64", "arm64")
-            for libc in ("gnu", "musl")
-            for binary in ("dockrev", "dockrev-supervisor")
-        ]
-        for suffix in (f"{base}.tar.gz", f"{base}.tar.gz.sha256")
-    ]
-
-
-def unavailable_identity_failure_context(
-    *, repository: str, server: str, run_id: str, attempt: str, event: str,
-    ref: str, actor: str,
-) -> dict[str, Any]:
-    return {
-        "merge_commit_sha": "",
-        "run_url": f"{server}/{repository}/actions/runs/{run_id}",
-        "recovery_instruction": UNRESOLVED_RECOVERY,
-        "identity_resolution_failed": True,
-        "identity_failure_kind": "resolver-error",
-        "repository": repository,
-        "workflow": "Release",
-        "event": event,
-        "ref": ref,
-        "run_attempt": int(attempt),
-        "actor": actor,
-    }
-
-
-def resolved_identity_failure_context(
-    identity: dict[str, Any], *, repository: str, server: str, run_id: str,
-    attempt: str, event: str, ref: str, actor: str, artifact_digest: str = "",
-    image_digests: dict[str, str] | None = None,
-) -> dict[str, Any]:
-    release_policy.validate_identity(identity)
-    merge_sha = str(identity["merge_commit_sha"])
-    return {
-        "source_sha": str(identity["source_sha"]),
-        "merge_commit_sha": merge_sha,
-        "identity_sha": str(identity["identity_sha"]),
-        "baseline_version": str(identity["baseline_version"]),
-        "version_input": str(identity["version_input"]),
-        "channel": str(identity["channel"]),
-        "version": str(identity["version"]),
-        "tag": str(identity["release_tag"]),
-        "artifact_names": expected_artifacts(str(identity["version"])),
-        "artifact_digest": artifact_digest,
-        **({"image_digests": release_policy.validate_image_digests(image_digests)} if image_digests else {}),
-        "run_url": f"{server}/{repository}/actions/runs/{run_id}",
-        "recovery_instruction": f"workflow_dispatch merge_sha={merge_sha} recovery_reason=<required>",
-        "repository": repository,
-        "workflow": "Release",
-        "event": event,
-        "ref": ref,
-        "run_attempt": int(attempt),
-        "actor": actor,
-    }
-
-
 def notification_summary(payload: dict[str, Any]) -> str:
-    def format_image_digests(value: Any) -> str:
-        digests = release_policy.validate_image_digests(value)
-        if not digests:
-            return "not published before this failure"
-        return ", ".join(f"{name}={digest}" for name, digest in sorted(digests.items()))
-
-    release_policy.validate_failure_context(
-        payload,
-        expected_repository=os.environ.get("GITHUB_REPOSITORY"),
-        expected_run_id=os.environ.get("EXPECTED_RELEASE_RUN_ID"),
-        expected_server=os.environ.get("GITHUB_SERVER_URL"),
-        expected_attempt=os.environ.get("EXPECTED_RELEASE_ATTEMPT"),
-    )
-    if payload.get("identity_resolution_failed") is True:
-        return "\n".join(
-            [
-                "Dockrev release identity could not be resolved",
-                "status: failure",
-                f"repository: {payload.get('repository', '')}",
-                f"workflow: {payload.get('workflow', 'Release')}",
-                f"event: {payload.get('event', '')}",
-                f"ref: {payload.get('ref', '')}",
-                f"attempt: {payload.get('run_attempt', '')}",
-                f"actor: {payload.get('actor', '')}",
-                f"merge sha: {payload.get('merge_commit_sha') or 'unavailable (identity not verified)'}",
-                f"failure kind: {payload['identity_failure_kind']}",
-                f"run: {payload['run_url']}",
-                f"recovery: {payload['recovery_instruction']}",
-            ]
-        )
+    release_policy.validate_failure_context(payload)
     lines = [
-        f"Dockrev release failed - {payload['tag']}",
+        "Dockrev release failed",
         "status: failure",
         f"repository: {payload.get('repository', '')}",
         f"workflow: {payload.get('workflow', 'Release')}",
@@ -119,27 +23,55 @@ def notification_summary(payload: dict[str, Any]) -> str:
         f"ref: {payload.get('ref', '')}",
         f"attempt: {payload.get('run_attempt', '')}",
         f"actor: {payload.get('actor', '')}",
-        f"version decision: {payload['version_input']}",
-        f"baseline VERSION: {payload['baseline_version']}",
-        f"version: {payload['version']} ({payload['channel']})",
+        f"target: {payload['target']}",
         f"source sha: {payload['source_sha']}",
-        f"identity sha: {payload['identity_sha']}",
-        f"merge sha: {payload['merge_commit_sha']}",
-        f"tag: {payload['tag']}",
-        f"artifact digest: {payload.get('artifact_digest') or 'not created before this failure'}",
-        f"image digests: {format_image_digests(payload.get('image_digests'))}",
-        "assets: " + ", ".join(payload["artifact_names"]),
-        f"run: {payload['run_url']}",
-        f"recovery: {payload['recovery_instruction']}",
     ]
+    if payload.get("version"):
+        lines.extend(
+            [
+                f"baseline VERSION: {payload['baseline_version']}",
+                f"version: {payload['version']} ({payload['channel']})",
+                f"tag: {payload['tag']}",
+                f"artifact digest: {payload.get('artifact_digest') or 'not created before this failure'}",
+                "assets: " + ", ".join(payload["artifact_names"]),
+            ]
+        )
+        digests = release_policy.validate_image_digests(payload.get("image_digests"))
+        if digests:
+            lines.append(
+                "image digests: " + ", ".join(f"{name}={digest}" for name, digest in sorted(digests.items()))
+            )
+    else:
+        lines.append("identity: preflight did not resolve a release version")
+    lines.extend([f"run: {payload['run_url']}", f"recovery: {payload['recovery_instruction']}"])
     return "\n".join(lines)
+
+
+def unresolved_summary(
+    *, repository: str, server: str, run_id: str, attempt: str, event: str, ref: str, actor: str,
+) -> str:
+    return "\n".join(
+        [
+            "Dockrev release failed",
+            "status: failure",
+            f"repository: {repository}",
+            "workflow: Release",
+            f"event: {event}",
+            f"ref: {ref}",
+            f"attempt: {attempt}",
+            f"actor: {actor}",
+            "target: unavailable (failure context was not published)",
+            "source sha: unavailable",
+            f"run: {server}/{repository}/actions/runs/{run_id}",
+            "recovery: inspect the failed run, then re-run Release from main with the same target",
+        ]
+    )
 
 
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--input", type=Path)
     parser.add_argument("--unresolved-run", action="store_true")
-    parser.add_argument("--resolved-identity", type=Path)
     parser.add_argument("--repository")
     parser.add_argument("--server")
     parser.add_argument("--run-id")
@@ -147,73 +79,33 @@ def main() -> int:
     parser.add_argument("--event")
     parser.add_argument("--ref")
     parser.add_argument("--actor")
-    parser.add_argument("--artifact-digest", default="")
-    parser.add_argument("--image-digests", default="")
     parser.add_argument("--output", type=Path)
     args = parser.parse_args()
-    if args.unresolved_run:
-        required = {
-            "repository": args.repository,
-            "server": args.server,
-            "run_id": args.run_id,
-            "attempt": args.attempt,
-            "event": args.event,
-            "ref": args.ref,
-            "actor": args.actor,
-        }
-        missing = [name for name, value in required.items() if value is None]
-        if missing:
-            parser.error(f"unresolved run context missing: {', '.join(missing)}")
-        payload = unavailable_identity_failure_context(
-            repository=args.repository,
-            server=args.server,
-            run_id=args.run_id,
-            attempt=args.attempt,
-            event=args.event,
-            ref=args.ref,
-            actor=args.actor,
-        )
-        print(notification_summary(payload))
-        return 0
-    if args.resolved_identity:
-        required = {
-            "repository": args.repository,
-            "server": args.server,
-            "run_id": args.run_id,
-            "attempt": args.attempt,
-            "event": args.event,
-            "ref": args.ref,
-            "actor": args.actor,
-            "output": args.output,
-        }
-        missing = [name for name, value in required.items() if not value]
-        if missing:
-            parser.error(f"resolved identity context missing: {', '.join(missing)}")
-        identity = json.loads(args.resolved_identity.read_text(encoding="utf-8"))
-        payload = resolved_identity_failure_context(
-            identity,
-            repository=args.repository,
-            server=args.server,
-            run_id=args.run_id,
-            attempt=args.attempt,
-            event=args.event,
-            ref=args.ref,
-            actor=args.actor,
-            artifact_digest=args.artifact_digest,
-            image_digests=json.loads(args.image_digests) if args.image_digests.strip() else None,
-        )
-        args.output.write_text(json.dumps(payload, sort_keys=True) + "\n", encoding="utf-8")
-        return 0
-    if not args.input:
-        parser.error("--input or --resolved-identity is required")
-    payload = json.loads(args.input.read_text(encoding="utf-8"))
-    summary = notification_summary(payload)
-    output = args.output or (Path(os.environ["GITHUB_OUTPUT"]) if os.environ.get("GITHUB_OUTPUT") else None)
-    if output:
-        with output.open("a", encoding="utf-8") as handle:
-            handle.write("summary<<EOF\n")
-            handle.write(summary)
-            handle.write("\nEOF\n")
+    try:
+        if args.unresolved_run:
+            required = {
+                "repository": args.repository,
+                "server": args.server,
+                "run_id": args.run_id,
+                "attempt": args.attempt,
+                "event": args.event,
+                "ref": args.ref,
+                "actor": args.actor,
+            }
+            missing = [name for name, value in required.items() if value is None]
+            if missing:
+                parser.error(f"unresolved run context missing: {', '.join(missing)}")
+            summary = unresolved_summary(**required)
+        elif args.input:
+            payload = json.loads(args.input.read_text(encoding="utf-8"))
+            summary = notification_summary(payload)
+        else:
+            parser.error("--input or --unresolved-run is required")
+    except (OSError, json.JSONDecodeError, release_policy.PolicyError) as error:
+        print(str(error), file=sys.stderr)
+        return 2
+    if args.output:
+        args.output.write_text(summary, encoding="utf-8")
     else:
         print(summary)
     return 0

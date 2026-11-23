@@ -1,23 +1,17 @@
 name: Release
 
 on:
-  push:
-    branches: [main]
   workflow_dispatch:
     inputs:
-      merge_sha:
-        description: Existing merged main SHA with an immutable release identity
-        required: true
-        type: string
-      recovery_reason:
-        description: Required reason for same-SHA recovery
+      target:
+        description: Next-version intent (patch, minor, major, alpha, beta, rc) or an owner-selected SemVer
         required: true
         type: string
 
 permissions:
-  contents: read
-  pull-requests: read
   actions: read
+  contents: write
+  packages: write
 
 env:
   REGISTRY: ghcr.io
@@ -26,316 +20,101 @@ env:
   RUST_TOOLCHAIN: "1.91.0"
 
 concurrency:
-  group: release-${{ inputs.merge_sha || github.sha }}
+  group: release-dockrev
   cancel-in-progress: false
 
 jobs:
-  identity:
-    name: Resolve merged release identity
+  preflight:
+    name: Resolve release candidate
     runs-on: ubuntu-latest
     timeout-minutes: 15
     permissions:
+      actions: read
       contents: read
       pull-requests: read
-      actions: read
-      checks: read
     outputs:
-      release_enabled: ${{ steps.resolve.outputs.release_enabled }}
-      pull_request: ${{ steps.resolve.outputs.pull_request }}
-      source_sha: ${{ steps.resolve.outputs.source_sha }}
-      merge_sha: ${{ steps.resolve.outputs.merge_sha }}
-      version: ${{ steps.resolve.outputs.version }}
-      release_tag: ${{ steps.resolve.outputs.release_tag }}
-      channel: ${{ steps.resolve.outputs.channel }}
-      baseline_version: ${{ steps.resolve.outputs.baseline_version }}
-      version_input: ${{ steps.resolve.outputs.version_input }}
-      identity_sha: ${{ steps.resolve.outputs.identity_sha }}
-      prerelease: ${{ steps.resolve.outputs.prerelease }}
-      identity_json: ${{ steps.resolve.outputs.identity_json }}
-      identity_failure_kind: ${{ steps.resolve.outputs.identity_failure_kind }}
-      artifact_run_id: ${{ steps.resolve.outputs.artifact_run_id }}
-      artifact_id: ${{ steps.resolve.outputs.artifact_id }}
-      artifact_digest: ${{ steps.resolve.outputs.artifact_digest }}
-      image_digests: ${{ steps.resolve.outputs.image_digests }}
+      source_sha: ${{ steps.source.outputs.source_sha }}
+      baseline_version: ${{ steps.baseline.outputs.version }}
+      version_input: ${{ steps.version.outputs.version_input }}
+      version: ${{ steps.version.outputs.version }}
+      channel: ${{ steps.version.outputs.channel }}
+      release_tag: ${{ steps.version.outputs.release_tag }}
+      prerelease: ${{ steps.version.outputs.prerelease }}
     steps:
-      - name: Checkout merged main commit
-        uses: actions/checkout@v4
-        with:
-          ref: ${{ inputs.merge_sha || github.sha }}
-          fetch-depth: 0
-
-      - name: Checkout trusted release helpers
+      - name: Check out the dispatch source
         uses: actions/checkout@v4
         with:
           ref: ${{ github.sha }}
-          path: .workflow-src
-          fetch-depth: 1
+          fetch-depth: 0
 
-      - name: Resolve and validate identity
-        id: resolve
-        continue-on-error: true
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          MERGE_SHA: ${{ inputs.merge_sha || github.sha }}
-          RECOVERY_REASON: ${{ inputs.recovery_reason || '' }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          [[ "${MERGE_SHA}" =~ ^[0-9a-f]{40}$ ]] || { echo "merge_sha must be a 40-character lowercase SHA" >&2; exit 2; }
-          if [[ "${{ github.event_name }}" == "workflow_dispatch" && "${{ github.ref }}" != "refs/heads/main" ]]; then
-            echo "same-SHA recovery is only allowed from refs/heads/main" >&2
-            exit 2
-          fi
-          if [[ "${{ github.event_name }}" == "workflow_dispatch" && -z "${RECOVERY_REASON//[[:space:]]/}" ]]; then
-            echo "recovery_reason is required for same-SHA recovery" >&2
-            exit 2
-          fi
-          git fetch --no-tags origin main
-          git merge-base --is-ancestor "${MERGE_SHA}" origin/main
-          if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
-            if ! python3 .workflow-src/.github/scripts/release_recovery_artifact.py \
-              --repository "${GITHUB_REPOSITORY}" \
-              --merge-sha "${MERGE_SHA}" \
-              --token "${GITHUB_TOKEN}" > recovery-artifact.json; then
-              echo "identity_failure_kind=same-sha-recovery-preflight" >> "$GITHUB_OUTPUT"
-              exit 2
-            fi
-          fi
-          set +e
-          python3 .workflow-src/.github/scripts/release_identity.py \
-              --repository "${GITHUB_REPOSITORY}" \
-              --merge-sha "${MERGE_SHA}" \
-              --token "${GITHUB_TOKEN}" \
-              --run-url "${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}" \
-              > release-intent.json
-          status=$?
-          set -e
-          if [[ "${status}" -ne 0 ]]; then
-            echo "identity_failure_kind=resolver-error" >> "$GITHUB_OUTPUT"
-            exit "${status}"
-          fi
-          python3 - <<'PY' >> "$GITHUB_OUTPUT"
-          import json
-          from pathlib import Path
-          payload = json.loads(Path("release-intent.json").read_text())
-          print(f"release_enabled={'true' if payload.get('release_enabled') else 'false'}")
-          print(f"pull_request={payload.get('pull_request', '')}")
-          print(f"source_sha={payload.get('source_sha', '')}")
-          print(f"merge_sha={payload.get('merge_commit_sha', '')}")
-          print(f"version={payload.get('version', '')}")
-          print(f"release_tag={payload.get('release_tag', '')}")
-          print(f"channel={payload.get('channel', '')}")
-          print(f"baseline_version={payload.get('baseline_version', '')}")
-          print(f"version_input={payload.get('version_input', '')}")
-          print(f"identity_sha={payload.get('identity_sha', '')}")
-          print(f"prerelease={'true' if payload.get('channel') in {'alpha', 'beta', 'rc'} else 'false'}")
-          recovery_path = Path("recovery-artifact.json")
-          recovery = json.loads(recovery_path.read_text()) if recovery_path.exists() else {}
-          print(f"artifact_run_id={recovery.get('artifact_run_id', '')}")
-          print(f"artifact_id={recovery.get('artifact_id', '')}")
-          print(f"artifact_digest={recovery.get('artifact_digest', '')}")
-          recorded_images = recovery.get("image_digests") or {}
-          print(f"image_digests={json.dumps(recorded_images, sort_keys=True) if recorded_images else ''}")
-          print("identity_json<<EOF")
-          print(json.dumps(payload, sort_keys=True))
-          print("EOF")
-          PY
-          if [[ "${{ github.event_name }}" == "workflow_dispatch" ]] && [[ "$(jq -r '.release_enabled' release-intent.json)" != "true" ]]; then
-            echo "identity_failure_kind=no-identity" >> "$GITHUB_OUTPUT"
-            echo "workflow_dispatch requires an existing immutable VERSION identity" >&2
-            exit 2
-          fi
-
-      - name: Capture identity-resolution failure context
-        if: always() && steps.resolve.outcome != 'success'
-        env:
-          MERGE_SHA: ${{ inputs.merge_sha || github.sha }}
-          FAILURE_KIND: ${{ steps.resolve.outputs.identity_failure_kind || 'resolver-error' }}
-        run: |
-          set -euo pipefail
-          python3 - <<'PY'
-          import json
-          import os
-          import re
-          merge_sha = os.environ["MERGE_SHA"]
-          if not re.fullmatch(r"[0-9a-f]{40}", merge_sha):
-              merge_sha = os.environ["GITHUB_SHA"]
-          failure_kind = os.environ["FAILURE_KIND"]
-          recovery_instruction = "verify the merged VERSION identity; retry Release with the same merge SHA only after identity is confirmed"
-          if failure_kind == "same-sha-recovery-preflight":
-              recovery_instruction = "inspect the original Release failure context; restore its exact bundle and digest before retrying if a digest was recorded, or retry the same merge SHA to rebuild only when no bundle digest was created; do not create a new version identity"
-          payload = {
-              "merge_commit_sha": merge_sha,
-              "run_url": f"{os.environ['GITHUB_SERVER_URL']}/{os.environ['GITHUB_REPOSITORY']}/actions/runs/{os.environ['GITHUB_RUN_ID']}",
-              "recovery_instruction": recovery_instruction,
-              "identity_resolution_failed": True,
-              "identity_failure_kind": failure_kind,
-              "repository": os.environ["GITHUB_REPOSITORY"],
-              "workflow": "Release",
-              "event": os.environ["GITHUB_EVENT_NAME"],
-              "ref": os.environ["GITHUB_REF"],
-              "run_attempt": int(os.environ["GITHUB_RUN_ATTEMPT"]),
-              "actor": os.environ["GITHUB_ACTOR"],
-          }
-          with open("identity-failure-context.json", "w", encoding="utf-8") as handle:
-              json.dump(payload, handle, sort_keys=True)
-              handle.write("\n")
-          PY
-
-      - name: Upload identity-resolution failure context
-        if: always() && steps.resolve.outcome != 'success'
-        uses: actions/upload-artifact@v4
-        with:
-          name: release-identity-failure-context-${{ github.run_id }}-${{ github.run_attempt }}
-          path: identity-failure-context.json
-          if-no-files-found: error
-          overwrite: true
-          retention-days: 90
-
-      - name: Fail identity job after recording context
-        if: always() && steps.resolve.outcome != 'success'
-        run: exit 1
-
-      - name: Reserve release tag without rewriting ownership
-        id: reserve_tag
-        if: steps.resolve.outputs.release_enabled == 'true'
+      - name: Validate dispatch source and CI proof
+        id: source
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          RELEASE_TAG: ${{ steps.resolve.outputs.release_tag }}
-          MERGE_SHA: ${{ steps.resolve.outputs.merge_sha }}
+          TARGET: ${{ inputs.target }}
         run: |
           set -euo pipefail
-          version="${RELEASE_TAG#v}"
-          for tag in "${RELEASE_TAG}" "${version}"; do
-            path="repos/${GITHUB_REPOSITORY}/git/ref/tags/${tag}"
-            error_file="/tmp/release-tag-error-${tag}"
-            if existing="$(gh api "${path}" 2>"${error_file}")"; then
-              owner_type="$(python3 -c 'import json,sys; print(json.load(sys.stdin)["object"].get("type", ""))' <<<"${existing}")"
-              owner_sha="$(python3 -c 'import json,sys; print(json.load(sys.stdin)["object"]["sha"])' <<<"${existing}")"
-              for _ in 1 2 3 4 5; do
-                [[ "${owner_type}" == "tag" ]] || break
-                annotated="$(gh api "repos/${GITHUB_REPOSITORY}/git/tags/${owner_sha}")"
-                owner_type="$(python3 -c 'import json,sys; print(json.load(sys.stdin)["object"].get("type", ""))' <<<"${annotated}")"
-                owner_sha="$(python3 -c 'import json,sys; print(json.load(sys.stdin)["object"]["sha"])' <<<"${annotated}")"
-              done
-              [[ "${owner_type}" == "commit" ]] || { echo "tag ${tag} does not resolve to a commit" >&2; exit 1; }
-              test "${owner_sha}" = "${MERGE_SHA}" || { echo "tag ${tag} belongs to ${owner_sha}" >&2; exit 1; }
-            else
-              status=$?
-              if [[ "${status}" -ne 1 ]] || ! grep -Eq 'HTTP 404|Not Found|404' "${error_file}"; then
-                cat "${error_file}" >&2
-                exit "${status}"
-              fi
-              echo "tag ${tag} is available for ${MERGE_SHA}"
-            fi
-          done
-
-      - name: Verify publication gate on the merged identity
-        id: verify_gate
-        if: steps.resolve.outcome == 'success' && steps.resolve.outputs.release_enabled == 'true'
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          set -euo pipefail
-          python3 .workflow-src/.github/scripts/release_eligibility.py \
+          python3 .github/scripts/release_intent.py intent \
             --repository "${GITHUB_REPOSITORY}" \
-            --merge-sha "${{ steps.resolve.outputs.merge_sha }}" \
-            --identity-sha "${{ steps.resolve.outputs.identity_sha }}" \
-            --token "${GITHUB_TOKEN}" \
-            --output release-eligibility.json
-
-      - name: Capture resolved identity step failure context
-        id: capture_resolved
-        if: >-
-          always() && steps.resolve.outcome == 'success' &&
-          steps.resolve.outputs.release_enabled == 'true'
-        run: |
-          set -euo pipefail
-          python3 .workflow-src/.github/scripts/release_failure_context.py \
-            --resolved-identity release-intent.json \
-            --repository "${GITHUB_REPOSITORY}" \
-            --server "${GITHUB_SERVER_URL}" \
-            --run-id "${GITHUB_RUN_ID}" \
-            --attempt "${GITHUB_RUN_ATTEMPT}" \
-            --event "${GITHUB_EVENT_NAME}" \
+            --token "${GH_TOKEN}" \
+            --source-sha "${GITHUB_SHA}" \
             --ref "${GITHUB_REF}" \
-            --actor "${GITHUB_ACTOR}" \
-            --artifact-digest "${{ steps.resolve.outputs.artifact_digest || '' }}" \
-            --output identity-failure-context.json
+            --target "${TARGET}" \
+            --workflow ci-main.yml \
+            --output intent.json
+          echo "source_sha=$(jq -r .source_sha intent.json)" >> "$GITHUB_OUTPUT"
 
-      - name: Ensure resolved identity failure context
-        if: >-
-          always() && steps.resolve.outcome == 'success' &&
-          steps.resolve.outputs.release_enabled == 'true'
+      - name: Inspect the trusted final baseline
+        id: baseline
         env:
-          GITHUB_SERVER_URL: ${{ github.server_url }}
-          GITHUB_REPOSITORY: ${{ github.repository }}
-          GITHUB_RUN_ID: ${{ github.run_id }}
-          GITHUB_RUN_ATTEMPT: ${{ github.run_attempt }}
-          GITHUB_EVENT_NAME: ${{ github.event_name }}
-          GITHUB_REF: ${{ github.ref }}
-          GITHUB_ACTOR: ${{ github.actor }}
-          ARTIFACT_DIGEST: ${{ steps.resolve.outputs.artifact_digest || '' }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
-          if [[ ! -f identity-failure-context.json ]]; then
-            python3 .workflow-src/.github/scripts/release_failure_context.py \
-              --resolved-identity release-intent.json \
-              --repository "${GITHUB_REPOSITORY}" \
-              --server "${GITHUB_SERVER_URL}" \
-              --run-id "${GITHUB_RUN_ID}" \
-              --attempt "${GITHUB_RUN_ATTEMPT}" \
-              --event "${GITHUB_EVENT_NAME}" \
-              --ref "${GITHUB_REF}" \
-              --actor "${GITHUB_ACTOR}" \
-              --artifact-digest "${ARTIFACT_DIGEST}" \
-              --output identity-failure-context.json
-          fi
+          python3 .github/scripts/release_intent.py baseline \
+            --repository "${GITHUB_REPOSITORY}" \
+            --token "${GH_TOKEN}" \
+            --workflow ci-main.yml \
+            --output baseline.json
+          echo "version=$(jq -r .version baseline.json)" >> "$GITHUB_OUTPUT"
+          echo "source_sha=$(jq -r .source_sha baseline.json)" >> "$GITHUB_OUTPUT"
 
-      - name: Upload resolved identity failure context
-        if: >-
-          always() && steps.resolve.outcome == 'success' &&
-          steps.resolve.outputs.release_enabled == 'true' &&
-          (steps.reserve_tag.outcome == 'failure' || steps.verify_gate.outcome == 'failure')
-        uses: actions/upload-artifact@v4
-        with:
-          name: release-identity-failure-context-${{ github.run_id }}-${{ github.run_attempt }}
-          path: identity-failure-context.json
-          if-no-files-found: error
-          overwrite: true
-          retention-days: 90
-      - name: Upload immutable release identity
-        id: upload_identity
-        if: >-
-          always() && steps.resolve.outcome == 'success' &&
-          steps.resolve.outputs.release_enabled == 'true' &&
-          steps.reserve_tag.outcome != 'failure'
-        uses: actions/upload-artifact@v4
-        with:
-          name: release-intent-${{ steps.resolve.outputs.merge_sha }}
-          path: release-intent.json
-          if-no-files-found: error
-          retention-days: 90
+      - name: Verify the fixed release range
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          python3 .github/scripts/release_intent.py range \
+            --repository "${GITHUB_REPOSITORY}" \
+            --token "${GH_TOKEN}" \
+            --baseline-sha "${{ steps.baseline.outputs.source_sha }}" \
+            --source-sha "${{ steps.source.outputs.source_sha }}" \
+            --output range.json
 
-      - name: Upload resolved identity artifact failure context
-        if: >-
-          always() && steps.resolve.outcome == 'success' &&
-          steps.resolve.outputs.release_enabled == 'true' &&
-          (steps.capture_resolved.outcome == 'failure' ||
-          steps.upload_identity.outcome == 'failure')
-        uses: actions/upload-artifact@v4
-        with:
-          name: release-identity-failure-context-${{ github.run_id }}-${{ github.run_attempt }}
-          path: identity-failure-context.json
-          if-no-files-found: error
-          overwrite: true
-          retention-days: 90
+      - name: Resolve the canonical version
+        id: version
+        env:
+          TARGET: ${{ inputs.target }}
+        run: |
+          set -euo pipefail
+          git tag --list 'v[0-9]*' > tags.txt
+          python3 .github/scripts/release_intent.py resolve \
+            --repository "${GITHUB_REPOSITORY}" \
+            --token "unused" \
+            --baseline-version "${{ steps.baseline.outputs.version }}" \
+            --target "${TARGET}" \
+            --tags tags.txt \
+            --output version.json
+          {
+            echo "version_input=$(jq -r .version_input version.json)"
+            echo "version=$(jq -r .version version.json)"
+            echo "channel=$(jq -r .channel version.json)"
+            echo "release_tag=$(jq -r .release_tag version.json)"
+            echo "prerelease=$(jq -r '.channel != "stable"' version.json)"
+          } >> "$GITHUB_OUTPUT"
 
   build-binaries:
     name: Build ${{ matrix.arch }} release assets
-    needs: [identity]
-    if: needs.identity.outputs.release_enabled == 'true' && needs.identity.outputs.artifact_run_id == ''
+    needs: [preflight]
     strategy:
       fail-fast: false
       matrix:
@@ -353,10 +132,10 @@ jobs:
     env:
       CARGO_TARGET_DIR: target/release/${{ matrix.arch }}
     steps:
-      - name: Checkout merge identity
+      - name: Check out the fixed release source
         uses: actions/checkout@v4
         with:
-          ref: ${{ needs.identity.outputs.merge_sha }}
+          ref: ${{ needs.preflight.outputs.source_sha }}
 
       - name: Set up Bun and build embedded web
         uses: oven-sh/setup-bun@v2
@@ -399,37 +178,36 @@ jobs:
       - name: Upload architecture assets
         uses: actions/upload-artifact@v4
         with:
-          name: release-assets-${{ matrix.arch }}-${{ needs.identity.outputs.merge_sha }}
+          name: release-assets-${{ matrix.arch }}-${{ needs.preflight.outputs.source_sha }}
           path: release-assets
           if-no-files-found: error
           retention-days: 14
 
   package-assets:
     name: Package and verify release assets
-    needs: [identity, build-binaries]
-    if: needs.identity.outputs.release_enabled == 'true' && needs.identity.outputs.artifact_run_id == ''
+    needs: [preflight, build-binaries]
     runs-on: ubuntu-latest
     outputs:
       artifact_names: ${{ steps.package.outputs.artifact_names }}
       artifact_digest: ${{ steps.upload_bundle.outputs.artifact-digest }}
     steps:
-      - name: Checkout bundle verifier
+      - name: Check out the fixed release source
         uses: actions/checkout@v4
         with:
-          ref: ${{ needs.identity.outputs.merge_sha }}
+          ref: ${{ needs.preflight.outputs.source_sha }}
           fetch-depth: 1
 
       - name: Download architecture assets
         uses: actions/download-artifact@v4
         with:
-          pattern: release-assets-*-${{ needs.identity.outputs.merge_sha }}
+          pattern: release-assets-*-${{ needs.preflight.outputs.source_sha }}
           path: release-assets
           merge-multiple: true
 
       - name: Package tarballs and checksums
         id: package
         env:
-          VERSION: ${{ needs.identity.outputs.version }}
+          VERSION: ${{ needs.preflight.outputs.version }}
         run: |
           set -euo pipefail
           mkdir -p dist/release
@@ -452,91 +230,106 @@ jobs:
           print(f"artifact_names={json.dumps(sorted(path.name for path in Path('dist/release').iterdir() if path.is_file()))}")
           PY
 
-      - name: Create identity-bound release bundle
+      - name: Create the identity-bound release bundle
         env:
-          IDENTITY_JSON: ${{ needs.identity.outputs.identity_json }}
+          SOURCE_SHA: ${{ needs.preflight.outputs.source_sha }}
+          BASELINE_VERSION: ${{ needs.preflight.outputs.baseline_version }}
+          VERSION_INPUT: ${{ needs.preflight.outputs.version_input }}
+          VERSION: ${{ needs.preflight.outputs.version }}
+          CHANNEL: ${{ needs.preflight.outputs.channel }}
+          RELEASE_TAG: ${{ needs.preflight.outputs.release_tag }}
         run: |
           set -euo pipefail
-          printf '%s' "${IDENTITY_JSON}" > release-intent.json
+          python3 - <<'PY' > release-identity.json
+          import json
+          import os
+          print(json.dumps({
+              "source_sha": os.environ["SOURCE_SHA"],
+              "baseline_version": os.environ["BASELINE_VERSION"],
+              "version_input": os.environ["VERSION_INPUT"],
+              "version": os.environ["VERSION"],
+              "channel": os.environ["CHANNEL"],
+              "release_tag": os.environ["RELEASE_TAG"],
+          }, sort_keys=True))
+          PY
           python3 .github/scripts/release_artifact_bundle.py create \
             --release-assets release-assets \
             --release-files dist/release \
             --output release-bundle \
-            --identity release-intent.json > release-bundle-result.json
+            --identity release-identity.json > release-bundle-result.json
 
-      - name: Upload release assets
+      - name: Upload release bundle
         id: upload_bundle
         uses: actions/upload-artifact@v4
         with:
-          name: release-bundle-${{ needs.identity.outputs.merge_sha }}
+          name: release-bundle-${{ needs.preflight.outputs.source_sha }}
           path: release-bundle
           if-no-files-found: error
-          retention-days: 90
+          retention-days: 30
 
   publish:
     name: Publish GHCR and GitHub Release
-    needs: [identity, package-assets]
-    if: >-
-      always() && needs.identity.outputs.release_enabled == 'true' &&
-      (needs.package-assets.result == 'success' || needs.identity.outputs.artifact_run_id != '')
+    needs: [preflight, package-assets]
     runs-on: ubuntu-latest
     timeout-minutes: 45
     permissions:
+      actions: read
       contents: write
       packages: write
-      actions: read
-    concurrency:
-      group: ${{ needs.identity.outputs.channel == 'stable' && 'release-publish-stable' || format('release-publish-{0}', needs.identity.outputs.merge_sha) }}
-      cancel-in-progress: false
     env:
-      VERSION: ${{ needs.identity.outputs.version }}
-      RELEASE_TAG: ${{ needs.identity.outputs.release_tag }}
-      CHANNEL: ${{ needs.identity.outputs.channel }}
-      MERGE_SHA: ${{ needs.identity.outputs.merge_sha }}
-      ARTIFACT_RUN_ID: ${{ needs.identity.outputs.artifact_run_id || github.run_id }}
-      ARTIFACT_DIGEST: ${{ needs.identity.outputs.artifact_digest || needs.package-assets.outputs.artifact_digest }}
-      IMAGE_DIGESTS: ${{ needs.identity.outputs.image_digests }}
+      VERSION: ${{ needs.preflight.outputs.version }}
+      RELEASE_TAG: ${{ needs.preflight.outputs.release_tag }}
+      CHANNEL: ${{ needs.preflight.outputs.channel }}
+      SOURCE_SHA: ${{ needs.preflight.outputs.source_sha }}
+      BASELINE_VERSION: ${{ needs.preflight.outputs.baseline_version }}
+      VERSION_INPUT: ${{ needs.preflight.outputs.version_input }}
     steps:
-      - name: Checkout merge identity
+      - name: Check out the fixed release source
         uses: actions/checkout@v4
         with:
-          ref: ${{ env.MERGE_SHA }}
+          ref: ${{ env.SOURCE_SHA }}
           fetch-depth: 0
 
-      - name: Checkout trusted release helpers
-        uses: actions/checkout@v4
-        with:
-          ref: ${{ github.sha }}
-          path: .workflow-src
-          fetch-depth: 1
-
-      - name: Verify immutable release artifact digest
+      - name: Verify the uploaded bundle digest
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          EXPECTED_DIGEST: ${{ env.ARTIFACT_DIGEST }}
+          EXPECTED_DIGEST: ${{ needs.package-assets.outputs.artifact_digest }}
         run: |
           set -euo pipefail
           test -n "${EXPECTED_DIGEST}"
-          artifact_name="release-bundle-${MERGE_SHA}"
-          gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${ARTIFACT_RUN_ID}/artifacts?per_page=100" \
-            | python3 .workflow-src/.github/scripts/check_release_artifact_digest.py \
-                --artifact-name "${artifact_name}" \
+          gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}/artifacts?per_page=100" \
+            | python3 .github/scripts/check_release_artifact_digest.py \
+                --artifact-name "release-bundle-${SOURCE_SHA}" \
                 --expected-digest "${EXPECTED_DIGEST}"
 
-      - name: Download identity-bound release bundle
+      - name: Download the release bundle
         uses: actions/download-artifact@v4
         with:
-          name: release-bundle-${{ env.MERGE_SHA }}
-          run-id: ${{ needs.identity.outputs.artifact_run_id || github.run_id }}
-          github-token: ${{ secrets.GITHUB_TOKEN }}
+          name: release-bundle-${{ env.SOURCE_SHA }}
           path: release-bundle
 
-      - name: Verify release bundle identity and file digests
+      - name: Verify the bundle identity and file digests
         env:
-          IDENTITY_JSON: ${{ needs.identity.outputs.identity_json }}
+          SOURCE_SHA: ${{ env.SOURCE_SHA }}
+          BASELINE_VERSION: ${{ env.BASELINE_VERSION }}
+          VERSION_INPUT: ${{ env.VERSION_INPUT }}
+          VERSION: ${{ env.VERSION }}
+          CHANNEL: ${{ env.CHANNEL }}
+          RELEASE_TAG: ${{ env.RELEASE_TAG }}
         run: |
           set -euo pipefail
-          printf '%s' "${IDENTITY_JSON}" > expected-release-identity.json
+          python3 - <<'PY' > expected-release-identity.json
+          import json
+          import os
+          print(json.dumps({
+              "source_sha": os.environ["SOURCE_SHA"],
+              "baseline_version": os.environ["BASELINE_VERSION"],
+              "version_input": os.environ["VERSION_INPUT"],
+              "version": os.environ["VERSION"],
+              "channel": os.environ["CHANNEL"],
+              "release_tag": os.environ["RELEASE_TAG"],
+          }, sort_keys=True))
+          PY
           python3 .github/scripts/release_artifact_bundle.py verify \
             --root release-bundle \
             --identity expected-release-identity.json
@@ -555,109 +348,6 @@ jobs:
             done
           done
 
-      - name: Acquire immutable publication lock
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          EXPECTED_IDENTITY_JSON: ${{ needs.identity.outputs.identity_json }}
-        run: |
-          set -euo pipefail
-          expected_identity_sha="$(jq -r '.identity_sha // empty' <<<"${EXPECTED_IDENTITY_JSON}")"
-          [[ "${expected_identity_sha}" =~ ^[0-9a-f]{40}$ ]] || { echo "resolved identity is missing identity_sha" >&2; exit 2; }
-          identity_ref_name="release-reservation/v${VERSION}"
-          live_identity_sha="$(gh api "repos/${GITHUB_REPOSITORY}/git/ref/heads/${identity_ref_name}" --jq '.object.sha')"
-          test "${live_identity_sha}" = "${expected_identity_sha}"
-
-          acquire_publication_lock() {
-            local lock_version="$1"
-            local lock_ref_name="release-publication-lock/v${lock_version}"
-            local lock_path="repos/${GITHUB_REPOSITORY}/git/ref/heads/${lock_ref_name}"
-            local lock_error="/tmp/release-publication-lock-${lock_version}-error"
-            local lock_create_error="/tmp/release-publication-lock-${lock_version}-create-error"
-            if existing="$(gh api "${lock_path}" 2>"${lock_error}")"; then
-              owner_sha="$(jq -r '.object.sha' <<<"${existing}")"
-              test "${owner_sha}" = "${expected_identity_sha}"
-              return 0
-            else
-              status=$?
-            fi
-            if [[ "${status}" -ne 1 ]] || ! grep -Eq 'HTTP 404|Not Found|404' "${lock_error}"; then
-              cat "${lock_error}" >&2
-              return "${status}"
-            fi
-            if gh api --method POST "repos/${GITHUB_REPOSITORY}/git/refs" \
-              -f "ref=refs/heads/${lock_ref_name}" -f "sha=${expected_identity_sha}" >/dev/null 2>"${lock_create_error}"; then
-              return 0
-            else
-              status=$?
-            fi
-            if [[ "${status}" -ne 1 ]] || ! grep -Eq 'HTTP 422|Reference already exists|already exists' "${lock_create_error}"; then
-              cat "${lock_create_error}" >&2
-              return "${status}"
-            fi
-            owner_sha="$(gh api "${lock_path}" --jq '.object.sha')"
-            test "${owner_sha}" = "${expected_identity_sha}"
-          }
-
-          acquire_publication_lock "${VERSION}"
-
-      - name: Revalidate release identity before publication
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          EXPECTED_IDENTITY_JSON: ${{ needs.identity.outputs.identity_json }}
-        run: |
-          set -euo pipefail
-          printf '%s' "${EXPECTED_IDENTITY_JSON}" > expected-release-intent.json
-          python3 .github/scripts/release_identity.py \
-            --repository "${GITHUB_REPOSITORY}" \
-            --merge-sha "${MERGE_SHA}" \
-            --token "${GITHUB_TOKEN}" \
-            --run-url "${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}" \
-            > fresh-release-intent.json
-          python3 - <<'PY'
-          import json
-          from pathlib import Path
-
-          expected = json.loads(Path("expected-release-intent.json").read_text(encoding="utf-8"))
-          fresh = json.loads(Path("fresh-release-intent.json").read_text(encoding="utf-8"))
-          if expected != fresh:
-              raise SystemExit("release identity changed before publication")
-          PY
-
-      - name: Create immutable tag
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          set -euo pipefail
-          canonical_exists=false
-          version="${RELEASE_TAG#v}"
-          for tag in "${RELEASE_TAG}" "${version}"; do
-            path="repos/${GITHUB_REPOSITORY}/git/ref/tags/${tag}"
-            error_file="/tmp/release-tag-error-${tag}"
-            if existing="$(gh api "${path}" 2>"${error_file}")"; then
-              owner_type="$(python3 -c 'import json,sys; print(json.load(sys.stdin)["object"].get("type", ""))' <<<"${existing}")"
-              owner_sha="$(python3 -c 'import json,sys; print(json.load(sys.stdin)["object"]["sha"])' <<<"${existing}")"
-              for _ in 1 2 3 4 5; do
-                [[ "${owner_type}" == "tag" ]] || break
-                annotated="$(gh api "repos/${GITHUB_REPOSITORY}/git/tags/${owner_sha}")"
-                owner_type="$(python3 -c 'import json,sys; print(json.load(sys.stdin)["object"].get("type", ""))' <<<"${annotated}")"
-                owner_sha="$(python3 -c 'import json,sys; print(json.load(sys.stdin)["object"]["sha"])' <<<"${annotated}")"
-              done
-              [[ "${owner_type}" == "commit" ]] || { echo "tag ${tag} does not resolve to a commit" >&2; exit 1; }
-              test "${owner_sha}" = "${MERGE_SHA}" || { echo "tag ${tag} belongs to ${owner_sha}" >&2; exit 1; }
-              [[ "${tag}" == "${RELEASE_TAG}" ]] && canonical_exists=true
-            else
-              status=$?
-              if [[ "${status}" -ne 1 ]] || ! grep -Eq 'HTTP 404|Not Found|404' "${error_file}"; then
-                cat "${error_file}" >&2
-                exit "${status}"
-              fi
-              echo "tag ${tag} is available for ${MERGE_SHA}"
-            fi
-          done
-          if [[ "${canonical_exists}" != true ]]; then
-            gh api --method POST "repos/${GITHUB_REPOSITORY}/git/refs" -f "ref=refs/tags/${RELEASE_TAG}" -f "sha=${MERGE_SHA}"
-          fi
-
       - name: Log in to GHCR
         uses: docker/login-action@v3
         with:
@@ -672,22 +362,32 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
-      - name: Verify published images match the recorded identity digests
-        if: env.IMAGE_DIGESTS != ''
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Inspect existing image tags
+        id: existing
         run: |
           set -euo pipefail
-          printf '%s' "${IMAGE_DIGESTS}" > recorded-image-digests.json
-          python3 .github/scripts/release_image_digests.py verify-remote \
-            --repository "${GITHUB_REPOSITORY}" \
-            --version "${VERSION}" \
-            --path recorded-image-digests.json \
-            --token "${GH_TOKEN}"
+          inspect() {
+            docker buildx imagetools inspect "$1" 2>/dev/null | awk '/Digest:/ {print $2; exit}' || true
+          }
+          for pair in "dockrev:${IMAGE_NAME}" "supervisor:${SUPERVISOR_IMAGE_NAME}"; do
+            key="${pair%%:*}"
+            image="${pair#*:}"
+            version_digest="$(inspect "${REGISTRY}/${{ steps.ghcr-owner.outputs.owner }}/${image}:${VERSION}")"
+            source_digest="$(inspect "${REGISTRY}/${{ steps.ghcr-owner.outputs.owner }}/${image}:sha-${SOURCE_SHA}")"
+            if [ -z "${version_digest}" ] && [ -z "${source_digest}" ]; then
+              echo "${key}_found=false" >> "$GITHUB_OUTPUT"
+            elif [ -n "${version_digest}" ] && [ "${version_digest}" = "${source_digest}" ]; then
+              echo "${key}_found=true" >> "$GITHUB_OUTPUT"
+              echo "${key}_digest=${version_digest}" >> "$GITHUB_OUTPUT"
+            else
+              echo "existing ${image} tags are partial or point to different digests; refusing to overwrite them" >&2
+              exit 1
+            fi
+          done
 
-      - name: Build and push Dockrev image (artifact-first)
+      - name: Build and push the dockrev image
         id: push_app
-        if: env.IMAGE_DIGESTS == ''
+        if: steps.existing.outputs.dockrev_found != 'true'
         uses: docker/build-push-action@v6
         with:
           context: .
@@ -697,11 +397,12 @@ jobs:
           push: true
           tags: |
             ${{ env.REGISTRY }}/${{ steps.ghcr-owner.outputs.owner }}/${{ env.IMAGE_NAME }}:${{ env.VERSION }}
+            ${{ env.REGISTRY }}/${{ steps.ghcr-owner.outputs.owner }}/${{ env.IMAGE_NAME }}:sha-${{ env.SOURCE_SHA }}
           build-args: APP_EFFECTIVE_VERSION=${{ env.VERSION }}
 
-      - name: Build and push supervisor image (artifact-first)
+      - name: Build and push the supervisor image
         id: push_supervisor
-        if: env.IMAGE_DIGESTS == ''
+        if: steps.existing.outputs.supervisor_found != 'true'
         uses: docker/build-push-action@v6
         with:
           context: .
@@ -711,33 +412,67 @@ jobs:
           push: true
           tags: |
             ${{ env.REGISTRY }}/${{ steps.ghcr-owner.outputs.owner }}/${{ env.SUPERVISOR_IMAGE_NAME }}:${{ env.VERSION }}
+            ${{ env.REGISTRY }}/${{ steps.ghcr-owner.outputs.owner }}/${{ env.SUPERVISOR_IMAGE_NAME }}:sha-${{ env.SOURCE_SHA }}
           build-args: APP_EFFECTIVE_VERSION=${{ env.VERSION }}
 
-      - name: Record published image digests
+      - name: Verify image digests and aliases
+        run: |
+          set -euo pipefail
+          inspect() {
+            docker buildx imagetools inspect "$1" | awk '/Digest:/ {print $2; exit}'
+          }
+          dockrev_digest="${{ steps.existing.outputs.dockrev_found == 'true' && steps.existing.outputs.dockrev_digest || steps.push_app.outputs.digest }}"
+          supervisor_digest="${{ steps.existing.outputs.supervisor_found == 'true' && steps.existing.outputs.supervisor_digest || steps.push_supervisor.outputs.digest }}"
+          test -n "${dockrev_digest}"
+          test -n "${supervisor_digest}"
+          for tag in "${VERSION}" "sha-${SOURCE_SHA}"; do
+            test "$(inspect "${REGISTRY}/${{ steps.ghcr-owner.outputs.owner }}/${IMAGE_NAME}:${tag}")" = "${dockrev_digest}"
+            test "$(inspect "${REGISTRY}/${{ steps.ghcr-owner.outputs.owner }}/${SUPERVISOR_IMAGE_NAME}:${tag}")" = "${supervisor_digest}"
+          done
+          if [ "${CHANNEL}" = "stable" ]; then
+            docker buildx imagetools create \
+              --tag "${REGISTRY}/${{ steps.ghcr-owner.outputs.owner }}/${IMAGE_NAME}:latest" \
+              "${REGISTRY}/${{ steps.ghcr-owner.outputs.owner }}/${IMAGE_NAME}:${VERSION}"
+            docker buildx imagetools create \
+              --tag "${REGISTRY}/${{ steps.ghcr-owner.outputs.owner }}/${SUPERVISOR_IMAGE_NAME}:latest" \
+              "${REGISTRY}/${{ steps.ghcr-owner.outputs.owner }}/${SUPERVISOR_IMAGE_NAME}:${VERSION}"
+            test "$(inspect "${REGISTRY}/${{ steps.ghcr-owner.outputs.owner }}/${IMAGE_NAME}:latest")" = "${dockrev_digest}"
+            test "$(inspect "${REGISTRY}/${{ steps.ghcr-owner.outputs.owner }}/${SUPERVISOR_IMAGE_NAME}:latest")" = "${supervisor_digest}"
+          fi
+          echo "dockrev_digest=${dockrev_digest}" >> "$GITHUB_OUTPUT"
+          echo "supervisor_digest=${supervisor_digest}" >> "$GITHUB_OUTPUT"
+        id: verify_images
+
+      - name: Create the immutable tag
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
+          existing="$(gh api "repos/${GITHUB_REPOSITORY}/git/ref/tags/${RELEASE_TAG}" 2>/dev/null || true)"
+          if [ -n "${existing}" ]; then
+            owner_sha="$(python3 -c 'import json,sys; print(json.load(sys.stdin)["object"]["sha"])' <<<"${existing}")"
+            test "${owner_sha}" = "${SOURCE_SHA}" || { echo "tag ${RELEASE_TAG} belongs to ${owner_sha}" >&2; exit 1; }
+          else
+            gh api --method POST "repos/${GITHUB_REPOSITORY}/git/refs" -f "ref=refs/tags/${RELEASE_TAG}" -f "sha=${SOURCE_SHA}"
+          fi
+
+      - name: Record published image digests
+        env:
+          DOCKREV_DIGEST: ${{ steps.verify_images.outputs.dockrev_digest }}
+          SUPERVISOR_DIGEST: ${{ steps.verify_images.outputs.supervisor_digest }}
+        run: |
+          set -euo pipefail
           python3 .github/scripts/release_image_digests.py create \
             --identity expected-release-identity.json \
-            --recorded "${IMAGE_DIGESTS}" \
-            --dockrev-digest "${{ steps.push_app.outputs.digest }}" \
-            --supervisor-digest "${{ steps.push_supervisor.outputs.digest }}" \
+            --dockrev-digest "${DOCKREV_DIGEST}" \
+            --supervisor-digest "${SUPERVISOR_DIGEST}" \
             --output release-images.json
-
-      - name: Upload published image digests
-        uses: actions/upload-artifact@v4
-        with:
-          name: release-images-${{ env.MERGE_SHA }}
-          path: release-images.json
-          if-no-files-found: error
-          retention-days: 30
 
       - name: Publish GitHub Release and assets
         uses: ncipollo/release-action@v1
         with:
           tag: ${{ env.RELEASE_TAG }}
-          commit: ${{ env.MERGE_SHA }}
+          commit: ${{ env.SOURCE_SHA }}
           name: Dockrev ${{ env.VERSION }}
           prerelease: ${{ env.CHANNEL != 'stable' }}
           allowUpdates: true
@@ -746,151 +481,36 @@ jobs:
           artifactErrorsFailBuild: true
           generateReleaseNotes: true
 
-      - name: Point newest stable images at latest
-        if: env.CHANNEL == 'stable'
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          GHCR_OWNER: ${{ steps.ghcr-owner.outputs.owner }}
-        run: |
-          set -euo pipefail
-          highest="$(python3 .github/scripts/release_baseline.py \
-            --repository "${GITHUB_REPOSITORY}" \
-            --token "${GH_TOKEN}")"
-          if [[ "${highest}" != "${VERSION}" ]]; then
-            echo "stable ${VERSION} is not the newest published stable release (${highest}); latest remains unchanged"
-            exit 0
-          fi
-          docker buildx imagetools create \
-            --tag "${REGISTRY}/${GHCR_OWNER}/${IMAGE_NAME}:latest" \
-            "${REGISTRY}/${GHCR_OWNER}/${IMAGE_NAME}:${VERSION}"
-          docker buildx imagetools create \
-            --tag "${REGISTRY}/${GHCR_OWNER}/${SUPERVISOR_IMAGE_NAME}:latest" \
-            "${REGISTRY}/${GHCR_OWNER}/${SUPERVISOR_IMAGE_NAME}:${VERSION}"
-
-
   failure-context:
     name: Record release failure context
-    needs: [identity, build-binaries, package-assets, publish]
+    needs: [preflight, build-binaries, package-assets, publish]
     if: >-
       always() &&
-      (needs.identity.result == 'failure' || needs.build-binaries.result == 'failure' ||
+      (needs.preflight.result == 'failure' || needs.build-binaries.result == 'failure' ||
       needs.package-assets.result == 'failure' || needs.publish.result == 'failure')
     runs-on: ubuntu-latest
     permissions:
       actions: write
     steps:
-      - name: Download published image digests
-        uses: actions/download-artifact@v4
-        continue-on-error: true
-        with:
-          name: release-images-${{ needs.identity.outputs.merge_sha }}
-          path: release-images
-
-      - name: Download identity failure context
-        if: needs.identity.result == 'failure'
-        uses: actions/download-artifact@v4
-        continue-on-error: true
-        with:
-          pattern: release-identity-failure-context-${{ github.run_id }}-${{ github.run_attempt }}
-          path: identity-failure-context
-          merge-multiple: true
-
-      - name: Promote identity failure context
-        if: needs.identity.result == 'failure'
-        env:
-          MERGE_SHA: ${{ inputs.merge_sha || github.sha }}
-          FAILURE_KIND: ${{ needs.identity.outputs.identity_failure_kind || 'resolver-error' }}
-          RESOLVED_IDENTITY_AVAILABLE: ${{ needs.identity.outputs.release_enabled == 'true' }}
-          RESOLVED_SOURCE: ${{ needs.identity.outputs.source_sha }}
-          RESOLVED_MERGE: ${{ needs.identity.outputs.merge_sha }}
-          RESOLVED_CHANNEL: ${{ needs.identity.outputs.channel }}
-          RESOLVED_VERSION_INPUT: ${{ needs.identity.outputs.version_input }}
-          RESOLVED_BASELINE_VERSION: ${{ needs.identity.outputs.baseline_version }}
-          RESOLVED_IDENTITY_SHA: ${{ needs.identity.outputs.identity_sha }}
-          RESOLVED_ARTIFACT_DIGEST: ${{ needs.identity.outputs.artifact_digest || needs.package-assets.outputs.artifact_digest }}
-          RESOLVED_VERSION: ${{ needs.identity.outputs.version }}
-          RESOLVED_TAG: ${{ needs.identity.outputs.release_tag }}
-        run: |
-          set -euo pipefail
-          if [[ -f identity-failure-context/identity-failure-context.json ]]; then
-            cp identity-failure-context/identity-failure-context.json release-failure-context.json
-            exit 0
-          fi
-          if [[ "${RESOLVED_IDENTITY_AVAILABLE}" == "true" ]]; then
-            export RESOLVED_SOURCE RESOLVED_MERGE RESOLVED_CHANNEL RESOLVED_VERSION_INPUT RESOLVED_BASELINE_VERSION RESOLVED_IDENTITY_SHA RESOLVED_ARTIFACT_DIGEST RESOLVED_VERSION RESOLVED_TAG
-          python3 - <<'PY'
-          import json
-          import os
-          from pathlib import Path
-          version = os.environ["RESOLVED_VERSION"]
-          merge_sha = os.environ["RESOLVED_MERGE"]
-          expected = [
-              suffix
-              for base in [
-                  f"{binary}_{version}_linux_{arch}_{libc}"
-                  for arch in ("amd64", "arm64")
-                  for libc in ("gnu", "musl")
-                  for binary in ("dockrev", "dockrev-supervisor")
-              ]
-              for suffix in (f"{base}.tar.gz", f"{base}.tar.gz.sha256")
-          ]
-          payload = {
-              "source_sha": os.environ["RESOLVED_SOURCE"],
-              "merge_commit_sha": merge_sha,
-              "channel": os.environ["RESOLVED_CHANNEL"],
-              "version_input": os.environ["RESOLVED_VERSION_INPUT"],
-              "baseline_version": os.environ["RESOLVED_BASELINE_VERSION"],
-              "identity_sha": os.environ["RESOLVED_IDENTITY_SHA"],
-              "artifact_digest": os.environ.get("RESOLVED_ARTIFACT_DIGEST", ""),
-              "version": version,
-              "tag": os.environ["RESOLVED_TAG"],
-              "artifact_names": expected,
-              "run_url": f"{os.environ['GITHUB_SERVER_URL']}/{os.environ['GITHUB_REPOSITORY']}/actions/runs/{os.environ['GITHUB_RUN_ID']}",
-              "recovery_instruction": f"workflow_dispatch merge_sha={merge_sha} recovery_reason=<required>",
-              "identity_resolution_failed": False,
-              "identity_failure_kind": "identity-step-failure",
-              "repository": os.environ["GITHUB_REPOSITORY"],
-              "workflow": "Release",
-              "event": os.environ["GITHUB_EVENT_NAME"],
-              "ref": os.environ["GITHUB_REF"],
-              "run_attempt": int(os.environ["GITHUB_RUN_ATTEMPT"]),
-              "actor": os.environ["GITHUB_ACTOR"],
-          }
-          images_path = Path("release-images/release-images.json")
-          image_digests = json.loads(images_path.read_text(encoding="utf-8")).get("images", {}) if images_path.exists() else {}
-          if image_digests:
-              payload["image_digests"] = image_digests
-          with open("release-failure-context.json", "w", encoding="utf-8") as handle:
-              json.dump(payload, handle, sort_keys=True)
-              handle.write("\n")
-          PY
-            exit 0
-          fi
-          echo "Identity failure context artifact is unavailable; refusing to fabricate release identity" >&2
-          exit 1
-
       - name: Write structured failure context
-        if: needs.identity.result != 'failure'
         env:
-          RELEASE_CHANNEL: ${{ needs.identity.outputs.channel }}
-          RELEASE_VERSION_INPUT: ${{ needs.identity.outputs.version_input }}
-          RELEASE_BASELINE_VERSION: ${{ needs.identity.outputs.baseline_version }}
-          RELEASE_IDENTITY_SHA: ${{ needs.identity.outputs.identity_sha }}
-          RELEASE_ARTIFACT_DIGEST: ${{ needs.identity.outputs.artifact_digest || needs.package-assets.outputs.artifact_digest }}
-          RELEASE_VERSION: ${{ needs.identity.outputs.version }}
-          RELEASE_TAG: ${{ needs.identity.outputs.release_tag }}
-          RELEASE_MERGE_SHA: ${{ needs.identity.outputs.merge_sha }}
-          RELEASE_SOURCE_SHA: ${{ needs.identity.outputs.source_sha }}
-          RELEASE_ARTIFACT_NAMES: ${{ needs.package-assets.outputs.artifact_names }}
-          RELEASE_RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          TARGET: ${{ inputs.target }}
+          SOURCE_SHA: ${{ github.sha }}
+          RESOLVED_VERSION: ${{ needs.preflight.outputs.version }}
+          RESOLVED_CHANNEL: ${{ needs.preflight.outputs.channel }}
+          RESOLVED_TAG: ${{ needs.preflight.outputs.release_tag }}
+          RESOLVED_VERSION_INPUT: ${{ needs.preflight.outputs.version_input }}
+          RESOLVED_BASELINE: ${{ needs.preflight.outputs.baseline_version }}
+          RESOLVED_SOURCE: ${{ needs.preflight.outputs.source_sha }}
+          ARTIFACT_DIGEST: ${{ needs.package-assets.outputs.artifact_digest }}
         run: |
           set -euo pipefail
           python3 - <<'PY'
           import json
           import os
-          from pathlib import Path
-          version = os.environ["RELEASE_VERSION"]
-          expected = [
+
+          version = os.environ.get("RESOLVED_VERSION", "")
+          expected_assets = [
               suffix
               for base in [
                   f"{binary}_{version}_linux_{arch}_{libc}"
@@ -899,21 +519,11 @@ jobs:
                   for binary in ("dockrev", "dockrev-supervisor")
               ]
               for suffix in (f"{base}.tar.gz", f"{base}.tar.gz.sha256")
-          ]
-          artifacts = json.loads(os.environ["RELEASE_ARTIFACT_NAMES"] or "null") or expected
+          ] if version else []
           payload = {
-              "source_sha": os.environ["RELEASE_SOURCE_SHA"],
-              "merge_commit_sha": os.environ["RELEASE_MERGE_SHA"],
-              "channel": os.environ["RELEASE_CHANNEL"],
-              "version_input": os.environ["RELEASE_VERSION_INPUT"],
-              "baseline_version": os.environ["RELEASE_BASELINE_VERSION"],
-              "identity_sha": os.environ["RELEASE_IDENTITY_SHA"],
-              "artifact_digest": os.environ.get("RELEASE_ARTIFACT_DIGEST", ""),
-              "version": version,
-              "tag": os.environ["RELEASE_TAG"],
-              "artifact_names": artifacts,
-              "run_url": os.environ["RELEASE_RUN_URL"],
-              "recovery_instruction": "workflow_dispatch merge_sha=" + os.environ["RELEASE_MERGE_SHA"] + " recovery_reason=<required>",
+              "target": os.environ.get("TARGET", ""),
+              "source_sha": os.environ.get("RESOLVED_SOURCE") or os.environ["SOURCE_SHA"],
+              "run_url": f"{os.environ['GITHUB_SERVER_URL']}/{os.environ['GITHUB_REPOSITORY']}/actions/runs/{os.environ['GITHUB_RUN_ID']}",
               "repository": os.environ["GITHUB_REPOSITORY"],
               "workflow": "Release",
               "event": os.environ["GITHUB_EVENT_NAME"],
@@ -921,10 +531,22 @@ jobs:
               "run_attempt": int(os.environ["GITHUB_RUN_ATTEMPT"]),
               "actor": os.environ["GITHUB_ACTOR"],
           }
-          images_path = Path("release-images/release-images.json")
-          image_digests = json.loads(images_path.read_text(encoding="utf-8")).get("images", {}) if images_path.exists() else {}
-          if image_digests:
-              payload["image_digests"] = image_digests
+          if version:
+              payload.update({
+                  "baseline_version": os.environ.get("RESOLVED_BASELINE", ""),
+                  "version_input": os.environ.get("RESOLVED_VERSION_INPUT", ""),
+                  "version": version,
+                  "channel": os.environ.get("RESOLVED_CHANNEL", ""),
+                  "tag": os.environ.get("RESOLVED_TAG", ""),
+                  "artifact_names": expected_assets,
+                  "artifact_digest": os.environ.get("ARTIFACT_DIGEST", ""),
+                  "recovery_instruction": "re-run Release from main with target=" + os.environ.get("RESOLVED_VERSION_INPUT", ""),
+              })
+          else:
+              payload.update({
+                  "identity_failure_kind": "preflight",
+                  "recovery_instruction": "fix the preflight failure, then re-run Release from main with the same target",
+              })
           with open("release-failure-context.json", "w", encoding="utf-8") as handle:
               json.dump(payload, handle, sort_keys=True)
               handle.write("\n")

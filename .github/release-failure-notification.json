@@ -8,10 +8,9 @@
   "required_identity": "github-actions-id-token",
   "expected_success_workflows": [
     "CI (PR)",
+    "CI (main)",
     "Docs Pages",
     "Quality Gates Contract",
-    "Release completion",
-    "Release Preparation",
     "Release",
     "Review Policy"
   ],
@@ -21,8 +20,7 @@
   },
   "excluded_workflows": [
     "Notify failed release",
-    "Notify failed workflow",
-    "Release abort"
+    "Notify failed workflow"
   ],
   "when_unselected": "block-rollout",
   "missing_selected_configuration": "fail",

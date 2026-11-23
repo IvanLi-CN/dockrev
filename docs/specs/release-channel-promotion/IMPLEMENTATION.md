@@ -5,27 +5,25 @@
 - Implementation: complete in the checked-in policy, workflows, helpers,
   deterministic fixtures, and maintainer documentation.
 - Lifecycle: active.
-- Main allocation baseline: root `VERSION`; currently `0.81.0`.
+- Main allocation baseline: highest verified final GitHub Release.
 - Generic Style Playbook topic: unchanged. Only the Dockrev project snapshot
   and its catalog indexes are in scope for Style Playbook synchronization.
 
 ## Implementation Coverage
 
 - `REQ-MVRD-001` and `REQ-MVRD-002`: `.github/manual-version-release.json`,
-  `.github/scripts/release_policy.py`, and
-  `.github/scripts/release_preparation.py` define the single `version` input,
-  calculate targets from `main:VERSION`, and reject missing or invalid bases.
-- `REQ-MVRD-003`: policy calculation and release workflow channel selection
-  enforce alpha/beta/RC progression and prevent prereleases from advancing
-  stable `latest`.
-- `REQ-MVRD-004`: preparation writes a signed `VERSION`-only identity,
-  reserves the version directly to that identity, reuses a matching existing
-  identity, and opens the protected main PR. The completion workflow validates
-  the frozen baseline and identity before merge.
-- `REQ-MVRD-005`: Release resolves merged identity, verifies the immutable
-  reservation and artifact bundle, publishes the channel-specific GitHub and
-  GHCR surfaces, records identity-aware failure context, and supports
-  same-identity recovery.
+  `.github/scripts/release_policy.py`, and `.github/scripts/release_intent.py`
+  define the single `target` input and calculate the version from the trusted
+  final Release and existing prerelease tags.
+- `REQ-MVRD-003`: policy calculation enforces prerelease lineage progression
+  and prevents prereleases from advancing stable `latest`.
+- `REQ-MVRD-004`: `Release` preflight checks ref, signature, main
+  reachability, `CI (main)` and the baseline; no pull request or claim ref is
+  created.
+- `REQ-MVRD-005`: `Release` builds one identity-bound bundle, reuses or builds
+  images under the version and source tags, publishes the channel-specific
+  GitHub and GHCR surfaces, records `release-images.json`, and writes
+  identity-aware failure context.
 - `.github/release-failure-notification.json` and the generic failure
   sidecar no longer classify the removed label gate as an expected-success
   workflow.

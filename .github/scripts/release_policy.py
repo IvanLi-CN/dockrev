@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Manual version allocation and immutable release identity contracts."""
+"""Manual version allocation from a trusted final release baseline."""
 
 from __future__ import annotations
 
@@ -9,8 +9,7 @@ import re
 import sys
 import urllib.parse
 from pathlib import Path
-from typing import Any
-
+from typing import Any, Iterable
 
 ROOT = Path(__file__).resolve().parents[2]
 POLICY_PATH = ROOT / ".github/manual-version-release.json"
@@ -18,21 +17,12 @@ VERSION_RE = re.compile(
     r"^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(?:-(alpha|beta|rc)\.(0|[1-9][0-9]*))?$"
 )
 SHA_RE = re.compile(r"^[0-9a-f]{40}$")
-UNRESOLVED_RECOVERY_INSTRUCTION = (
-    "verify the merged VERSION identity; retry Release with the same merge SHA only after identity is confirmed"
-)
-SAME_SHA_RECOVERY_PRECHECK_INSTRUCTION = (
-    "inspect the original Release failure context; restore its exact bundle and digest before retrying if a digest was recorded, "
-    "or retry the same merge SHA to rebuild only when no bundle digest was created; do not create a new version identity"
-)
-TRAILER_KEYS = {
-    "Source-SHA",
-    "Product-Version",
-    "Release-Baseline-Version",
-    "Release-Intent",
-}
 IMAGE_DIGEST_NAMES = {"dockrev", "dockrev-supervisor"}
 IMAGE_DIGEST_RE = re.compile(r"^sha256:[0-9a-f]{64}$")
+PREFLIGHT_RECOVERY_INSTRUCTION = (
+    "fix the preflight failure, then re-run Release from main with the same target"
+)
+CHANNEL_RANK = {"alpha": 0, "beta": 1, "rc": 2}
 
 
 class PolicyError(ValueError):
@@ -45,8 +35,9 @@ def load_policy(path: Path = POLICY_PATH) -> dict[str, Any]:
     except (OSError, json.JSONDecodeError) as error:
         raise PolicyError(f"manual version release policy is unavailable: {error}") from error
     expected = {
-        "schema_version": 1,
-        "baseline": {"ref": "main", "file": "VERSION"},
+        "schema_version": 2,
+        "baseline": {"source": "github-final-release", "base_branch": "main"},
+        "source_ci_workflow": "CI (main)",
         "intents": ["major", "minor", "patch", "alpha", "beta", "rc"],
         "exact_version": {
             "stable": "X.Y.Z",
@@ -62,22 +53,17 @@ def load_policy(path: Path = POLICY_PATH) -> dict[str, Any]:
             "beta:beta,rc",
             "rc:rc,stable",
         ],
-        "identity": {
-            "changed_files": ["VERSION"],
-            "signed": True,
-            "immutable_version_reservation": True,
-            "preparation_branch_prefix": "release-preparation/v",
-            "reservation_branch_prefix": "release-reservation/v",
-        },
         "publication": {
             "stable": {
                 "github_release": True,
                 "ghcr_version": True,
+                "ghcr_source_sha": True,
                 "ghcr_latest": True,
             },
             "prerelease": {
                 "github_prerelease": True,
                 "ghcr_version": True,
+                "ghcr_source_sha": True,
                 "ghcr_latest": False,
             },
         },
@@ -99,14 +85,6 @@ def parse_version(version: str) -> tuple[int, int, int, str | None, int | None]:
         suffix,
         int(match.group(5)) if match.group(5) is not None else None,
     )
-
-
-def parse_version_file(contents: str) -> str:
-    version = contents[:-1] if contents.endswith("\n") else contents
-    if not version or "\n" in version or "\r" in version:
-        raise PolicyError("VERSION file must contain exactly one SemVer line")
-    parse_version(version)
-    return version
 
 
 def channel_for_version(version: str) -> str:
@@ -149,177 +127,147 @@ def next_core(version: str, intent: str) -> tuple[int, int, int]:
     raise PolicyError(f"unsupported numeric version intent: {intent}")
 
 
-def _pre_release_target(baseline: str, channel: str) -> str:
-    major, minor, patch, current_channel, sequence = parse_version(baseline)
-    if current_channel is None and channel in {"alpha", "beta", "rc"}:
-        core = (major, minor, patch + 1)
-        number = 1
-    elif current_channel == "alpha" and channel == "alpha":
-        core = (major, minor, patch)
-        number = int(sequence or 0) + 1
-    elif current_channel == "alpha" and channel == "beta":
-        core = (major, minor, patch)
-        number = 1
-    elif current_channel == "beta" and channel == "beta":
-        core = (major, minor, patch)
-        number = int(sequence or 0) + 1
-    elif current_channel == "beta" and channel == "rc":
-        core = (major, minor, patch)
-        number = 1
-    elif current_channel == "rc" and channel == "rc":
-        core = (major, minor, patch)
-        number = int(sequence or 0) + 1
+def _prerelease_state(tags: Iterable[str]) -> dict[tuple[int, int, int], dict[str, int]]:
+    state: dict[tuple[int, int, int], dict[str, int]] = {}
+    for tag in tags:
+        version = tag[1:] if tag.startswith("v") else tag
+        try:
+            major, minor, patch, channel, sequence = parse_version(version)
+        except PolicyError:
+            continue
+        if channel is None or sequence is None:
+            continue
+        channels = state.setdefault((major, minor, patch), {})
+        channels[channel] = max(channels.get(channel, 0), sequence)
+    return state
+
+
+def _next_prerelease_version(
+    baseline: str, channel: str, tags: Iterable[str],
+) -> str:
+    major, minor, patch, _current, _sequence = parse_version(baseline)
+    next_patch_core = (major, minor, patch + 1)
+    state = _prerelease_state(tags)
+    higher_cores = [core for core in state if core > next_patch_core]
+    if higher_cores:
+        core = max(higher_cores)
     else:
-        raise PolicyError(f"cannot start or move to {channel} from {current_channel}")
-    return f"{core[0]}.{core[1]}.{core[2]}-{channel}.{number}"
+        core = next_patch_core
+    channels = state.get(core, {})
+    if not channels:
+        return f"{core[0]}.{core[1]}.{core[2]}-{channel}.1"
+    highest_channel = max(channels, key=lambda name: CHANNEL_RANK[name])
+    highest_rank = CHANNEL_RANK[highest_channel]
+    target_rank = CHANNEL_RANK[channel]
+    if target_rank < highest_rank:
+        raise PolicyError(
+            f"cannot move from {highest_channel} back to {channel} on {core[0]}.{core[1]}.{core[2]}"
+        )
+    if target_rank == highest_rank:
+        sequence = channels[highest_channel] + 1
+    elif target_rank == highest_rank + 1:
+        sequence = 1
+    else:
+        raise PolicyError(
+            f"cannot skip from {highest_channel} to {channel} on {core[0]}.{core[1]}.{core[2]}"
+        )
+    return f"{core[0]}.{core[1]}.{core[2]}-{channel}.{sequence}"
 
 
-def compute_target(baseline: str, version_input: str) -> dict[str, str]:
-    parse_version(baseline)
+def compute_target(
+    baseline: str, version_input: str, prerelease_tags: Iterable[str] = (),
+) -> dict[str, str]:
+    major, minor, patch, baseline_channel, _sequence = parse_version(baseline)
+    if baseline_channel is not None:
+        raise PolicyError("release baseline must be a final version")
     if not version_input or version_input != version_input.strip():
         raise PolicyError("version input must be a non-empty canonical value")
+    tags = list(prerelease_tags)
+    baseline_version = f"{major}.{minor}.{patch}"
     if version_input in {"major", "minor", "patch"}:
-        core = next_core(baseline, version_input)
-        target = f"{core[0]}.{core[1]}.{core[2]}"
+        core = next_core(baseline_version, version_input)
+        version = f"{core[0]}.{core[1]}.{core[2]}"
     elif version_input in {"alpha", "beta", "rc"}:
-        target = _pre_release_target(baseline, version_input)
+        version = _next_prerelease_version(baseline_version, version_input, tags)
     else:
-        target = version_input
-        parse_version(target)
-        target_channel = channel_for_version(target)
-        baseline_channel = channel_for_version(baseline)
-        core = parse_version(target)[:3]
+        version = version_input
+        target_channel = channel_for_version(version)
+        core = parse_version(version)[:3]
         if target_channel == "stable":
             numeric_targets = {
                 f"{parts[0]}.{parts[1]}.{parts[2]}"
-                for intent in ("major", "minor", "patch")
-                for parts in (next_core(baseline, intent),)
+                for intent_name in ("major", "minor", "patch")
+                for parts in (next_core(baseline_version, intent_name),)
             }
-            promoted = baseline_channel == "rc" and core == parse_version(baseline)[:3]
-            if target not in numeric_targets and not promoted:
-                raise PolicyError("exact stable version must match a calculated target or promote the current rc")
+            state = _prerelease_state(tags)
+            promoted = any(
+                candidate_core == core and "rc" in channels
+                for candidate_core, channels in state.items()
+                if candidate_core > (major, minor, patch)
+            )
+            if version not in numeric_targets and not promoted:
+                raise PolicyError(
+                    "exact stable version must match a calculated target or promote an existing rc"
+                )
         else:
-            expected = _pre_release_target(baseline, target_channel)
-            if target != expected:
+            expected = _next_prerelease_version(baseline_version, target_channel, tags)
+            if version != expected:
                 raise PolicyError(f"exact prerelease version must equal the next valid identity: {expected}")
-    validate_channel_version(target, channel_for_version(target))
+    validate_channel_version(version, channel_for_version(version))
     return {
-        "baseline_version": baseline,
+        "baseline_version": baseline_version,
         "version_input": version_input,
-        "version": target,
-        "channel": channel_for_version(target),
+        "version": version,
+        "channel": channel_for_version(version),
     }
 
 
-def parse_trailers(message: str) -> dict[str, str]:
-    trailers: dict[str, str] = {}
-    for line in message.splitlines():
-        if ":" not in line:
-            continue
-        key, value = line.split(":", 1)
-        if key in TRAILER_KEYS:
-            if key in trailers:
-                raise PolicyError(f"duplicate release trailer: {key}")
-            trailers[key] = value.strip()
-    return trailers
-
-
-def validate_identity(payload: dict[str, Any]) -> dict[str, Any]:
-    required = {
-        "merge_commit_sha",
-        "identity_sha",
-        "source_sha",
-        "version",
-        "baseline_version",
-        "version_input",
-        "channel",
-        "release_tag",
-    }
-    missing = sorted(required - set(payload))
-    if missing:
-        raise PolicyError(f"release identity missing: {', '.join(missing)}")
-    for key in ("merge_commit_sha", "identity_sha", "source_sha"):
-        validate_sha(str(payload[key]), key)
-    result = compute_target(str(payload["baseline_version"]), str(payload["version_input"]))
-    if result["version"] != payload["version"] or result["channel"] != payload["channel"]:
-        raise PolicyError("release identity does not match its frozen version decision")
-    if payload["release_tag"] != f"v{payload['version']}":
-        raise PolicyError("release tag must be derived from VERSION only")
-    return payload
-
-
-def validate_failure_context(
-    payload: dict[str, Any], *, expected_repository: str | None = None,
-    expected_run_id: str | None = None, expected_server: str | None = None,
-    expected_attempt: str | None = None,
-) -> dict[str, Any]:
-    if payload.get("identity_resolution_failed") is True:
-        merge_sha = str(payload.get("merge_commit_sha", ""))
-        if merge_sha:
-            validate_sha(merge_sha, "merge_commit_sha")
-        elif payload.get("identity_failure_kind") != "resolver-error":
-            raise PolicyError("unresolved identity failure must not omit its merge SHA")
-        failure_kind = payload.get("identity_failure_kind")
-        if failure_kind not in {"resolver-error", "no-identity", "same-sha-recovery-preflight"}:
-            raise PolicyError("failure context identity failure kind is invalid")
-        expected_instruction = (
-            SAME_SHA_RECOVERY_PRECHECK_INSTRUCTION
-            if failure_kind == "same-sha-recovery-preflight"
-            else UNRESOLVED_RECOVERY_INSTRUCTION
-        )
-        if payload.get("recovery_instruction") != expected_instruction:
-            raise PolicyError("unresolved identity recovery instruction is invalid")
-        run_url = str(payload.get("run_url", ""))
-        parsed = urllib.parse.urlparse(run_url)
-        if parsed.scheme != "https" or not parsed.netloc:
-            raise PolicyError("failure context run_url must be an HTTPS URL")
-        if expected_repository and payload.get("repository") != expected_repository:
-            raise PolicyError("failure context repository does not match the expected repository")
-        if expected_server and (parsed.scheme + "://" + parsed.netloc) != expected_server.rstrip("/"):
-            raise PolicyError("failure context run_url server does not match the expected server")
-        if expected_run_id and not parsed.path.endswith(f"/actions/runs/{expected_run_id}"):
-            raise PolicyError("failure context run_url does not match the expected run")
-        if expected_attempt and str(payload.get("run_attempt")) != expected_attempt:
-            raise PolicyError("failure context run_attempt does not match the expected attempt")
+def validate_failure_context(payload: dict[str, Any]) -> dict[str, Any]:
+    validate_sha(str(payload.get("source_sha", "")), "source_sha")
+    run_url = str(payload.get("run_url", ""))
+    parsed = urllib.parse.urlparse(run_url)
+    if parsed.scheme != "https" or not parsed.netloc:
+        raise PolicyError("failure context run_url must be an HTTPS URL")
+    target = payload.get("target")
+    if not isinstance(target, str) or not target:
+        raise PolicyError("failure context target is required")
+    version = payload.get("version")
+    if version in (None, ""):
+        if payload.get("recovery_instruction") != PREFLIGHT_RECOVERY_INSTRUCTION:
+            raise PolicyError("preflight failure recovery instruction is invalid")
+        if payload.get("identity_failure_kind") != "preflight":
+            raise PolicyError("failure context preflight kind is invalid")
         return payload
-    required = {
-        "source_sha", "merge_commit_sha", "identity_sha", "version", "baseline_version",
-        "version_input", "channel", "tag", "artifact_names", "run_url", "recovery_instruction",
-    }
-    missing = sorted(required - set(payload))
-    if missing:
-        raise PolicyError(f"failure context missing: {', '.join(missing)}")
-    if not isinstance(payload["artifact_names"], list) or not payload["artifact_names"]:
+    if not isinstance(version, str):
+        raise PolicyError("failure context version is invalid")
+    channel = channel_for_version(version)
+    if payload.get("channel") != channel:
+        raise PolicyError("failure context channel does not match its version")
+    baseline = str(payload.get("baseline_version", ""))
+    _major, _minor, _patch, baseline_channel, _sequence = parse_version(baseline)
+    if baseline_channel is not None:
+        raise PolicyError("failure context baseline must be a final version")
+    version_input = str(payload.get("version_input", ""))
+    if version_input in {"major", "minor", "patch"}:
+        if channel != "stable":
+            raise PolicyError("numeric version intent must resolve to a stable version")
+    elif version_input in {"alpha", "beta", "rc"}:
+        if channel != version_input:
+            raise PolicyError("prerelease intent must match the resolved channel")
+    elif version_input != version:
+        raise PolicyError("exact version input must match the resolved version")
+    if payload.get("tag") != f"v{version}":
+        raise PolicyError("failure context tag must be derived from the version")
+    artifact_names = payload.get("artifact_names")
+    if not isinstance(artifact_names, list) or not artifact_names:
         raise PolicyError("failure context artifact_names must be non-empty")
     artifact_digest = str(payload.get("artifact_digest", ""))
     if artifact_digest and not re.fullmatch(r"(?:sha256:)?[0-9a-f]{64}", artifact_digest):
         raise PolicyError("failure context artifact_digest is not a SHA-256 digest")
-    identity = {
-        "merge_commit_sha": payload["merge_commit_sha"],
-        "identity_sha": payload["identity_sha"],
-        "source_sha": payload["source_sha"],
-        "version": payload["version"],
-        "baseline_version": payload["baseline_version"],
-        "version_input": payload["version_input"],
-        "channel": payload["channel"],
-        "release_tag": payload["tag"],
-    }
-    validate_identity(identity)
-    run_url = str(payload["run_url"])
-    parsed = urllib.parse.urlparse(run_url)
-    if parsed.scheme != "https" or not parsed.netloc:
-        raise PolicyError("failure context run_url must be an HTTPS URL")
-    if expected_repository and payload.get("repository") != expected_repository:
-        raise PolicyError("failure context repository does not match the expected repository")
-    if expected_server and (parsed.scheme + "://" + parsed.netloc) != expected_server.rstrip("/"):
-        raise PolicyError("failure context run_url server does not match the expected server")
-    if expected_run_id and not parsed.path.endswith(f"/actions/runs/{expected_run_id}"):
-        raise PolicyError("failure context run_url does not match the expected run")
-    if expected_attempt and str(payload.get("run_attempt")) != expected_attempt:
-        raise PolicyError("failure context run_attempt does not match the expected attempt")
-    if payload.get("recovery_instruction") != f"workflow_dispatch merge_sha={payload['merge_commit_sha']} recovery_reason=<required>":
-        raise PolicyError("failure context recovery instruction must retry the immutable merge identity")
     validate_image_digests(payload.get("image_digests"))
+    expected_recovery = f"re-run Release from main with target={payload.get('version_input')}"
+    if payload.get("recovery_instruction") != expected_recovery:
+        raise PolicyError("failure context recovery instruction must reuse the same target")
     return payload
 
 
@@ -334,6 +282,7 @@ def _cli() -> argparse.ArgumentParser:
     target_parser = subparsers.add_parser("compute-target")
     target_parser.add_argument("--baseline", required=True)
     target_parser.add_argument("--version", required=True)
+    target_parser.add_argument("--tags", type=Path, default=None)
     return parser
 
 
@@ -347,8 +296,9 @@ def main() -> int:
             validate_channel_version(args.version, args.channel)
             print("valid")
         else:
-            print(json.dumps(compute_target(args.baseline, args.version), sort_keys=True))
-    except PolicyError as error:
+            tags = args.tags.read_text(encoding="utf-8").split() if args.tags else []
+            print(json.dumps(compute_target(args.baseline, args.version, tags), sort_keys=True))
+    except (PolicyError, OSError) as error:
         print(str(error), file=sys.stderr)
         return 2
     return 0

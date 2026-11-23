@@ -2,8 +2,7 @@
 
 ## Status
 
-Accepted. Supersedes ADRs 0008, 0009, 0010, 0011, and 0012 for release
-decision, allocation, channel progression, identity, and recovery behavior.
+Superseded by ADR 0022. The decision below is historical.
 
 ## Context
 

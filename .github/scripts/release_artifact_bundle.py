@@ -13,8 +13,6 @@ from typing import Any
 
 IDENTITY_FIELDS = (
     "source_sha",
-    "merge_commit_sha",
-    "identity_sha",
     "baseline_version",
     "version_input",
     "version",

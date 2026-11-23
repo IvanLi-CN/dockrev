@@ -2,7 +2,7 @@
 
 ## Status
 
-Accepted. Extends ADR 0015.
+Superseded by ADR 0022; the publication gate is now the preflight contract.
 
 ## Context
 
