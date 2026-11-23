@@ -66,7 +66,7 @@ assert quality["required_checks"] == [
     "Manual Version Release Completion",
     "Quality Gates Contract",
 ]
-assert quality["pending_required_checks"] == ["Quality Gates Contract"]
+assert "pending_required_checks" not in quality
 assert quality["policy"]["branch_protection"]["strict_required_status_checks"] is True
 assert quality["policy"]["branch_protection"]["require_extra_approval_for_unattributed_changes"] is True
 assert quality["required_check_migration"]["source_required_checks"] == [
@@ -89,8 +89,9 @@ quality_gate_checker_spec.loader.exec_module(quality_gate_checker)
 assert quality_gate_checker.required_check_migration_state(
     quality, ["Label Gate", "Release completion", "Review Policy Gate"]
 ) == "source"
+pending_declaration = {**quality, "pending_required_checks": ["Quality Gates Contract"]}
 assert quality_gate_checker.required_check_migration_state(
-    quality, ["Manual Version Release Completion", "Review Policy Gate"]
+    pending_declaration, ["Manual Version Release Completion", "Review Policy Gate"]
 ) == "pending"
 assert quality_gate_checker.required_check_migration_state(
     quality, ["Manual Version Release Completion", "Quality Gates Contract", "Review Policy Gate"]
