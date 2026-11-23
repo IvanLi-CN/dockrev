@@ -20,6 +20,7 @@ for obsolete_path in \
   ".github/scripts/release_identity.py" \
   ".github/scripts/release_abort.py" \
   ".github/scripts/release_recovery_artifact.py" \
+  ".github/scripts/release_baseline.py" \
   "VERSION" \
   ; do
   if test -e "${obsolete_path}"; then

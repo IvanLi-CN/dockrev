@@ -9,7 +9,6 @@ from pathlib import Path
 from unittest.mock import patch
 
 import release_artifact_bundle
-import release_baseline
 import release_failure_context
 import release_image_digests
 import release_intent
@@ -223,7 +222,7 @@ with patch.object(release_intent, "api_json", intent_api):
         "https://api.github.test", "token", "IvanLi-CN/dockrev", "c" * 40,
         "refs/heads/main", "rc", "ci-main.yml",
     )
-assert resolved == {"target": "rc", "source_sha": "c" * 40, "main_sha": "e" * 40}
+assert resolved == {"target": "rc", "source_sha": "c" * 40}
 expect_error(
     release_intent.resolve_intent,
     "https://api.github.test", "token", "IvanLi-CN/dockrev", "c" * 40,
@@ -247,14 +246,30 @@ with patch.object(release_intent, "api_json", lambda *args: {"workflow_runs": [{
         error=release_intent.IntentError,
     )
 
-with patch.object(release_baseline, "latest_qualified_final_release_version", return_value="0.81.0"), \
-     patch.object(release_baseline, "tagged_commit_sha", return_value="c" * 40), \
-     patch.object(release_intent, "api_json", intent_api):
+
+def baseline_api(_api_root, _token, path):
+    if "/releases?per_page=100&page=1" in path:
+        return [
+            {"tag_name": "v0.81.11-rc.1", "draft": False, "prerelease": True,
+             "author": {"login": "github-actions[bot]"}},
+            {"tag_name": "v0.81.10", "draft": False, "prerelease": False,
+             "author": {"login": "github-actions[bot]"}},
+        ]
+    if path.endswith("/git/ref/tags/v0.81.10"):
+        return {"object": {"type": "commit", "sha": "c" * 40}}
+    if "/compare/" in path:
+        return {"status": "ahead"}
+    if "/actions/workflows/ci-main.yml/runs" in path:
+        return {"workflow_runs": []}
+    raise AssertionError(f"unexpected baseline request {path}")
+
+
+with patch.object(release_intent, "api_json", baseline_api):
     baseline = release_intent.resolve_baseline(
         "https://api.github.test", "token", "IvanLi-CN/dockrev", "ci-main.yml",
     )
-assert baseline == {"version": "0.81.0", "tag": "v0.81.0", "source_sha": "c" * 40}
-with patch.object(release_baseline, "latest_qualified_final_release_version", return_value="0.0.0"):
+assert baseline == {"version": "0.81.10", "tag": "v0.81.10", "source_sha": "c" * 40}
+with patch.object(release_intent, "api_json", lambda *args: []):
     expect_error(
         release_intent.resolve_baseline,
         "https://api.github.test", "token", "IvanLi-CN/dockrev", "ci-main.yml",
