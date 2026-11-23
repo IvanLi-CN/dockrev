@@ -14,6 +14,8 @@ import urllib.request
 import zipfile
 from typing import Any
 
+import release_policy
+
 
 class RecoveryArtifactError(ValueError):
     pass
@@ -75,9 +77,9 @@ def canonical_digest(value: str, label: str) -> str:
     return value if value.startswith("sha256:") else f"sha256:{value}"
 
 
-def failure_context_digest_from_zip(
+def failure_context_from_zip(
     content: bytes, *, repository: str, merge_sha: str, run_id: str, attempt: int,
-) -> str:
+) -> dict[str, Any]:
     try:
         with zipfile.ZipFile(io.BytesIO(content)) as archive:
             files = [info for info in archive.infolist() if not info.is_dir()]
@@ -100,13 +102,29 @@ def failure_context_digest_from_zip(
     ):
         raise RecoveryArtifactError("prior release failure context does not match the recovery identity")
     digest = payload["artifact_digest"]
-    return canonical_digest(digest, "failure-context artifact digest") if digest else ""
+    try:
+        image_digests = release_policy.validate_image_digests(payload.get("image_digests"))
+    except release_policy.PolicyError as error:
+        raise RecoveryArtifactError("prior release failure context image digests are invalid") from error
+    return {
+        "artifact_digest": canonical_digest(digest, "failure-context artifact digest") if digest else "",
+        "image_digests": image_digests,
+    }
+
+
+def failure_context_digest_from_zip(
+    content: bytes, *, repository: str, merge_sha: str, run_id: str, attempt: int,
+) -> str:
+    return failure_context_from_zip(
+        content, repository=repository, merge_sha=merge_sha, run_id=run_id, attempt=attempt,
+    )["artifact_digest"]
 
 
 def select_reusable_artifact(
     runs: list[dict[str, Any]], identity_artifacts: list[dict[str, Any]],
     bundle_artifacts: list[dict[str, Any]], merge_sha: str,
     failure_context_digests: dict[str, str] | None = None,
+    failure_context_images: dict[str, dict[str, str]] | None = None,
 ) -> dict[str, Any]:
     candidates = recovery_candidates(runs, identity_artifacts, merge_sha)
     bundle_name = f"release-bundle-{merge_sha}"
@@ -155,6 +173,7 @@ def select_reusable_artifact(
             "artifact_id": artifact_id,
             "artifact_name": bundle_name,
             "artifact_digest": digest,
+            "image_digests": (failure_context_images or {}).get(run_id, {}),
         }
 
     if expired_or_invalid_bundle:
@@ -178,6 +197,7 @@ def select_reusable_artifact(
         "artifact_id": "",
         "artifact_name": bundle_name,
         "artifact_digest": "",
+        "image_digests": (failure_context_images or {}).get(str(candidates[0]["id"]), {}),
     }
 
 
@@ -278,6 +298,7 @@ def resolve_recovery_artifact(
         runs.append(run)
     candidates = recovery_candidates(runs, identity_artifacts, merge_sha)
     contexts: dict[str, str] = {}
+    images: dict[str, dict[str, str]] = {}
     for run in candidates:
         run_id = str(run["id"])
         attempt = run.get("run_attempt")
@@ -305,19 +326,23 @@ def resolve_recovery_artifact(
             token,
             f"/repos/{owner}/{name}/actions/artifacts/{artifact_id}/zip",
         )
-        contexts[run_id] = failure_context_digest_from_zip(
+        context = failure_context_from_zip(
             content,
             repository=repository,
             merge_sha=merge_sha,
             run_id=run_id,
             attempt=attempt,
         )
+        contexts[run_id] = context["artifact_digest"]
+        if context["image_digests"]:
+            images[run_id] = context["image_digests"]
     return select_reusable_artifact(
         runs,
         identity_artifacts,
         bundle_artifacts,
         merge_sha,
         failure_context_digests=contexts,
+        failure_context_images=images,
     )
 
 

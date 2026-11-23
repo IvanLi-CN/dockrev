@@ -25,7 +25,7 @@ on:
 
 concurrency:
   group: review-policy-${{ github.event.pull_request.number || inputs.pull_number || github.run_id }}
-  cancel-in-progress: true
+  queue: max
 
 env:
   REVIEW_POLICY_REQUIRED_APPROVALS: "1"

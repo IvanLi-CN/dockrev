@@ -1,0 +1,44 @@
+name: Quality Gates Contract
+
+on:
+  pull_request_target:
+    branches: [main]
+    types: [opened, synchronize, reopened, ready_for_review]
+
+concurrency:
+  group: quality-gates-contract-${{ github.event.pull_request.number }}
+  queue: max
+
+permissions:
+  contents: read
+
+jobs:
+  contract:
+    name: Quality Gates Contract
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout trusted quality gate checker
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.workflow_sha }}
+          fetch-depth: 1
+
+      - name: Validate live rules against the checked-in declaration
+        env:
+          QUALITY_GATES_LIVE_RULES_MODE: require
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          python3 .github/scripts/check-live-quality-gates.py \
+            --declaration .github/quality-gates.json \
+            --repo "${GITHUB_REPOSITORY}" | tee live-quality-gates.json
+
+      - name: Upload live rules evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: live-quality-gates-${{ github.event.pull_request.number }}-${{ github.run_id }}
+          path: live-quality-gates.json
+          if-no-files-found: warn
+          retention-days: 14

@@ -25,6 +25,17 @@ class StaleBaselineError(PreparationError):
     pass
 
 
+PULL_REQUEST_PERMISSION_HINT = (
+    "GitHub refused to create the release identity pull request with HTTP 403 "
+    "(GitHub Actions is not permitted to create or approve pull requests). "
+    "The repository must allow this before Release Preparation can open its identity pull request: "
+    "Settings > Actions > General > Workflow permissions > "
+    "enable 'Allow GitHub Actions to create and approve pull requests'. "
+    "The identity commit and its release-reservation branch already exist; "
+    "fix the repository setting and re-run Release Preparation with the same version input to reuse them."
+)
+
+
 def api_request(
     api_root: str, token: str, method: str, path: str,
     payload: dict[str, Any] | None = None,
@@ -308,18 +319,24 @@ def find_or_create_pull_request(
     if pulls:
         pull = pulls[0]
     else:
-        pull = api_request(
-            api_root, token, "POST", f"/repos/{owner}/{name}/pulls",
-            {
-                "title": f"chore(release): prepare {version}",
-                "head": branch,
-                "base": "main",
-                "body": (
-                    f"Prepare signed VERSION identity `{version}` from the latest `main:VERSION`.\n\n"
-                    "The Release completion check verifies the frozen baseline, signature, identity, and reservation."
-                ),
-            },
-        )
+        try:
+            pull = api_request(
+                api_root, token, "POST", f"/repos/{owner}/{name}/pulls",
+                {
+                    "title": f"chore(release): prepare {version}",
+                    "head": branch,
+                    "base": "main",
+                    "body": (
+                        f"Prepare signed VERSION identity `{version}` from the latest `main:VERSION`.\n\n"
+                        "The Release completion check verifies the frozen baseline, signature, identity, and reservation."
+                    ),
+                },
+            )
+        except PreparationError as error:
+            detail = str(error)
+            if "403" in detail and "not permitted to create or approve pull requests" in detail:
+                raise PreparationError(PULL_REQUEST_PERMISSION_HINT) from error
+            raise
     if pull.get("state") != "open" or pull.get("base", {}).get("ref") != "main":
         raise PreparationError("release identity PR is not open against main")
     head = pull.get("head") or {}

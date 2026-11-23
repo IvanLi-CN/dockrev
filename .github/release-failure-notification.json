@@ -9,6 +9,7 @@
   "expected_success_workflows": [
     "CI (PR)",
     "Docs Pages",
+    "Quality Gates Contract",
     "Release completion",
     "Release Preparation",
     "Release",
@@ -20,7 +21,8 @@
   },
   "excluded_workflows": [
     "Notify failed release",
-    "Notify failed workflow"
+    "Notify failed workflow",
+    "Release abort"
   ],
   "when_unselected": "block-rollout",
   "missing_selected_configuration": "fail",

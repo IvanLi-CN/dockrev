@@ -5,6 +5,7 @@ on:
     workflows:
       - "CI (PR)"
       - "Docs Pages"
+      - "Quality Gates Contract"
       - "Release completion"
       - "Release Preparation"
       - "Review Policy"

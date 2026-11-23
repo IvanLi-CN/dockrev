@@ -16,9 +16,12 @@ from types import SimpleNamespace
 from unittest.mock import patch
 
 import check_release_artifact_digest
+import release_abort
 import release_artifact_bundle
 import release_completion
+import release_eligibility
 import release_failure_context
+import release_image_digests
 import release_policy
 import release_preparation
 import release_recovery_artifact
@@ -1013,5 +1016,182 @@ with patch.dict(os.environ, {
     preflight_summary = release_failure_context.notification_summary(same_sha_preflight_context)
 assert "failure kind: same-sha-recovery-preflight" in preflight_summary
 assert release_policy.SAME_SHA_RECOVERY_PRECHECK_INSTRUCTION in preflight_summary
+
+identity_images = {"dockrev": "sha256:" + "a" * 64, "dockrev-supervisor": "sha256:" + "b" * 64}
+release_policy.validate_image_digests(identity_images)
+expect_error(
+    release_policy.validate_image_digests,
+    {"dockrev": "sha256:" + "a" * 64},
+    error=release_policy.PolicyError,
+)
+expect_error(
+    release_policy.validate_image_digests,
+    {**identity_images, "dockrev": "a" * 64},
+    error=release_policy.PolicyError,
+)
+
+image_record = release_image_digests.build_payload(valid_identity, identity_images)
+assert image_record["identity"]["merge_commit_sha"] == valid_identity["merge_commit_sha"]
+assert release_image_digests.validate_payload(image_record, valid_identity)["images"] == identity_images
+expect_error(
+    release_image_digests.validate_payload,
+    {**image_record, "identity": {**image_record["identity"], "version": "0.81.2"}},
+    valid_identity,
+    error=release_image_digests.ImageDigestError,
+)
+
+
+def published_packages(_api_root, _token, path):
+    digest = "a" * 64 if "dockrev-supervisor" not in path else "b" * 64
+    return [{"name": "sha256:" + digest, "metadata": {"container": {"tags": ["0.81.0", "latest"]}}}]
+
+
+with patch.object(release_image_digests, "api_json", published_packages):
+    verified = release_image_digests.verify_remote(
+        "https://api.github.test", "token", "IvanLi-CN/dockrev", "0.81.0", identity_images,
+    )
+assert verified["images"] == identity_images
+with patch.object(
+    release_image_digests,
+    "api_json",
+    lambda _api_root, _token, path: [{"name": "sha256:" + "c" * 64, "metadata": {"container": {"tags": ["0.81.0"]}}}],
+):
+    expect_error(
+        release_image_digests.verify_remote,
+        "https://api.github.test", "token", "IvanLi-CN/dockrev", "0.81.0", identity_images,
+        error=release_image_digests.ImageDigestError,
+    )
+
+gate_identity_context = release_failure_context.resolved_identity_failure_context(
+    valid_identity,
+    repository="IvanLi-CN/dockrev",
+    server="https://github.com",
+    run_id="9100",
+    attempt="1",
+    event="push",
+    ref="main",
+    actor="maintainer",
+    image_digests=identity_images,
+)
+with patch.dict(os.environ, {
+    "GITHUB_REPOSITORY": "IvanLi-CN/dockrev",
+    "GITHUB_SERVER_URL": "https://github.com",
+    "EXPECTED_RELEASE_RUN_ID": "9100",
+    "EXPECTED_RELEASE_ATTEMPT": "1",
+}):
+    digest_summary = release_failure_context.notification_summary(gate_identity_context)
+assert "image digests: dockrev=sha256:" + "a" * 64 in digest_summary
+expect_error(
+    release_policy.validate_failure_context,
+    {**gate_identity_context, "image_digests": {"dockrev": "not-a-digest"}},
+    error=release_policy.PolicyError,
+)
+
+gate_runs = [
+    {"name": "Review Policy Gate", "conclusion": "success", "head_sha": "d" * 40, "id": 1},
+    {"name": "Manual Version Release Completion", "conclusion": "success", "head_sha": "d" * 40, "id": 2},
+    {"name": "Quality Gates Contract", "conclusion": "failure", "head_sha": "d" * 40, "id": 3},
+]
+gate_evidence = release_eligibility.verify_publication_gate(
+    {"required_checks": ["Manual Version Release Completion", "Quality Gates Contract", "Review Policy Gate"],
+     "pending_required_checks": ["Quality Gates Contract"]},
+    gate_runs,
+    "d" * 40,
+)
+assert gate_evidence["required_checks"] == ["Manual Version Release Completion", "Review Policy Gate"]
+expect_error(
+    release_eligibility.verify_publication_gate,
+    {"required_checks": ["Review Policy Gate"], "pending_required_checks": []},
+    [run for run in gate_runs if run["name"] != "Review Policy Gate"],
+    "d" * 40,
+    error=release_eligibility.EligibilityError,
+)
+expect_error(
+    release_eligibility.verify_publication_gate,
+    {"required_checks": ["Review Policy Gate"], "pending_required_checks": []},
+    [{**gate_runs[0], "conclusion": "failure"}],
+    "d" * 40,
+    error=release_eligibility.EligibilityError,
+)
+expect_error(
+    release_eligibility.verify_publication_gate,
+    {"required_checks": ["Review Policy Gate"], "pending_required_checks": []},
+    [{**gate_runs[0], "head_sha": "e" * 40}],
+    "d" * 40,
+    error=release_eligibility.EligibilityError,
+)
+
+release_eligibility.merge_identity_binding(
+    {"parents": [{"sha": "c" * 40}, {"sha": "d" * 40}]}, "d" * 40,
+)
+expect_error(
+    release_eligibility.merge_identity_binding,
+    {"parents": [{"sha": "c" * 40}]},
+    "d" * 40,
+    error=release_eligibility.EligibilityError,
+)
+
+reserved_sha = "f" * 40
+abort_calls: list[tuple[str, str]] = []
+
+
+def abort_api(_root, _token, method, path, payload=None):
+    abort_calls.append((method, path))
+    if method == "GET" and path.endswith("/git/ref/heads/release-reservation/v0.81.1"):
+        return {"object": {"sha": reserved_sha}}
+    if method == "GET" and path.endswith("/git/ref/heads/release-preparation/v0.81.1"):
+        return {"object": {"sha": reserved_sha}}
+    if method == "GET" and "/git/ref/tags/" in path:
+        return None
+    if method == "GET" and "/releases/tags/" in path:
+        return None
+    if method == "GET" and path.endswith("/git/ref/heads/release-publication-lock/v0.81.1"):
+        return None
+    if method == "GET" and "/compare/" in path:
+        return {"status": "behind"}
+    if method == "GET" and "/pulls?" in path:
+        return [{"number": 42, "state": "open", "base": {"ref": "main"},
+                 "head": {"sha": reserved_sha, "ref": "release-preparation/v0.81.1"}}]
+    if method == "PATCH":
+        return {"state": "closed", "number": 42}
+    if method == "DELETE":
+        return {}
+    raise AssertionError(f"unexpected abort request {method} {path}")
+
+
+abort_args = SimpleNamespace(
+    repository="IvanLi-CN/dockrev", version="0.81.1", reason="failed preparation",
+    token="token", api_root="https://api.github.test",
+)
+with patch.object(release_abort, "api_request", abort_api):
+    aborted = release_abort.abort(abort_args)
+assert aborted["identity_sha"] == reserved_sha
+assert aborted["closed_pull_request"] == 42
+assert aborted["deleted_refs"] == ["heads/release-preparation/v0.81.1", "heads/release-reservation/v0.81.1"]
+
+
+def abort_api_with(**overrides):
+    def fake(_root, _token, method, path, payload=None):
+        if method == "GET" and path.endswith("/git/ref/heads/release-reservation/v0.81.1"):
+            return {"object": {"sha": reserved_sha}} if overrides.get("reservation", True) else None
+        if method == "GET" and "/git/ref/tags/" in path:
+            return {"object": {"sha": "a" * 40, "type": "commit"}} if overrides.get("tag") else None
+        if method == "GET" and "/releases/tags/" in path:
+            return {"id": 1} if overrides.get("release") else None
+        if method == "GET" and path.endswith("/git/ref/heads/release-publication-lock/v0.81.1"):
+            return {"object": {"sha": reserved_sha}} if overrides.get("lock") else None
+        if method == "GET" and "/compare/" in path:
+            return {"status": overrides.get("compare", "behind")}
+        if method == "GET" and path.endswith("/git/ref/heads/release-preparation/v0.81.1"):
+            return None
+        if method == "GET" and "/pulls?" in path:
+            return []
+        raise AssertionError(f"unexpected abort request {method} {path}")
+    return fake
+
+
+for overrides in ({"reservation": False}, {"tag": True}, {"release": True}, {"lock": True}, {"compare": "ahead"}):
+    with patch.object(release_abort, "api_request", abort_api_with(**overrides)):
+        expect_error(release_abort.abort, abort_args, error=release_abort.AbortError)
 
 print("PASS: manual version release identity, reservation, artifact, and recovery contracts")
