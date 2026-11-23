@@ -7,6 +7,10 @@ on:
         description: Next-version intent (patch, minor, major, alpha, beta, rc) or an owner-selected SemVer
         required: true
         type: string
+      source_sha:
+        description: Optional existing dispatch source SHA to finish an incomplete publication
+        required: false
+        type: string
 
 permissions:
   actions: read
@@ -52,12 +56,14 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TARGET: ${{ inputs.target }}
+          INPUT_SOURCE_SHA: ${{ inputs.source_sha }}
         run: |
           set -euo pipefail
+          source_sha="${INPUT_SOURCE_SHA:-${GITHUB_SHA}}"
           python3 .github/scripts/release_intent.py intent \
             --repository "${GITHUB_REPOSITORY}" \
             --token "${GH_TOKEN}" \
-            --source-sha "${GITHUB_SHA}" \
+            --source-sha "${source_sha}" \
             --ref "${GITHUB_REF}" \
             --target "${TARGET}" \
             --workflow ci-main.yml \
