@@ -16,6 +16,7 @@ permissions:
   actions: read
   contents: write
   packages: write
+  workflows: write
 
 env:
   REGISTRY: ghcr.io
@@ -282,6 +283,7 @@ jobs:
       actions: read
       contents: write
       packages: write
+      workflows: write
     env:
       VERSION: ${{ needs.preflight.outputs.version }}
       RELEASE_TAG: ${{ needs.preflight.outputs.release_tag }}
