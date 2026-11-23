@@ -80,11 +80,11 @@ reused.
 
 ## Recovery and Failure
 
-Retry the same identity with **Re-run jobs** on the failed run, so the dispatch
-source SHA is unchanged, or re-dispatch from the same `main` commit with the
-same `target`. Existing tags, Release and image digests are reused; a tag that
-belongs to another source, a partial image tag pair, or a digest mismatch fails
-closed.
+Retry the same identity with **Re-run jobs** on the failed run, or re-dispatch
+with the same `target` and pass `source_sha` explicitly when `main` has already
+moved past the failed source. Existing tags, Release and image digests are
+reused; a tag that belongs to another source, a partial image tag pair, or a
+digest mismatch fails closed.
 
 If `main` has moved, a new dispatch is a new release intent. It resolves the
 same version from the unchanged baseline and then fails closed on the existing

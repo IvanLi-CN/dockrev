@@ -26,7 +26,10 @@ assert policy["publication"]["prerelease"]["ghcr_source_sha"] is True
 release = read(".github/workflows/release.yml")
 assert "workflow_dispatch:" in release
 inputs = release.split("  workflow_dispatch:", 1)[1].split("\npermissions:", 1)[0]
-assert re.findall(r"^\s{6}([a-z_]+):", inputs, re.MULTILINE) == ["target"]
+assert re.findall(r"^\s{6}([a-z_]+):", inputs, re.MULTILINE) == ["target", "source_sha"]
+target_block = inputs.split("      target:", 1)[1].split("      source_sha:", 1)[0]
+source_block = inputs.split("      source_sha:", 1)[1]
+assert "required: true" in target_block and "required: false" in source_block
 assert "push:" not in release.split("permissions:", 1)[0]
 assert "merge_sha" not in release and "recovery_reason" not in release
 assert "release_intent.py intent" in release
