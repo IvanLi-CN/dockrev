@@ -56,12 +56,13 @@ next valid channel target from the main baseline.
 
 ### REQ-MVRD-003: Prerelease sequence
 
-From a stable baseline, `alpha` and `beta` MUST start on the next patch core at
-sequence `.1`; a stable baseline MAY start beta directly and MUST NOT start RC
+From a stable baseline, `alpha`, `beta`, and `rc` MUST start on the next patch
+core at sequence `.1`; a stable baseline MAY start any prerelease channel
 directly. Within one core, alpha MAY increment or advance to beta, beta MAY
 increment or advance to RC, and RC MAY increment or promote to stable. RC
 promotion MUST retain the same core. Reverse transitions and skipped
-transitions MUST fail. Prereleases MUST never advance stable `latest`.
+transitions within a prerelease lineage MUST fail. Prereleases MUST never
+advance stable `latest`.
 
 ### REQ-MVRD-004: Immutable identity and mainline delivery
 

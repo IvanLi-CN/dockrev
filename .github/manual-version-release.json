@@ -29,6 +29,7 @@
   ],
   "prerelease_sequence_start": 1,
   "prerelease_transitions": [
+    "stable:alpha,beta,rc",
     "alpha:alpha,beta",
     "beta:beta,rc",
     "rc:rc,stable"

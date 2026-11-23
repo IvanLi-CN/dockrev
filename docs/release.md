@@ -48,12 +48,12 @@ Numeric decisions always calculate from the numeric core of the latest main
 must match one of those calculated targets or promote the current RC on its
 same core. The alpha/beta/RC progression applies to prerelease channel inputs.
 
-From a stable baseline, `alpha` and `beta` start at the next patch core with
-sequence `.1`. Alpha can increment or advance to beta. Beta can increment or
-advance to RC. RC can increment or promote to stable on the same core. A stable
-baseline may start beta directly; RC cannot start directly from stable. Exact
-prerelease inputs must match the next valid target, and an exact stable input
-must match a calculated numeric target or the same-core RC promotion.
+From a stable baseline, `alpha`, `beta`, and `rc` start at the next patch core
+with sequence `.1`. Alpha can increment or advance to beta. Beta can increment
+or advance to RC. RC can increment or promote to stable on the same core. A
+stable baseline may start alpha, beta, or rc directly. Exact prerelease inputs
+must match the next valid target, and an exact stable input must match a
+calculated numeric target or the same-core RC promotion.
 
 ## Identity and Publication
 

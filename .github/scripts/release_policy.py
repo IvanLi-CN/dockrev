@@ -57,6 +57,7 @@ def load_policy(path: Path = POLICY_PATH) -> dict[str, Any]:
         "prerelease_channels": ["alpha", "beta", "rc"],
         "prerelease_sequence_start": 1,
         "prerelease_transitions": [
+            "stable:alpha,beta,rc",
             "alpha:alpha,beta",
             "beta:beta,rc",
             "rc:rc,stable",
@@ -150,7 +151,7 @@ def next_core(version: str, intent: str) -> tuple[int, int, int]:
 
 def _pre_release_target(baseline: str, channel: str) -> str:
     major, minor, patch, current_channel, sequence = parse_version(baseline)
-    if current_channel is None and channel in {"alpha", "beta"}:
+    if current_channel is None and channel in {"alpha", "beta", "rc"}:
         core = (major, minor, patch + 1)
         number = 1
     elif current_channel == "alpha" and channel == "alpha":
