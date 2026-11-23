@@ -444,13 +444,12 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
-          if existing="$(gh api "repos/${GITHUB_REPOSITORY}/git/ref/tags/${RELEASE_TAG}" 2>/dev/null)"; then
-            owner_sha="$(python3 -c 'import json,sys; print(json.load(sys.stdin)["object"]["sha"])' <<<"${existing}")"
-            test "${owner_sha}" = "${SOURCE_SHA}" || { echo "tag ${RELEASE_TAG} belongs to ${owner_sha}" >&2; exit 1; }
+          existing="$(git ls-remote --tags origin "refs/tags/${RELEASE_TAG}" | awk '{print $1}')"
+          if [ -n "${existing}" ]; then
+            test "${existing}" = "${SOURCE_SHA}" || { echo "tag ${RELEASE_TAG} belongs to ${existing}" >&2; exit 1; }
           else
-            status=$?
-            [ "${status}" -eq 1 ] || exit "${status}"
-            gh api --method POST "repos/${GITHUB_REPOSITORY}/git/refs" -f "ref=refs/tags/${RELEASE_TAG}" -f "sha=${SOURCE_SHA}"
+            git tag "${RELEASE_TAG}" "${SOURCE_SHA}"
+            git push origin "refs/tags/${RELEASE_TAG}"
           fi
 
       - name: Record published image digests
