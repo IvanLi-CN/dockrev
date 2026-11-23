@@ -49,8 +49,10 @@ for version_input, target, channel in (
     ("patch", "0.81.1", "stable"),
     ("alpha", "0.81.1-alpha.1", "alpha"),
     ("beta", "0.81.1-beta.1", "beta"),
+    ("rc", "0.81.1-rc.1", "rc"),
     ("0.81.1-alpha.1", "0.81.1-alpha.1", "alpha"),
     ("0.81.1-beta.1", "0.81.1-beta.1", "beta"),
+    ("0.81.1-rc.1", "0.81.1-rc.1", "rc"),
 ):
     actual = release_policy.compute_target("0.81.0", version_input)
     assert (actual["version"], actual["channel"]) == (target, channel), actual
@@ -76,7 +78,6 @@ for baseline, version_input, expected in (
     assert release_policy.compute_target(baseline, version_input)["version"] == expected
 
 for baseline, version_input in (
-    ("0.81.0", "rc"),
     ("0.81.1-alpha.1", "rc"),
     ("0.81.1-beta.1", "alpha"),
     ("0.81.1-rc.1", "beta"),

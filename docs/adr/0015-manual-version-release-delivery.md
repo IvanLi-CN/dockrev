@@ -24,13 +24,14 @@ is unsupported.
 The allocator reads the current root `VERSION` on `main` for every new
 decision. A missing, empty, or invalid file fails closed. From baseline
 `X.Y.Z`, numeric intents calculate major `(X+1).0.0`, minor `X.(Y+1).0`, and
-patch `X.Y.(Z+1)`. From a stable baseline, alpha and beta begin at the next
-patch core with sequence `.1`; beta may start directly. Alpha advances to beta,
-beta advances to RC, and RC promotes to stable, with each prerelease transition
-retaining its core. Same-channel decisions increment their sequence. Stable
-exact input must match a numeric calculated target or same-core RC promotion.
-Exact prerelease input must be the next valid target. Direct stable-to-RC,
-skipped transitions, and reverse transitions fail closed.
+patch `X.Y.(Z+1)`. From a stable baseline, alpha, beta, and RC begin at the next
+patch core with sequence `.1`, so any prerelease channel may start directly.
+Alpha advances to beta, beta advances to RC, and RC promotes to stable, with
+each prerelease transition retaining its core. Same-channel decisions increment
+their sequence. Stable exact input must match a numeric calculated target or
+same-core RC promotion. Exact prerelease input must be the next valid target;
+skipped transitions within a prerelease lineage and reverse transitions fail
+closed.
 
 Preparation freezes the main SHA, baseline, decision, and target in a signed,
 single-parent commit that changes only root `VERSION`. An immutable version
