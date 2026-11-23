@@ -21,7 +21,6 @@
     }
   },
   "required_checks": ["Review Policy Gate", "Quality Gates Contract"],
-  "retiring_required_checks": ["Manual Version Release Completion"],
   "informational_checks": [
     "Detect changes", "Lint & Checks", "Worktree bootstrap smoke", "Backend Tests",
     "Frontend lint + build", "Frontend Storybook build", "Frontend Storybook test",

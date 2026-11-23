@@ -51,6 +51,7 @@ for path in (
     ".github/scripts/release_identity.py",
     ".github/scripts/release_abort.py",
     ".github/scripts/release_recovery_artifact.py",
+    "VERSION",
 ):
     assert not (ROOT / path).exists(), path
 
@@ -61,7 +62,8 @@ assert "release-channel-contract-check.sh" in ci_main
 
 quality = json.loads(read(".github/quality-gates.json"))
 assert quality["required_checks"] == ["Review Policy Gate", "Quality Gates Contract"]
-assert quality["retiring_required_checks"] == ["Manual Version Release Completion"]
+assert "retiring_required_checks" not in quality
+assert "pending_required_checks" not in quality
 assert quality["policy"]["branch_protection"]["strict_required_status_checks"] is True
 assert quality["policy"]["branch_protection"]["require_extra_approval_for_unattributed_changes"] is True
 assert "required_check_migration" not in quality
@@ -83,8 +85,9 @@ assert spec and spec.loader
 checker = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(checker)
 assert checker.required_check_state(quality, ["Quality Gates Contract", "Review Policy Gate"]) == "target"
+retiring_declaration = {**quality, "retiring_required_checks": ["Manual Version Release Completion"]}
 assert checker.required_check_state(
-    quality, ["Manual Version Release Completion", "Quality Gates Contract", "Review Policy Gate"]
+    retiring_declaration, ["Manual Version Release Completion", "Quality Gates Contract", "Review Policy Gate"]
 ) == "retiring"
 assert checker.required_check_state(quality, ["Review Policy Gate"]) == "drift"
 assert checker.required_check_state(

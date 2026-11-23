@@ -20,6 +20,7 @@ for obsolete_path in \
   ".github/scripts/release_identity.py" \
   ".github/scripts/release_abort.py" \
   ".github/scripts/release_recovery_artifact.py" \
+  "VERSION" \
   ; do
   if test -e "${obsolete_path}"; then
     echo "obsolete release surface still present: ${obsolete_path}" >&2
