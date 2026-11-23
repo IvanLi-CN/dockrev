@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 from pathlib import Path
 from typing import Any
@@ -106,6 +107,11 @@ def main() -> int:
         return 2
     if args.output:
         args.output.write_text(summary, encoding="utf-8")
+    elif os.environ.get("GITHUB_OUTPUT"):
+        with Path(os.environ["GITHUB_OUTPUT"]).open("a", encoding="utf-8") as handle:
+            handle.write("summary<<EOF\n")
+            handle.write(summary)
+            handle.write("\nEOF\n")
     else:
         print(summary)
     return 0

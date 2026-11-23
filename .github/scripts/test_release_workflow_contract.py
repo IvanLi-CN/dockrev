@@ -39,6 +39,9 @@ assert "release-images.json" in release
 assert "release-bundle-${{ needs.preflight.outputs.source_sha }}" in release
 assert "existing" in release and "refusing to overwrite" in release
 assert "release-plan" not in release
+assert 'if existing="$(gh api' in release
+assert "Promote stable image aliases" in release
+assert release.index("Publish GitHub Release and assets") < release.index("Promote stable image aliases")
 for obsolete in ("release-reservation/v", "release-publication-lock/v", "identity_json", "artifact_run_id"):
     assert obsolete not in release, obsolete
 
