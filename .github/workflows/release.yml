@@ -469,10 +469,10 @@ jobs:
         uses: ncipollo/release-action@v1
         with:
           tag: ${{ env.RELEASE_TAG }}
-          commit: ${{ env.SOURCE_SHA }}
           name: Dockrev ${{ env.VERSION }}
           prerelease: ${{ env.CHANNEL != 'stable' }}
           allowUpdates: true
+          skipIfReleaseExists: false
           replacesArtifacts: true
           artifacts: release-bundle/dist/release/*.tar.gz,release-bundle/dist/release/*.sha256,release-images.json
           artifactErrorsFailBuild: true
