@@ -25,7 +25,6 @@
     "Manual Version Release Completion",
     "Quality Gates Contract"
   ],
-  "pending_required_checks": ["Quality Gates Contract"],
   "required_check_migration": {
     "source_required_checks": ["Review Policy Gate", "Label Gate", "Release completion"],
     "target_required_checks": [

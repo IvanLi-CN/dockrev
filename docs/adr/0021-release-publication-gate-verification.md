@@ -30,5 +30,5 @@ already produced.
   failure context.
 - `CONTEXT.md` now defines the source-build smoke as an informational PR-time
   signal, and publication eligibility as the declared publication gate.
-- The gate stays declared in one place, so adding the pending
-  `Quality Gates Contract` to the live ruleset needs no release change.
+- The gate stays declared in one place: adding `Quality Gates Contract` to the
+  live ruleset needed no release change.

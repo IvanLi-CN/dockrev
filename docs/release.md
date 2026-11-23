@@ -63,10 +63,10 @@ reserves that target with `release-reservation/v<VERSION>`. The
 `release-preparation/v<VERSION>` branch is opened as a PR to `main`. The
 target merge contract in `.github/quality-gates.json` requires
 `Review Policy Gate`, `Manual Version Release Completion`, and
-`Quality Gates Contract`. The third check is listed in
-`pending_required_checks` until it is added to the live ruleset; the live
-checker reports exactly that state as `pending`, not aligned, and rejects any
-other mismatch. It also reads `.github/workflows/release-completion-pr.yml`
+`Quality Gates Contract`, and the live ruleset requires all three. A declared
+check that the ruleset does not require yet must be listed in
+`pending_required_checks`; the live checker reports that state as `pending`, not
+aligned, and rejects any other mismatch. It also reads `.github/workflows/release-completion-pr.yml`
 from `main` and verifies the `pull_request_target` trigger, the
 `github.workflow_sha` checkout, and the target check name.
 `Quality Gates Contract` runs from its trusted workflow source as well, so a
