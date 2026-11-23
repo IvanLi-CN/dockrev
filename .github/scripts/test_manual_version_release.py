@@ -276,10 +276,43 @@ with patch.object(release_intent, "api_json", lambda *args: []):
         error=release_intent.IntentError,
     )
 
-with patch.object(release_intent, "api_json", lambda *args: {"status": "ahead", "commits": [{"sha": "c" * 40}]}):
+with patch.object(
+    release_intent, "api_json",
+    lambda *args: {"status": "ahead", "commits": [{"sha": "c" * 40}], "total_commits": 1},
+):
     assert release_intent.resolve_range(
         "https://api.github.test", "token", "IvanLi-CN/dockrev", "b" * 40, "c" * 40,
     )["commits"] == 1
+
+
+def paged_range_api(_api_root, _token, path):
+    if path.endswith("page=1"):
+        return {
+            "status": "ahead",
+            "commits": [{"sha": f"{index:040x}"} for index in range(100)],
+            "total_commits": 150,
+        }
+    if path.endswith("page=2"):
+        return {
+            "status": "ahead",
+            "commits": [{"sha": f"{index:040x}"} for index in range(100, 150)],
+            "total_commits": 150,
+        }
+    raise AssertionError(f"unexpected range page {path}")
+
+
+with patch.object(release_intent, "api_json", paged_range_api):
+    assert release_intent.resolve_range(
+        "https://api.github.test", "token", "IvanLi-CN/dockrev", "b" * 40, "c" * 40,
+    )["commits"] == 150
+with patch.object(release_intent, "api_json", lambda *args: {
+    "status": "ahead", "commits": [], "total_commits": 150,
+}):
+    expect_error(
+        release_intent.resolve_range,
+        "https://api.github.test", "token", "IvanLi-CN/dockrev", "b" * 40, "c" * 40,
+        error=release_intent.IntentError,
+    )
 with patch.object(release_intent, "api_json", lambda *args: {"status": "behind", "commits": []}):
     expect_error(
         release_intent.resolve_range,
