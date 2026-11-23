@@ -32,12 +32,12 @@ by the workflow.
    the same signature, reachability, CI and publication checks;
 4. verifies a non-empty release range from the baseline source to the source;
 5. resolves the canonical version from the baseline and existing prerelease
-   tags, with no `VERSION` file;
+   tags, with no `VERSION` baseline;
 6. builds one identity-bound bundle, reuses or builds images under the version
    and `sha-<source>` tags, publishes the Release and `release-images.json`, and
    fails closed on foreign or partial objects.
 
-There is no `VERSION` file, preparation workflow, identity commit, reservation
+There is no version-file baseline, preparation workflow, identity commit, reservation
 ref, publication lock, completion check, or release abort operation.
 
 ## Consequences
@@ -49,6 +49,6 @@ ref, publication lock, completion check, or release abort operation.
 - Retrying means re-running the same dispatch or re-dispatching from the same
   `main` commit. If `main` moved, the same target fails closed on the existing
   tag instead of rewriting it.
-- `VERSION` is removed; `/api/version` continues to use `APP_EFFECTIVE_VERSION`
+- `VERSION` is no longer a release input; `/api/version` continues to use `APP_EFFECTIVE_VERSION`
   and `CARGO_PKG_VERSION`.
 - The baseline is the published release history, not a working-tree file.

@@ -207,7 +207,7 @@ See `deploy/README.md` for a minimal Docker Compose deployment.
 - GHCR (Dockrev): `ghcr.io/ivanli-cn/dockrev:<semver>`
 - GHCR (Supervisor): `ghcr.io/ivanli-cn/dockrev-supervisor:<semver>`
 - The complete maintainer contract is in [`docs/release.md`](docs/release.md).
-- `Release` has one required `target` input: `major`, `minor`, `patch`, `alpha`, `beta`, `rc`, or a supported exact SemVer value. The only allocation baseline is the highest verified final GitHub Release; there is no `VERSION` file.
+- `Release` has one required `target` input: `major`, `minor`, `patch`, `alpha`, `beta`, `rc`, or a supported exact SemVer value. The only allocation baseline is the highest verified final GitHub Release; `VERSION` is not a release input.
 - Numeric intents calculate the next major, minor, or patch from that baseline. Prerelease intents resolve the next lineage from existing `vX.Y.Z-<channel>.N` tags; a stable baseline may start any prerelease channel directly. Reverse and skipped transitions inside a lineage fail closed. `dev` and `none` are unsupported.
 - Preflight requires the dispatch source to be `main`, signed, reachable from `main`, and covered by a successful `CI (main)` run. `Release` never creates or merges a pull request and never writes to `main`.
 - `Release` publishes stable GitHub Releases and versioned GHCR images, advancing `latest` only for a stable release. Alpha, beta, and RC publish GitHub prereleases and versioned GHCR images without changing `latest`.

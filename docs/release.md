@@ -18,7 +18,7 @@ Values have no `v` prefix or build metadata. Leading zeroes are rejected. The
 
 The only allocation baseline is the highest published, non-draft,
 non-prerelease GitHub Release whose tag points at a `main`-reachable commit and
-whose source has a successful `CI (main)` run. There is no `VERSION` file and no
+whose source has a successful `CI (main)` run. `VERSION` is not a release input and there is no
 second baseline source.
 
 For a baseline `X.Y.Z`, numeric decisions calculate:

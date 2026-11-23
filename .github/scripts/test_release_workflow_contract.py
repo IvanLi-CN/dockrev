@@ -51,7 +51,6 @@ for path in (
     ".github/scripts/release_identity.py",
     ".github/scripts/release_abort.py",
     ".github/scripts/release_recovery_artifact.py",
-    "VERSION",
 ):
     assert not (ROOT / path).exists(), path
 

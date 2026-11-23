@@ -44,8 +44,8 @@ Other values MUST fail closed.
 Every dispatch MUST resolve the canonical version from the trusted baseline and
 `target` only. For baseline `X.Y.Z`, `major` MUST calculate `(X+1).0.0`,
 `minor` MUST calculate `X.(Y+1).0`, and `patch` MUST calculate `X.Y.(Z+1)`.
-There MUST be no `VERSION` file, working-tree counter, merge order, PR count, or
-label input.
+`VERSION` MUST NOT be a release input. There MUST be no working-tree counter,
+merge order, PR count, or label input.
 
 An exact stable value MUST equal one of the calculated numeric targets or a
 same-core RC-to-stable promotion. An exact prerelease value MUST equal the next
