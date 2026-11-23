@@ -23,9 +23,11 @@ already produced.
 
 - `Release` reads `.github/quality-gates.json`, excludes `pending_required_checks`,
   and requires `success` for every remaining check on the release identity commit,
-  which must be a parent of the merged commit, before it reserves a tag. GitHub
-  reports required checks on the pull request head, not on the merge commit, so
-  the identity commit is the only place that evidence exists.
+  which must be a parent of the merged commit or that commit's pull request head,
+  before it reserves a tag. GitHub reports required checks on the pull request
+  head, not on the merge commit, so the identity commit is the only place that
+  evidence exists; accepting the pull request head keeps squash and rebase
+  merges of the identity PR valid.
 - A missing or failing check fails closed and produces the usual identity-aware
   failure context.
 - `CONTEXT.md` now defines the source-build smoke as an informational PR-time

@@ -237,7 +237,7 @@ assert "Verify publication gate on the merged identity" in release
 eligibility_script = read(".github/scripts/release_eligibility.py")
 assert "pending_required_checks" in eligibility_script
 assert "release identity did not pass required checks" in eligibility_script
-assert "release identity is not a parent of the merged commit" in eligibility_script
+assert "neither a parent of the merged commit nor the merged commit's pull request head" in eligibility_script
 
 assert "release_image_digests.py" in release
 assert "Verify published images match the recorded identity digests" in release

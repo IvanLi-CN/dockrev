@@ -86,7 +86,9 @@ After the identity PR merges, `Release` resolves the signed provenance from the
 merged commit and rechecks the direct immutable reservation. Before it reserves
 a tag, it verifies that every enforced check of the publication gate reported
 `success` on the release identity commit and that this commit is a parent of the
-merged commit. It then builds one identity-bound bundle
+merged commit or the merged commit's pull request head, so a merge commit,
+squash, or rebase merge of the identity PR all bind the same evidence. It then
+builds one identity-bound bundle
 containing all architecture binaries, release archives, checksums, and a content
 manifest. The GitHub artifact SHA-256 and the bundle's file hashes are checked
 before publication.

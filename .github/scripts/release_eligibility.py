@@ -62,11 +62,38 @@ def enforced_contexts(declaration: dict[str, Any]) -> list[str]:
     return sorted(set(required) - set(pending))
 
 
-def merge_identity_binding(merge: dict[str, Any], identity_sha: str) -> None:
+def identity_is_merge_parent(merge: dict[str, Any], identity_sha: str) -> bool:
     release_policy.validate_sha(identity_sha, "identity_sha")
     parents = [str(item.get("sha", "")) for item in merge.get("parents", [])]
-    if identity_sha not in parents:
-        raise EligibilityError("release identity is not a parent of the merged commit")
+    return identity_sha in parents
+
+
+def merged_identity_binding(
+    api_root: str, token: str, repository: str, merge_sha: str, identity_sha: str, merge: dict[str, Any],
+) -> None:
+    """Accept a merge commit parent or a squash/rebase merge of the identity PR head."""
+    if identity_is_merge_parent(merge, identity_sha):
+        return
+    owner, separator, name = repository.partition("/")
+    if not separator or not owner or not name:
+        raise EligibilityError("repository must be owner/name")
+    pulls = api_json(
+        api_root, token,
+        f"/repos/{owner}/{name}/commits/{urllib.parse.quote(merge_sha, safe='')}/pulls",
+    )
+    if not isinstance(pulls, list):
+        raise EligibilityError("GitHub did not return merged pull request associations")
+    matching = [
+        pull for pull in pulls
+        if isinstance(pull, dict)
+        and pull.get("merged_at")
+        and pull.get("merge_commit_sha") == merge_sha
+        and str((pull.get("head") or {}).get("sha", "")) == identity_sha
+    ]
+    if not matching:
+        raise EligibilityError(
+            "release identity is neither a parent of the merged commit nor the merged commit's pull request head"
+        )
 
 
 def commit_check_runs(api_root: str, token: str, repository: str, commit_sha: str) -> list[dict[str, Any]]:
@@ -134,7 +161,7 @@ def evaluate(
     merge = api_json(api_root, token, f"/repos/{owner}/{name}/commits/{urllib.parse.quote(merge_sha, safe='')}")
     if not isinstance(merge, dict):
         raise EligibilityError("merged commit is unavailable")
-    merge_identity_binding(merge, identity_sha)
+    merged_identity_binding(api_root, token, repository, merge_sha, identity_sha, merge)
     runs = commit_check_runs(api_root, token, repository, identity_sha)
     evidence = verify_publication_gate(declaration, runs, identity_sha)
     return {"merge_commit_sha": merge_sha, **evidence}

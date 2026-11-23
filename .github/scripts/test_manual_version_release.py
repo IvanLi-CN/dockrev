@@ -1121,15 +1121,31 @@ expect_error(
     error=release_eligibility.EligibilityError,
 )
 
-release_eligibility.merge_identity_binding(
+assert release_eligibility.identity_is_merge_parent(
     {"parents": [{"sha": "c" * 40}, {"sha": "d" * 40}]}, "d" * 40,
-)
-expect_error(
-    release_eligibility.merge_identity_binding,
-    {"parents": [{"sha": "c" * 40}]},
-    "d" * 40,
-    error=release_eligibility.EligibilityError,
-)
+) is True
+assert release_eligibility.identity_is_merge_parent(
+    {"parents": [{"sha": "c" * 40}]}, "d" * 40,
+) is False
+
+
+def merged_pull_request_api(_api_root, _token, path):
+    assert path.endswith("/commits/" + "e" * 40 + "/pulls")
+    return [{"merged_at": "2026-01-01T00:00:00Z", "merge_commit_sha": "e" * 40,
+             "head": {"sha": "d" * 40}}]
+
+
+with patch.object(release_eligibility, "api_json", merged_pull_request_api):
+    release_eligibility.merged_identity_binding(
+        "https://api.github.test", "token", "IvanLi-CN/dockrev", "e" * 40, "d" * 40,
+        {"parents": [{"sha": "c" * 40}]},
+    )
+    expect_error(
+        release_eligibility.merged_identity_binding,
+        "https://api.github.test", "token", "IvanLi-CN/dockrev", "e" * 40, "f" * 40,
+        {"parents": [{"sha": "c" * 40}]},
+        error=release_eligibility.EligibilityError,
+    )
 
 reserved_sha = "f" * 40
 abort_calls: list[tuple[str, str]] = []
