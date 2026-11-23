@@ -100,15 +100,19 @@ jobs:
         id: version
         env:
           TARGET: ${{ inputs.target }}
+          SOURCE_SHA: ${{ steps.source.outputs.source_sha }}
         run: |
           set -euo pipefail
-          git tag --list 'v[0-9]*' > tags.txt
+          for tag in $(git tag --list 'v[0-9]*'); do
+            git for-each-ref --format='%(refname:short) %(objectname) %(*objectname)' "refs/tags/${tag}"
+          done > tags.txt
           python3 .github/scripts/release_intent.py resolve \
             --repository "${GITHUB_REPOSITORY}" \
             --token "unused" \
             --baseline-version "${{ steps.baseline.outputs.version }}" \
             --target "${TARGET}" \
             --tags tags.txt \
+            --source-sha "${SOURCE_SHA}" \
             --output version.json
           {
             echo "version_input=$(jq -r .version_input version.json)"

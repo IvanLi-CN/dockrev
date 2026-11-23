@@ -327,4 +327,25 @@ with tempfile.TemporaryDirectory() as tmp:
 assert resolved_version["version"] == "0.81.1-rc.2"
 assert resolved_version["release_tag"] == "v0.81.1-rc.2"
 
+source_sha = "c" * 40
+reserved_line = f"v0.81.1-rc.2 {source_sha} {source_sha}"
+with tempfile.TemporaryDirectory() as tmp:
+    tags = Path(tmp) / "tags.txt"
+    tags.write_text(
+        f"v0.81.1-beta.1 {'a' * 40} {'a' * 40}\n"
+        f"v0.81.1-rc.1 {'b' * 40} {'b' * 40}\n"
+        f"{reserved_line}\n"
+    )
+    reserved = release_intent.resolve_version("0.81.0", "rc", tags, source_sha)
+    unreserved = release_intent.resolve_version("0.81.0", "rc", tags)
+assert reserved["version"] == "0.81.1-rc.2"
+assert unreserved["version"] == "0.81.1-rc.3"
+
+annotated_line = f"v0.81.1-rc.2 {'d' * 40} {source_sha}"
+with tempfile.TemporaryDirectory() as tmp:
+    tags = Path(tmp) / "tags.txt"
+    tags.write_text(f"{annotated_line}\n")
+    annotated = release_intent.resolve_version("0.81.0", "rc", tags, source_sha)
+assert annotated["version"] == "0.81.1-rc.1"
+
 print("PASS: target-only manual release delivery contracts")
