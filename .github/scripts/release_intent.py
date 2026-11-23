@@ -4,16 +4,21 @@
 from __future__ import annotations
 
 import argparse
+import http.client
 import json
+import re
 import sys
+import time
 import urllib.error
 import urllib.parse
 import urllib.request
 from pathlib import Path
 from typing import Any
 
-import release_baseline
 import release_policy
+
+FINAL_TAG_RE = re.compile(r"^v(\d+)\.(\d+)\.(\d+)$")
+RELEASE_AUTOMATION_ACTOR = "github-actions[bot]"
 
 
 class IntentError(RuntimeError):
@@ -42,8 +47,15 @@ def api_json(api_root: str, token: str, path: str) -> Any:
         raise IntentError(f"GitHub API request failed: {error.reason}") from error
 
 
-def fetch(api_root: str, token: str):
-    return lambda path: api_json(api_root, token, path)
+def api_retry(api_root: str, token: str, path: str, attempts: int = 4) -> Any:
+    last_error: BaseException | None = None
+    for attempt in range(attempts):
+        try:
+            return api_json(api_root, token, path)
+        except (urllib.error.URLError, http.client.HTTPException, ConnectionError, TimeoutError) as error:
+            last_error = error
+            time.sleep(1.5 * (attempt + 1))
+    raise IntentError(f"GitHub API request failed after {attempts} attempts: {last_error}")
 
 
 def repository_parts(repository: str) -> tuple[str, str]:
@@ -53,19 +65,70 @@ def repository_parts(repository: str) -> tuple[str, str]:
     return owner, name
 
 
-def ci_success(api_root: str, token: str, repository: str, commit_sha: str, workflow_path: str) -> None:
+def workflow_runs(
+    api_root: str, token: str, repository: str, commit_sha: str, workflow_path: str,
+) -> list[dict[str, Any]]:
     owner, name = repository_parts(repository)
     quoted = urllib.parse.quote(commit_sha, safe="")
-    payload = api_json(
+    payload = api_retry(
         api_root, token,
         f"/repos/{owner}/{name}/actions/workflows/{urllib.parse.quote(workflow_path, safe='')}"
         f"/runs?head_sha={quoted}&status=completed&per_page=100",
     )
-    runs = (payload or {}).get("workflow_runs")
+    runs = (payload or {}).get("workflow_runs") if isinstance(payload, dict) else None
     if not isinstance(runs, list):
         raise IntentError(f"GitHub did not return runs for {workflow_path}")
-    if not any(run.get("conclusion") == "success" for run in runs if isinstance(run, dict)):
+    return [run for run in runs if isinstance(run, dict)]
+
+
+def ci_success(
+    api_root: str, token: str, repository: str, commit_sha: str, workflow_path: str,
+) -> None:
+    runs = workflow_runs(api_root, token, repository, commit_sha, workflow_path)
+    if not any(run.get("conclusion") == "success" for run in runs):
         raise IntentError(f"{workflow_path} has no successful completed run for {commit_sha}")
+
+
+def baseline_ci_ok(
+    api_root: str, token: str, repository: str, commit_sha: str, workflow_path: str,
+) -> None:
+    """Legacy final releases predate the main CI workflow and only supply the baseline."""
+    runs = workflow_runs(api_root, token, repository, commit_sha, workflow_path)
+    if not runs or any(run.get("conclusion") == "success" for run in runs):
+        return
+    raise IntentError(f"baseline {commit_sha} has failing {workflow_path} runs")
+
+
+def main_reachable(api_root: str, token: str, repository: str, commit_sha: str) -> bool:
+    owner, name = repository_parts(repository)
+    comparison = api_retry(
+        api_root, token,
+        f"/repos/{owner}/{name}/compare/{urllib.parse.quote(commit_sha, safe='')}...main?per_page=1",
+    )
+    return isinstance(comparison, dict) and comparison.get("status") in {"ahead", "identical"}
+
+
+def tagged_commit_sha(api_root: str, token: str, repository: str, tag: str) -> str | None:
+    owner, name = repository_parts(repository)
+    ref = api_retry(
+        api_root, token,
+        f"/repos/{owner}/{name}/git/ref/tags/{urllib.parse.quote(tag, safe='')}",
+    )
+    if not isinstance(ref, dict):
+        return None
+    target = ref.get("object") or {}
+    for _ in range(6):
+        object_type = target.get("type")
+        object_sha = str(target.get("sha", ""))
+        if object_type == "commit":
+            return object_sha
+        if object_type != "tag":
+            return None
+        annotated = api_retry(api_root, token, f"/repos/{owner}/{name}/git/tags/{object_sha}")
+        if not isinstance(annotated, dict):
+            return None
+        target = annotated.get("object") or {}
+    return None
 
 
 def resolve_intent(
@@ -78,34 +141,47 @@ def resolve_intent(
     if not target or target != target.strip():
         raise IntentError("target must be a non-empty canonical value")
     owner, name = repository_parts(repository)
-    commit = api_json(api_root, token, f"/repos/{owner}/{name}/commits/{source_sha}")
+    commit = api_retry(api_root, token, f"/repos/{owner}/{name}/commits/{source_sha}")
     if not isinstance(commit, dict):
         raise IntentError("dispatch source commit is unavailable")
     if (commit.get("commit", {}).get("verification") or {}).get("verified") is not True:
         raise IntentError(f"dispatch source {source_sha} has no verified commit signature")
-    main_ref = api_json(api_root, token, f"/repos/{owner}/{name}/git/ref/heads/main")
-    main_sha = str(((main_ref or {}).get("object") or {}).get("sha", ""))
-    release_policy.validate_sha(main_sha, "main SHA")
-    comparison = api_json(
-        api_root, token,
-        f"/repos/{owner}/{name}/compare/{urllib.parse.quote(source_sha, safe='')}...{main_sha}",
-    )
-    if not isinstance(comparison, dict) or comparison.get("status") not in {"ahead", "identical"}:
+    if not main_reachable(api_root, token, repository, source_sha):
         raise IntentError(f"dispatch source {source_sha} is not reachable from main")
     ci_success(api_root, token, repository, source_sha, workflow_path)
-    return {"target": target, "source_sha": source_sha, "main_sha": main_sha}
+    return {"target": target, "source_sha": source_sha}
 
 
 def resolve_baseline(api_root: str, token: str, repository: str, workflow_path: str) -> dict[str, Any]:
-    api = fetch(api_root, token)
-    version = release_baseline.latest_qualified_final_release_version(api, repository)
-    if version == "0.0.0":
-        raise IntentError("no published final GitHub Release is available as a baseline")
-    source_sha = release_baseline.tagged_commit_sha(api, repository, f"v{version}")
-    if source_sha is None:
-        raise IntentError(f"baseline v{version} has no resolvable commit")
-    ci_success(api_root, token, repository, source_sha, workflow_path)
-    return {"version": version, "tag": f"v{version}", "source_sha": source_sha}
+    owner, name = repository_parts(repository)
+    candidates: list[tuple[tuple[int, int, int], str]] = []
+    for page in (1, 2):
+        releases = api_retry(api_root, token, f"/repos/{owner}/{name}/releases?per_page=100&page={page}")
+        if not isinstance(releases, list):
+            raise IntentError("GitHub release list is invalid")
+        for release in releases:
+            if not isinstance(release, dict):
+                continue
+            if release.get("draft") or release.get("prerelease"):
+                continue
+            tag = str(release.get("tag_name", ""))
+            match = FINAL_TAG_RE.fullmatch(tag)
+            if match is None:
+                continue
+            if str((release.get("author") or {}).get("login", "")) != RELEASE_AUTOMATION_ACTOR:
+                continue
+            candidates.append((tuple(int(part) for part in match.groups()), tag))
+        if candidates or len(releases) < 100:
+            break
+    for _numeric, tag in sorted(candidates, reverse=True):
+        source_sha = tagged_commit_sha(api_root, token, repository, tag)
+        if source_sha is None:
+            continue
+        if not main_reachable(api_root, token, repository, source_sha):
+            continue
+        baseline_ci_ok(api_root, token, repository, source_sha, workflow_path)
+        return {"version": tag[1:], "tag": tag, "source_sha": source_sha}
+    raise IntentError("no published final GitHub Release is available as a baseline")
 
 
 def resolve_range(
@@ -114,10 +190,10 @@ def resolve_range(
     release_policy.validate_sha(baseline_sha, "baseline SHA")
     release_policy.validate_sha(source_sha, "source SHA")
     owner, name = repository_parts(repository)
-    comparison = api_json(
+    comparison = api_retry(
         api_root, token,
         f"/repos/{owner}/{name}/compare/{urllib.parse.quote(baseline_sha, safe='')}"
-        f"...{urllib.parse.quote(source_sha, safe='')}",
+        f"...{urllib.parse.quote(source_sha, safe='')}?per_page=100",
     )
     if not isinstance(comparison, dict):
         raise IntentError("release range comparison is unavailable")
@@ -180,7 +256,7 @@ def main() -> int:
             )
         else:
             result = resolve_version(args.baseline_version, args.target, args.tags)
-    except (IntentError, release_policy.PolicyError, release_baseline.BaselineError, OSError) as error:
+    except (IntentError, release_policy.PolicyError, OSError) as error:
         print(str(error), file=sys.stderr)
         return 2
     rendered = json.dumps(result, sort_keys=True, indent=2) + "\n"

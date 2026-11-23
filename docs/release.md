@@ -46,7 +46,9 @@ Preflight fails closed unless:
 - the dispatch ref is `refs/heads/main`;
 - the source commit has a verified signature and is reachable from `main`;
 - `CI (main)` has a successful completed run for the source commit;
-- the baseline release satisfies the same conditions;
+- the baseline release is signed, `main`-reachable and final (a baseline that
+  predates `CI (main)` is accepted because it only supplies the numeric
+  baseline; a baseline with failing `CI (main)` runs fails closed);
 - the range from the baseline source to the dispatch source is non-empty and
   fully comparable through the compare API.
 
