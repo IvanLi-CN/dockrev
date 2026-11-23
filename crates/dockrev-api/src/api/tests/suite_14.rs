@@ -215,6 +215,7 @@ services:
         .unwrap();
     assert_eq!(rows.len(), 1);
     assert_eq!(rows[0].status, "failed");
+    let failed_record_id = rows[0].id.clone();
     assert!(
         rows[0]
             .last_error
@@ -251,9 +252,10 @@ services:
         .list_new_version_notifications_for_service(&service.id)
         .await
         .unwrap();
-    assert_eq!(rows.len(), 2);
-    assert_eq!(rows[0].status, "failed");
-    assert_eq!(rows[1].status, "sent");
+    // The retry reuses the failed record instead of appending a second row.
+    assert_eq!(rows.len(), 1);
+    assert_eq!(rows[0].id, failed_record_id);
+    assert_eq!(rows[0].status, "sent");
 
     success_server.abort();
     failing_server.abort();

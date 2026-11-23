@@ -24,6 +24,7 @@ use serde::Deserialize;
 
 pub const RESOURCE_MONITOR_RETENTION_DAYS: u32 = 1;
 pub const JOB_HISTORY_RETENTION_DAYS: u32 = 30;
+pub const NEW_VERSION_NOTIFICATION_RETENTION_DAYS: u32 = 30;
 pub const DEFAULT_SAMPLE_INTERVAL_SECONDS: u64 = 5;
 const PARTIAL_SAMPLE_WARN_INTERVAL: Duration = Duration::from_secs(60);
 const RESOURCE_COLLECTION_CACHE_MAX_AGE: Duration = Duration::from_secs(1);
@@ -774,6 +775,22 @@ async fn gc_history(
             batch_size = 2_000,
             duration_ms = started_at.elapsed().as_millis() as u64,
             "terminal job history gc completed"
+        );
+    }
+    let notification_older_than = (now
+        - time::Duration::days(NEW_VERSION_NOTIFICATION_RETENTION_DAYS as i64))
+    .format(&time::format_description::well_known::Rfc3339)?;
+    let notification_started_at = Instant::now();
+    let deleted_notifications = db
+        .purge_new_version_notification_backlog(&notification_older_than)
+        .await
+        .context("purge new version notification backlog")?;
+    if deleted_notifications > 0 {
+        tracing::info!(
+            deleted = deleted_notifications,
+            retention_days = NEW_VERSION_NOTIFICATION_RETENTION_DAYS,
+            duration_ms = notification_started_at.elapsed().as_millis() as u64,
+            "new version notification history gc completed"
         );
     }
     crate::rollback_evidence::cleanup_orphaned_spools(db, db_path).await;

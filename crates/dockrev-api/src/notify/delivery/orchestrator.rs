@@ -9,6 +9,19 @@ fn web_push_subscription_key(endpoint: &str) -> String {
     format!("webPush:{endpoint}")
 }
 
+/// Web Push needs a VAPID key pair before it can deliver anything. A channel that
+/// is toggled on while unconfigured must not be attempted: the failure keeps the
+/// outbox row unprocessed and retries forever.
+pub(crate) fn web_push_channel_configured(settings: &NotificationSettings) -> bool {
+    let configured = |value: &Option<String>| {
+        value
+            .as_deref()
+            .is_some_and(|value| !value.trim().is_empty())
+    };
+    configured(&settings.webpush_vapid_private_key)
+        && configured(&settings.webpush_vapid_public_key)
+}
+
 fn require_web_push_success(report: WebPushDeliveryReport) -> anyhow::Result<()> {
     match report.error {
         Some(error) => Err(anyhow::anyhow!(error)),
@@ -132,7 +145,10 @@ pub(crate) async fn send_new_versions_with_badge(
         results.insert("email".to_string(), result_value(r));
     }
 
-    if settings.webpush_enabled && !skip_channels.contains("webPush") {
+    if settings.webpush_enabled
+        && web_push_channel_configured(&settings)
+        && !skip_channels.contains("webPush")
+    {
         let r = async {
             let payload = build_new_version_payload_v2(
                 state,
@@ -244,7 +260,10 @@ pub(crate) async fn send_ghcr_webhook_anomaly_with_badge(
         results.insert("email".to_string(), result_value(r));
     }
 
-    if settings.webpush_enabled && !skip_channels.contains("webPush") {
+    if settings.webpush_enabled
+        && web_push_channel_configured(&settings)
+        && !skip_channels.contains("webPush")
+    {
         let r = async {
             let payload = build_ghcr_webhook_anomaly_payload_v2(
                 state,
@@ -748,16 +767,16 @@ async fn send_web_push_with_progress(
     payload: &Value,
     skip_subscriptions: &std::collections::BTreeSet<String>,
 ) -> anyhow::Result<WebPushDeliveryReport> {
-    let private_key = vapid_private_key.context("webPush.vapidPrivateKey missing")?;
-    let subject = vapid_subject.unwrap_or("mailto:dockrev@localhost");
-
     let subs = state.db.list_web_push_subscriptions().await?;
     if subs.is_empty() {
         return Ok(WebPushDeliveryReport {
             successful_subscriptions: Vec::new(),
-            error: Some("no web push subscriptions".to_string()),
+            error: None,
         });
     }
+
+    let private_key = vapid_private_key.context("webPush.vapidPrivateKey missing")?;
+    let subject = vapid_subject.unwrap_or("mailto:dockrev@localhost");
 
     let client = HyperWebPushClient::new();
     let content = serde_json::to_vec(payload)?;

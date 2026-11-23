@@ -1425,7 +1425,7 @@ fn has_enabled_delivery_channel(settings: &NotificationSettings) -> bool {
     settings.webhook_enabled
         || settings.telegram_enabled
         || settings.email_enabled
-        || settings.webpush_enabled
+        || (settings.webpush_enabled && delivery::web_push_channel_configured(settings))
 }
 
 fn successful_delivery_channels(results: &Value) -> Vec<String> {

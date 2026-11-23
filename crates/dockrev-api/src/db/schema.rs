@@ -887,6 +887,8 @@ CREATE TABLE IF NOT EXISTS new_version_notifications (
 );
 CREATE INDEX IF NOT EXISTS idx_new_version_notifications_service_status
   ON new_version_notifications(service_id, status, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_new_version_notifications_service_digest
+  ON new_version_notifications(service_id, candidate_digest);
 CREATE UNIQUE INDEX IF NOT EXISTS idx_new_version_notifications_active_service_digest
   ON new_version_notifications(service_id, candidate_digest)
 WHERE status IN ('pending', 'sent');
@@ -1263,6 +1265,8 @@ CREATE TABLE IF NOT EXISTS new_version_notifications (
 );
 CREATE INDEX IF NOT EXISTS idx_new_version_notifications_service_status
   ON new_version_notifications(service_id, status, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_new_version_notifications_service_digest
+  ON new_version_notifications(service_id, candidate_digest);
 CREATE UNIQUE INDEX IF NOT EXISTS idx_new_version_notifications_active_service_digest
   ON new_version_notifications(service_id, candidate_digest)
   WHERE status IN ('pending', 'sent');
