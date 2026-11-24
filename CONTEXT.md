@@ -313,6 +313,30 @@ _Avoid_: reclaimable bytes, deletion result
 The set of cleanup candidates covered by one proposed operation. Its scope is independent of which groups are expanded or which resources are visible in the list.
 _Avoid_: expanded rows, visible candidates
 
+**cleanup inventory snapshot**:
+A record of every cleanup candidate discovered by one cleanup scan, together with its scan time and estimation basis. Every cleanup page view and cleanup selection is a projection of one snapshot.
+_Avoid_: cached scan, live scan result
+
+**snapshot freshness window**:
+The fixed interval after a cleanup inventory snapshot's scan time during which that snapshot may back a cleanup operation. Outside the window the snapshot is display-only.
+_Avoid_: cache TTL, confirm cache
+
+**partial cleanup snapshot**:
+A display-only cleanup inventory snapshot emitted while a cleanup scan is still running. It contains only the candidates discovered so far and never backs a cleanup operation.
+_Avoid_: latest result, confirmable snapshot
+
+**cleanup scan**:
+A full rebuild of the cleanup inventory snapshot; it is independent of the preset and scope chosen for an operation.
+_Avoid_: scoped confirm scan, per-stack scan
+
+**cleanup discovery state**:
+A confirmation-dialog state with no confirmable cleanup inventory snapshot. It shows only candidates discovered by an active scan and cannot approve a cleanup operation.
+_Avoid_: loading dialog, stale confirm dialog
+
+**foreground cleanup refresh**:
+An automatic cleanup scan started by the frontend while the cleanup page is visible and the snapshot approaches its freshness boundary. It refreshes the snapshot but never executes cleanup.
+_Avoid_: background polling, automatic prune
+
 **candidate image size**:
 The complete size attributed to a candidate image, including data shared with other images. It describes the image's size rather than the storage released by deleting that image.
 _Avoid_: reclaimable space, exclusive image size

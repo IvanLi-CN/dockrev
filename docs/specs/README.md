@@ -18,6 +18,7 @@
 | Brand media variants | active | dark/light posters delivered; social variants pending | `brand-media-variants/SPEC.md` | - |
 | CI duration optimization | superseded | historical candidate/readiness contract retained for context | `ci-duration-optimization/SPEC.md` | `docs/adr/0008-pr-label-release-identity.md` |
 | Server-owned self-checks | active | implementation and validation complete: server startup/periodic self-checks, non-blocking web entry, scoped core impacts and cross-tab diagnostic deduplication | `server-owned-self-checks/SPEC.md` | - |
+| Cleanup snapshot-first interaction | active | not started | `cleanup-snapshot-first-interaction/SPEC.md` | - |
 
 ## 快速新增一个规格
 
@@ -163,4 +164,5 @@
 | 5xeat | Dockrev：任务历史保留期与游标分页 | active | `5xeat-job-history-retention-pagination/SPEC.md` | 2026-07-25 | fast-track（101 SQLite 增长治理 + Docker stats 部分成功 + jobs cursor） |
 | puwpx | Dockrev：服务树上下文快捷操作 | active | `puwpx-service-tree-context-actions/SPEC.md` | 2026-08-01 | fast-track（Stack/Service ContextMenu + stack lifecycle queue + Storybook/ui_demo evidence） |
 | ci-duration-optimization | Dockrev CI 时长优化与同 SHA 发布门禁 | superseded | `ci-duration-optimization/SPEC.md` | 2026-09-01 | successor: ADR 0008; old readiness contract retained as history |
+| cleanup-snapshot-first-interaction | Dockrev：Cleanup 快照优先与即时确认弹窗 | active | `cleanup-snapshot-first-interaction/SPEC.md` | - | 需求已冻结；快照优先加载、发现态、前台自动刷新与扫描期间 apply 准入待实现 |
 | notification-inbox-pwa-badge | Dockrev：通知收件箱与 PWA Badge | active | `notification-inbox-pwa-badge/SPEC.md` | 2026-09-26 | 需求已对齐；服务端未读数、Push 可选、前台同步与关闭 PWA 边界已冻结 |
