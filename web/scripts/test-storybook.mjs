@@ -741,8 +741,18 @@ async function assertServiceLogsFollowAfterNewLog({
       if (!viewportBox) throw new Error("Service logs viewport is missing a bounding box.");
       const scrollHeight = await viewport.evaluate((element) => element.scrollHeight);
       await page.mouse.move(viewportBox.x + viewportBox.width / 2, viewportBox.y + viewportBox.height / 2);
-      await page.mouse.wheel(0, -scrollHeight);
+      for (let attempt = 0; attempt < 40; attempt += 1) {
+        await page.mouse.wheel(0, -Math.max(400, Math.ceil(scrollHeight / 20)));
+        const jumpVisible = await page
+          .getByRole("button", { name: "跳到最新" })
+          .isVisible()
+          .catch(() => false);
+        if (jumpVisible) break;
+      }
       await page.getByRole("button", { name: "跳到最新" }).waitFor({ timeout: 10_000 });
+      await viewport.evaluate((element) => {
+        element.scrollTop = 0;
+      });
       await page.waitForFunction(
         ({ evictedHeadMarker, expectedHeadMarker }) => {
           const head = document.querySelector('.serviceLogRow[data-index="0"]');
@@ -1230,7 +1240,6 @@ async function runInteractive({ baseUrl, browser }) {
     });
     try {
       const groups = page.locator(".cleanupConfirmGroupToggle");
-      await page.getByRole("button", { name: "全部", exact: true }).click();
       await page.waitForFunction(
         () => document.body.textContent?.includes("确认清理全部") ?? false,
         null,
@@ -1325,14 +1334,12 @@ async function runInteractive({ baseUrl, browser }) {
       waitForPlay: true,
     });
     try {
-      await page.getByRole("button", { name: "全部", exact: true }).click();
       await page.waitForFunction(
         () => document.body.textContent?.includes("确认清理全部") ?? false,
         null,
         { timeout: 10_000 },
       );
       const firstGroup = page.locator(".cleanupConfirmGroupToggle").first();
-      await firstGroup.click();
       await page.waitForFunction(
         () => document.querySelector(".cleanupConfirmGroupToggle")?.getAttribute("aria-expanded") === "true",
         null,

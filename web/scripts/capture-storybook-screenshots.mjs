@@ -240,6 +240,20 @@ async function main() {
       await page.getByRole('button', { name: '全部', exact: true }).first().click()
     }
     await page.getByText('确认清理全部', { exact: true }).waitFor({ timeout: STORY_TIMEOUT_MS })
+    await page.locator('.cleanupConfirmGroupToggle').first().waitFor({ timeout: STORY_TIMEOUT_MS })
+    await page.waitForFunction(() => document.querySelectorAll('.cleanupConfirmGroupToggle').length === 4, null, {
+      timeout: STORY_TIMEOUT_MS,
+    })
+  }
+
+  const openCleanupDiscoveryDialog = async (page, expectedText = '正在发现可清理内容') => {
+    const dialog = page.locator('.cleanupConfirmDialogCard')
+    if (!(await dialog.isVisible())) {
+      await page.getByRole('button', { name: '全部', exact: true }).first().click()
+    }
+    await page.getByText(expectedText, { exact: true }).waitFor({ timeout: STORY_TIMEOUT_MS })
+    await page.locator('.cleanupConfirmResource').first().waitFor({ timeout: STORY_TIMEOUT_MS })
+    await page.mouse.move(0, 0)
   }
 
   const setupCleanupConfirmDialog = async (page) => {
@@ -410,6 +424,49 @@ async function main() {
       file: 'cleanup-confirm-dialog-mobile.png',
       viewport: { width: 393, height: 852 },
       setup: setupCleanupConfirmDialog,
+      screenshot: async (page, filePath) => {
+        await page.locator('.cleanupConfirmDialogCard').screenshot({ path: filePath })
+      },
+    },
+    {
+      id: 'pages-cleanuppage--discovery-state',
+      file: 'cleanup-discovery-desktop.png',
+      viewport: { width: 1440, height: 900 },
+      setup: (page) => openCleanupDiscoveryDialog(page),
+      screenshot: async (page, filePath) => {
+        await page.locator('.cleanupConfirmDialogCard').screenshot({ path: filePath })
+      },
+    },
+    {
+      id: 'pages-cleanuppage--discovery-state',
+      file: 'cleanup-discovery-mobile-393.png',
+      viewport: { width: 393, height: 852 },
+      setup: (page) => openCleanupDiscoveryDialog(page),
+      screenshot: async (page, filePath) => {
+        await page.locator('.cleanupConfirmDialogCard').screenshot({ path: filePath })
+      },
+    },
+    {
+      id: 'pages-cleanuppage--expired-snapshot-state',
+      file: 'cleanup-expired-discovery.png',
+      viewport: { width: 1440, height: 900 },
+      setup: (page) => openCleanupDiscoveryDialog(page),
+      screenshot: async (page, filePath) => {
+        await page.locator('.cleanupConfirmDialogCard').screenshot({ path: filePath })
+      },
+    },
+    {
+      id: 'pages-cleanuppage--discovery-failed-state',
+      file: 'cleanup-discovery-failed.png',
+      viewport: { width: 1440, height: 900 },
+      setup: async (page) => {
+        const dialog = page.locator('.cleanupConfirmDialogCard')
+        if (!(await dialog.isVisible())) {
+          await page.getByRole('button', { name: '全部', exact: true }).first().click()
+        }
+        await page.getByText('刷新失败', { exact: true }).waitFor({ timeout: STORY_TIMEOUT_MS })
+        await page.mouse.move(0, 0)
+      },
       screenshot: async (page, filePath) => {
         await page.locator('.cleanupConfirmDialogCard').screenshot({ path: filePath })
       },

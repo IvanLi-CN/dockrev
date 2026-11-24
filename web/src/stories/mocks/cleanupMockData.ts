@@ -22,6 +22,9 @@ export type CleanupMockScenario =
   | 'cleanup-console-scan-pending'
   | 'cleanup-console-scan-slow'
   | 'cleanup-console-apply-slow'
+  | 'cleanup-console-discovery'
+  | 'cleanup-console-discovery-failed'
+  | 'cleanup-console-expiring'
   | 'cleanup-console-unknown-volume-only'
 
 export type CleanupMockRuntimeState = {
@@ -79,6 +82,9 @@ export function isCleanupMockScenario(value: string): value is CleanupMockScenar
     value === 'cleanup-console-scan-pending' ||
     value === 'cleanup-console-scan-slow' ||
     value === 'cleanup-console-apply-slow' ||
+    value === 'cleanup-console-discovery' ||
+    value === 'cleanup-console-discovery-failed' ||
+    value === 'cleanup-console-expiring' ||
     value === 'cleanup-console-unknown-volume-only'
   )
 }
@@ -472,6 +478,7 @@ export function buildCleanupMockScanResponse(
     preset: request.preset,
     scope: request.scope,
     scannedAt: fixture.scannedAt,
+    snapshotAgeMs: scenario === 'cleanup-console-expiring' ? 299_650 : 0,
     refreshing: false,
     retryAfterMs: null,
     estimatedReclaimableBytes: sumKnown(allResources),

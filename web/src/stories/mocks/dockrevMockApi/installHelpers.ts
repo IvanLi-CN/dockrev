@@ -58,6 +58,8 @@ export function partialCleanupResponse(response: CleanupScanResponse): CleanupSc
   return {
     ...response,
     status: 'pending',
+    scanStage: 'networks',
+    snapshotAgeMs: 0,
     refreshing: true,
     retryAfterMs: 450,
     serverDiskUsage: null,

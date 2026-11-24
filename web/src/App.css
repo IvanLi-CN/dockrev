@@ -15183,6 +15183,156 @@ html[data-theme="light"] .btnPrimary {
   outline-offset: -1px;
 }
 
+.cleanupDiscovery {
+  display: grid;
+  gap: 14px;
+}
+
+.cleanupDiscoveryTitle {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-weight: 650;
+  color: var(--text);
+}
+
+.cleanupDiscoveryPulse {
+  width: 8px;
+  height: 8px;
+  border-radius: 999px;
+  background: var(--color-primary);
+  box-shadow: 0 0 0 0 color-mix(in srgb, var(--color-primary) 45%, transparent);
+  animation: cleanupDiscoveryPulse 1400ms ease-out infinite;
+}
+
+.cleanupDiscoveryHead {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.cleanupDiscoveryCount {
+  min-width: 0;
+  color: var(--text);
+  font-variant-numeric: tabular-nums;
+}
+
+.cleanupDiscoveryCount strong {
+  font-size: 1.25em;
+}
+
+.cleanupDiscoveryStages {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.cleanupDiscoveryStage {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 10px;
+  border: 1px solid var(--borderColor);
+  border-radius: 999px;
+  color: var(--muted);
+  font-size: 12px;
+  transition: border-color 180ms ease, color 180ms ease, background-color 180ms ease;
+}
+
+.cleanupDiscoveryStageDot {
+  width: 6px;
+  height: 6px;
+  border-radius: 999px;
+  background: currentColor;
+  opacity: 0.45;
+}
+
+.cleanupDiscoveryStageDone {
+  border-color: color-mix(in srgb, var(--color-success) 34%, var(--borderColor) 66%);
+  color: color-mix(in srgb, var(--color-success) 70%, var(--text) 30%);
+}
+
+.cleanupDiscoveryStageDone .cleanupDiscoveryStageDot {
+  opacity: 1;
+}
+
+.cleanupDiscoveryStageActive {
+  border-color: color-mix(in srgb, var(--color-primary) 45%, var(--borderColor) 55%);
+  background: color-mix(in srgb, var(--color-primary) 10%, transparent);
+  color: var(--text);
+}
+
+.cleanupDiscoveryStageActive .cleanupDiscoveryStageDot {
+  opacity: 1;
+  background: var(--color-primary);
+  animation: cleanupDiscoveryPulse 1200ms ease-out infinite;
+}
+
+.cleanupDiscoveryStagePending .cleanupDiscoveryStageDot {
+  opacity: 0.28;
+}
+
+.cleanupDiscoverySkeleton {
+  display: grid;
+  gap: 8px;
+  padding: 4px 0;
+}
+
+.cleanupDiscoverySkeleton span {
+  display: block;
+  height: 34px;
+  border-radius: 8px;
+  background: linear-gradient(
+    100deg,
+    color-mix(in srgb, var(--panel2) 92%, transparent) 0%,
+    color-mix(in srgb, var(--color-primary) 9%, var(--panel2) 91%) 46%,
+    color-mix(in srgb, var(--panel2) 92%, transparent) 100%
+  );
+  background-size: 220% 100%;
+  animation: cleanupDiscoverySweep 1600ms ease-in-out infinite;
+}
+
+.cleanupConfirmResource {
+  animation: cleanupDiscoveryRowIn 220ms ease-out both;
+}
+
+@keyframes cleanupDiscoveryPulse {
+  0% {
+    box-shadow: 0 0 0 0 color-mix(in srgb, var(--color-primary) 42%, transparent);
+    opacity: 1;
+  }
+  70%,
+  100% {
+    box-shadow: 0 0 0 7px color-mix(in srgb, var(--color-primary) 0%, transparent);
+    opacity: 0.72;
+  }
+}
+
+@keyframes cleanupDiscoverySweep {
+  0% {
+    background-position: 120% 0;
+  }
+  100% {
+    background-position: -20% 0;
+  }
+}
+
+@keyframes cleanupDiscoveryRowIn {
+  from {
+    opacity: 0;
+    transform: translateY(3px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
 .cleanupStaleLoading {
   position: relative;
   isolation: isolate;
@@ -15826,8 +15976,16 @@ html[data-theme="light"] .btnPrimary {
 @media (prefers-reduced-motion: reduce) {
   .cleanupStaleLoading,
   .cleanupStaleLoading::before,
-  .cleanupStatusRailIndicatorBusy {
+  .cleanupStatusRailIndicatorBusy,
+  .cleanupDiscoveryPulse,
+  .cleanupDiscoveryStageActive .cleanupDiscoveryStageDot,
+  .cleanupDiscoverySkeleton span,
+  .cleanupConfirmResource {
     animation: none;
+  }
+
+  .cleanupDiscoverySkeleton span {
+    background-position: 0 0;
   }
 
   .cleanupStaleLoading::before {
