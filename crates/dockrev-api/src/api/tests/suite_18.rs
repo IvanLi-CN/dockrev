@@ -96,7 +96,7 @@ async fn cleanup_scan_omits_builder_cache_when_no_inventory_hint_exists() {
 }
 
 #[tokio::test]
-async fn cleanup_confirm_pending_poll_does_not_reenqueue_refresh() {
+async fn cleanup_confirm_returns_ready_while_refresh_runs_without_reenqueue() {
     let db_path = format!("/tmp/dockrev-cleanup-confirm-poll-{}.sqlite3", ulid::Ulid::new());
     let runner = Arc::new(CleanupRunner::stale_on_second_scan());
     let state = test_state_with(&db_path, Arc::new(FakeRegistry), runner.clone()).await;
@@ -159,8 +159,13 @@ services:
         .unwrap();
     assert_eq!(pending_resp.status(), 200);
     let pending_body = response_json(pending_resp).await;
-    assert_eq!(pending_body["status"].as_str(), Some("pending"));
+    assert_eq!(pending_body["status"].as_str(), Some("ready"));
     assert_eq!(pending_body["refreshing"].as_bool(), Some(true));
+    assert!(
+        pending_body["confirmationFingerprint"]
+            .as_str()
+            .is_some_and(|value| !value.is_empty())
+    );
 
     for _ in 0..200 {
         if !state.cleanup_snapshot_worker.is_running() {
@@ -170,6 +175,85 @@ services:
     }
     assert!(!state.cleanup_snapshot_worker.is_running());
     assert_eq!(runner.stale_generation(), 2);
+}
+
+#[tokio::test]
+async fn cleanup_apply_accepts_fresh_snapshot_while_refresh_runs() {
+    let db_path = format!(
+        "/tmp/dockrev-cleanup-apply-during-refresh-{}.sqlite3",
+        ulid::Ulid::new()
+    );
+    let runner = Arc::new(CleanupRunner::slow_stale_on_second_scan());
+    let state = test_state_with(&db_path, Arc::new(FakeRegistry), runner).await;
+    let (stack_id, _service_id, _compose_path) = seed_cleanup_stack(
+        &state,
+        "demo",
+        r#"
+services:
+  web:
+    image: ghcr.io/acme/web:5.2
+"#,
+    )
+    .await;
+    let app = api::router(state.clone());
+
+    let initial = wait_for_cleanup_scan_ready(
+        &app,
+        serde_json::json!({
+            "reason": "confirm",
+            "preset": "balanced",
+            "scope": "stack",
+            "stackId": stack_id,
+        }),
+    )
+    .await;
+    let fingerprint = initial["confirmationFingerprint"]
+        .as_str()
+        .expect("ready confirmation includes fingerprint")
+        .to_string();
+
+    assert!(state.cleanup_snapshot_worker.enqueue().await);
+    for _ in 0..200 {
+        if state.cleanup_snapshot_worker.is_running() {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+    assert!(state.cleanup_snapshot_worker.is_running());
+
+    let apply_resp = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/cleanups/apply")
+                .header("X-Forwarded-User", "ops")
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    serde_json::json!({
+                        "reason": "ui",
+                        "preset": "balanced",
+                        "scope": "stack",
+                        "stackId": stack_id,
+                        "confirmationFingerprint": fingerprint,
+                    })
+                    .to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(apply_resp.status(), 200);
+    let apply_body = response_json(apply_resp).await;
+    let job_id = apply_body["jobId"].as_str().expect("apply returns a job id");
+    assert!(!job_id.is_empty());
+
+    for _ in 0..300 {
+        if !state.cleanup_snapshot_worker.is_running() {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+    assert!(!state.cleanup_snapshot_worker.is_running());
 }
 
 #[tokio::test]
@@ -309,7 +393,7 @@ async fn cleanup_confirm_returns_error_after_worker_failure() {
 }
 
 #[tokio::test]
-async fn cleanup_confirm_rejects_but_apply_accepts_fresh_snapshot_after_worker_failure() {
+async fn cleanup_confirm_and_apply_accept_fresh_snapshot_after_worker_failure() {
     let db_path = format!(
         "/tmp/dockrev-cleanup-fresh-failure-{}.sqlite3",
         ulid::Ulid::new()
@@ -356,11 +440,13 @@ async fn cleanup_confirm_rejects_but_apply_accepts_fresh_snapshot_after_worker_f
         )
         .await
         .unwrap();
-    assert_eq!(confirm_response.status(), 500);
+    assert_eq!(confirm_response.status(), 200);
     let confirm_body = response_json(confirm_response).await;
-    assert_eq!(
-        confirm_body["error"]["message"].as_str(),
-        Some("cleanup snapshot refresh failed")
+    assert_eq!(confirm_body["status"].as_str(), Some("ready"));
+    assert!(
+        confirm_body["confirmationFingerprint"]
+            .as_str()
+            .is_some_and(|value| !value.is_empty())
     );
     assert!(!confirm_body.to_string().contains("boom"));
 
@@ -387,7 +473,7 @@ async fn cleanup_confirm_rejects_but_apply_accepts_fresh_snapshot_after_worker_f
         .unwrap();
     assert_eq!(retry_response.status(), 200);
     let retry_body = response_json(retry_response).await;
-    assert_eq!(retry_body["status"].as_str(), Some("pending"));
+    assert_eq!(retry_body["status"].as_str(), Some("ready"));
     assert_eq!(retry_body["refreshing"].as_bool(), Some(true));
     let retry_ready = wait_for_cleanup_scan_ready(
         &app,

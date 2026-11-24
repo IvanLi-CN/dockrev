@@ -259,16 +259,14 @@ pub(super) async fn scan_cleanups(
                 let is_fresh = estimate_version_supported
                     && cleanup_snapshot_worker::cleanup_snapshot_is_fresh(&row.checked_at, now);
                 let last_error = state.cleanup_snapshot_worker.last_error().await;
-                if is_fresh && !is_running {
+                if is_fresh {
+                    let mut refreshing = is_running;
                     if req.refresh {
-                        let refreshing = state.cleanup_snapshot_worker.enqueue().await
+                        refreshing = state.cleanup_snapshot_worker.enqueue().await
                             || state.cleanup_snapshot_worker.is_running();
-                        if refreshing {
-                            return Ok(Json(cleanup_pending_response(&req)));
+                        if !refreshing && let Some(last_error) = last_error {
+                            return Err(cleanup_snapshot_refresh_failed(last_error));
                         }
-                    }
-                    if let Some(last_error) = last_error {
-                        return Err(cleanup_snapshot_refresh_failed(last_error));
                     }
                     let plan = cleanup::build_execution_plan_from_snapshot(
                         &snapshot,
@@ -279,6 +277,10 @@ pub(super) async fn scan_cleanups(
                     let mut response = plan.to_response(req.reason);
                     response.snapshot_age_ms =
                         cleanup_snapshot_worker::cleanup_snapshot_age_ms(&row.checked_at, now);
+                    response.refreshing = refreshing;
+                    response.retry_after_ms = refreshing.then_some(
+                        cleanup_snapshot_worker::CLEANUP_SNAPSHOT_PENDING_RETRY_AFTER_MS,
+                    );
                     return Ok(Json(response));
                 }
                 if req.refresh {
