@@ -1,5 +1,5 @@
 use std::collections::{BTreeMap, BTreeSet};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use anyhow::Context as _;
 use serde::Deserialize;
@@ -9,7 +9,7 @@ use crate::api::types::{
     CLEANUP_ESTIMATE_VERSION, CleanupEstimateBasis, CleanupInventoryCandidate,
     CleanupInventoryCategory, CleanupInventoryOwnership, CleanupInventoryOwnershipType,
     CleanupInventorySnapshot, CleanupPreset, CleanupResourceKind, CleanupScanReason,
-    CleanupScanRequest, CleanupScanResponse, CleanupScanStatus, CleanupScope,
+    CleanupScanRequest, CleanupScanResponse, CleanupScanStage, CleanupScanStatus, CleanupScope,
     CleanupServerDiskUsage, CleanupStackGroup, CleanupUnownedGroup, JobLogLine, JobProgress,
 };
 use crate::db::Db;
@@ -61,6 +61,8 @@ impl CleanupExecutionPlan {
             preset: self.request.preset.clone(),
             scope: self.request.scope.clone(),
             scanned_at: Some(self.scanned_at.clone()),
+            snapshot_age_ms: None,
+            scan_stage: None,
             refreshing: false,
             retry_after_ms: None,
             estimated_reclaimable_bytes: Some(self.estimated_reclaimable_bytes),
@@ -314,14 +316,14 @@ pub async fn build_inventory_snapshot(
     db: Db,
     runner: std::sync::Arc<dyn crate::runner::CommandRunner>,
 ) -> anyhow::Result<CleanupInventorySnapshot> {
-    build_inventory_snapshot_with_progress(db, runner, |_| {}).await
+    build_inventory_snapshot_with_progress(db, runner, |_, _| {}).await
 }
 
 #[cfg(test)]
 pub async fn build_inventory_snapshot_with_progress(
     db: Db,
     runner: std::sync::Arc<dyn crate::runner::CommandRunner>,
-    on_partial: impl FnMut(CleanupInventorySnapshot) + Send,
+    on_partial: impl FnMut(CleanupInventorySnapshot, CleanupScanStage) + Send,
 ) -> anyhow::Result<CleanupInventorySnapshot> {
     build_inventory_snapshot_with_image_unique_sizes(db, runner, None, on_partial).await
 }
@@ -330,7 +332,7 @@ pub async fn build_inventory_snapshot_with_image_unique_sizes(
     db: Db,
     runner: std::sync::Arc<dyn crate::runner::CommandRunner>,
     image_unique_sizes: Option<BTreeMap<String, u64>>,
-    mut on_partial: impl FnMut(CleanupInventorySnapshot) + Send,
+    mut on_partial: impl FnMut(CleanupInventorySnapshot, CleanupScanStage) + Send,
 ) -> anyhow::Result<CleanupInventorySnapshot> {
     let managed = load_managed_context_from_db(&db).await?;
     let mut candidates = scan_candidates_with_progress(
@@ -338,26 +340,32 @@ pub async fn build_inventory_snapshot_with_image_unique_sizes(
         &db,
         &managed,
         image_unique_sizes.as_ref(),
-        |candidates| {
-            on_partial(CleanupInventorySnapshot {
-                estimate_version: CLEANUP_ESTIMATE_VERSION,
-                scanned_at: now_rfc3339()
-                    .unwrap_or_else(|_| time::OffsetDateTime::now_utc().to_string()),
-                server_disk_usage: None,
-                candidates,
-            });
+        |candidates, stage| {
+            on_partial(
+                CleanupInventorySnapshot {
+                    estimate_version: CLEANUP_ESTIMATE_VERSION,
+                    scanned_at: now_rfc3339()
+                        .unwrap_or_else(|_| time::OffsetDateTime::now_utc().to_string()),
+                    server_disk_usage: None,
+                    candidates,
+                },
+                stage,
+            );
         },
     )
     .await?;
     if let Some(builder_cache) = scan_builder_cache_candidate(runner.clone()).await {
         candidates.push(builder_cache);
-        on_partial(CleanupInventorySnapshot {
-            estimate_version: CLEANUP_ESTIMATE_VERSION,
-            scanned_at: now_rfc3339()
-                .unwrap_or_else(|_| time::OffsetDateTime::now_utc().to_string()),
-            server_disk_usage: None,
-            candidates: candidates.clone(),
-        });
+        on_partial(
+            CleanupInventorySnapshot {
+                estimate_version: CLEANUP_ESTIMATE_VERSION,
+                scanned_at: now_rfc3339()
+                    .unwrap_or_else(|_| time::OffsetDateTime::now_utc().to_string()),
+                server_disk_usage: None,
+                candidates: candidates.clone(),
+            },
+            CleanupScanStage::BuilderCache,
+        );
     }
     let scanned_at = now_rfc3339()?;
     let server_disk_usage = scan_server_disk_usage_with_runner(runner.clone())
@@ -660,13 +668,50 @@ pub async fn run_cleanup_job(
     Ok(())
 }
 
+struct PartialEmitter<F>
+where
+    F: FnMut(Vec<CleanupInventoryCandidate>, CleanupScanStage),
+{
+    emit: F,
+    last_emit: Instant,
+    last_emitted_len: usize,
+}
+
+impl<F> PartialEmitter<F>
+where
+    F: FnMut(Vec<CleanupInventoryCandidate>, CleanupScanStage),
+{
+    fn new(emit: F) -> Self {
+        Self {
+            emit,
+            last_emit: Instant::now(),
+            last_emitted_len: 0,
+        }
+    }
+
+    fn maybe(&mut self, candidates: &[CleanupInventoryCandidate], stage: CleanupScanStage) {
+        if candidates.len().saturating_sub(self.last_emitted_len) >= 25
+            || self.last_emit.elapsed() >= Duration::from_millis(300)
+        {
+            self.force(candidates, stage);
+        }
+    }
+
+    fn force(&mut self, candidates: &[CleanupInventoryCandidate], stage: CleanupScanStage) {
+        (self.emit)(candidates.to_vec(), stage);
+        self.last_emit = Instant::now();
+        self.last_emitted_len = candidates.len();
+    }
+}
+
 async fn scan_candidates_with_progress(
     runner: &std::sync::Arc<dyn crate::runner::CommandRunner>,
     db: &Db,
     managed: &ManagedContext,
     image_unique_sizes: Option<&BTreeMap<String, u64>>,
-    mut on_partial: impl FnMut(Vec<CleanupInventoryCandidate>) + Send,
+    on_partial: impl FnMut(Vec<CleanupInventoryCandidate>, CleanupScanStage) + Send,
 ) -> anyhow::Result<Vec<CleanupInventoryCandidate>> {
+    let mut emitter = PartialEmitter::new(on_partial);
     let container_ids = docker_list_ids(runner, vec!["container", "ls", "-aq"]).await?;
     let mut containers = Vec::<DockerContainerInspect>::new();
     for container_id in container_ids {
@@ -733,8 +778,9 @@ async fn scan_candidates_with_progress(
             ownership: snapshot_ownership(owner),
             category: CleanupInventoryCategory::StoppedContainer,
         });
+        emitter.maybe(&candidates, CleanupScanStage::Containers);
     }
-    on_partial(candidates.clone());
+    emitter.force(&candidates, CleanupScanStage::Containers);
 
     let image_ids = docker_list_ids(runner, vec!["image", "ls", "-aq", "--no-trunc"]).await?;
     let mut dedup_image_ids = BTreeSet::new();
@@ -781,8 +827,9 @@ async fn scan_candidates_with_progress(
             ownership: snapshot_ownership(ownership),
             category,
         });
+        emitter.maybe(&candidates, CleanupScanStage::Images);
     }
-    on_partial(candidates.clone());
+    emitter.force(&candidates, CleanupScanStage::Images);
 
     let volume_names = docker_list_ids(runner, vec!["volume", "ls", "-q"]).await?;
     let mut system_df_volume_sizes: Option<BTreeMap<String, u64>> = None;
@@ -853,8 +900,9 @@ async fn scan_candidates_with_progress(
             ownership: snapshot_ownership(ownership),
             category,
         });
+        emitter.maybe(&candidates, CleanupScanStage::Volumes);
     }
-    on_partial(candidates.clone());
+    emitter.force(&candidates, CleanupScanStage::Volumes);
 
     let network_ids = docker_list_ids(runner, vec!["network", "ls", "-q"]).await?;
     let mut dedup_network_ids = BTreeSet::new();
@@ -889,8 +937,9 @@ async fn scan_candidates_with_progress(
             ownership: snapshot_ownership(resolve_network_ownership(&inspect, managed)),
             category: CleanupInventoryCategory::UnusedNetwork,
         });
+        emitter.maybe(&candidates, CleanupScanStage::Networks);
     }
-    on_partial(candidates.clone());
+    emitter.force(&candidates, CleanupScanStage::Networks);
 
     let _ = db;
     Ok(candidates)

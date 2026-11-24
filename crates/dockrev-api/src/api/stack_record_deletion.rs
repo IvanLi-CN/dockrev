@@ -469,7 +469,10 @@ pub(super) async fn delete_stack_record(
     // Discovery keeps a stack id across Compose I/O. Serialize record deletion
     // with the scan so a stale id cannot be written back after this transaction.
     let _discovery_guard = crate::discovery::acquire_scan_lock().await;
-    let _cleanup_snapshot_gate = state.cleanup_snapshot_worker.acquire_snapshot_gate().await;
+    let _cleanup_snapshot_gate = state
+        .cleanup_snapshot_worker
+        .acquire_snapshot_write_gate()
+        .await;
     let _artifact_lifecycle_guard = crate::backup::acquire_artifact_lifecycle_lock().await;
     let now = now_rfc3339().map_err(map_internal)?;
     if let Some(intent_json) = state

@@ -158,6 +158,16 @@ pub enum CleanupScanStatus {
     Ready,
 }
 
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum CleanupScanStage {
+    Containers,
+    Images,
+    Volumes,
+    Networks,
+    BuilderCache,
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CleanupServerDiskUsage {
@@ -232,6 +242,10 @@ pub struct CleanupScanResponse {
     pub scope: CleanupScope,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub scanned_at: Option<String>,
+    #[serde(default)]
+    pub snapshot_age_ms: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub scan_stage: Option<CleanupScanStage>,
     #[serde(default)]
     pub refreshing: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
