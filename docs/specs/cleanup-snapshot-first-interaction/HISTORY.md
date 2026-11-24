@@ -5,6 +5,7 @@
 ## Lifecycle / Compatibility
 
 - 2026-11-25：创建主题，冻结快照优先加载、即时确认弹窗、前台自动刷新与 apply 准入合同。
+- 2026-11-25：完成服务端快照年龄/阶段字段、扫描单飞与删除读写门闩、apply 扫描期间准入、前端即时发现态弹窗与 Storybook 证据。
 - 服务端响应新增 `snapshotAgeMs`，不删除或重命名既有字段。
 - `POST /api/cleanups/scan-runs` 继续只接受 `reason=page`、`preset=aggressive`、`scope=all`；弹窗发现态复用该流并做本地投影。
 

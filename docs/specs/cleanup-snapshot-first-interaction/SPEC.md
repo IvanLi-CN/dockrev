@@ -174,7 +174,95 @@
 
 ## Visual Evidence
 
-- None
+- source_type: `storybook_canvas`
+  target_program: `mock-only`
+  capture_scope: `element`
+  requested_viewport: `1440x900`
+  viewport_strategy: `storybook-viewport`
+  margin_policy: `trim_only`
+  evidence_surface: `component`
+  sensitive_exclusion: `N/A`
+  submission_gate: `approved`
+  story_id_or_title: `Pages/CleanupPage/DiscoveryState`
+  state: `discovery with stage stepper, discovered count and an auto-expanded found group`
+  evidence_note: 验证确认弹窗在发现态立即出现，阶段步进、已发现计数与候选渐进可见，确认入口保持禁用。
+
+![Cleanup discovery dialog](./assets/cleanup-discovery-desktop.png)
+
+- source_type: `storybook_canvas`
+  target_program: `mock-only`
+  capture_scope: `element`
+  requested_viewport: `393x852`
+  viewport_strategy: `storybook-viewport`
+  margin_policy: `trim_only`
+  evidence_surface: `component`
+  sensitive_exclusion: `N/A`
+  submission_gate: `approved`
+  story_id_or_title: `Pages/CleanupPage/DiscoveryState`
+  state: `narrow discovery dialog with wrapped stages and fixed footer`
+  evidence_note: 验证窄屏发现态仍能同时看到阶段、已发现数量和候选，确认入口保持禁用。
+
+![Cleanup discovery dialog mobile](./assets/cleanup-discovery-mobile-393.png)
+
+- source_type: `storybook_canvas`
+  target_program: `mock-only`
+  capture_scope: `element`
+  requested_viewport: `1440x900`
+  viewport_strategy: `storybook-viewport`
+  margin_policy: `trim_only`
+  evidence_surface: `component`
+  sensitive_exclusion: `N/A`
+  submission_gate: `approved`
+  story_id_or_title: `Pages/CleanupPage/ExpiredSnapshotState`
+  state: `snapshot expires while the confirmation dialog is open`
+  evidence_note: 验证快照到期后弹窗切换到发现态，旧候选不再可确认。
+
+![Cleanup expired snapshot discovery](./assets/cleanup-expired-discovery.png)
+
+- source_type: `storybook_canvas`
+  target_program: `mock-only`
+  capture_scope: `element`
+  requested_viewport: `1440x900`
+  viewport_strategy: `storybook-viewport`
+  margin_policy: `trim_only`
+  evidence_surface: `component`
+  sensitive_exclusion: `N/A`
+  submission_gate: `approved`
+  story_id_or_title: `Pages/CleanupPage/DiscoveryFailedState`
+  state: `discovery scan failure with partial candidates discarded`
+  evidence_note: 验证发现态扫描失败后只保留稳定失败与重试入口，部分候选被清空，确认保持禁用。
+
+![Cleanup discovery failure](./assets/cleanup-discovery-failed.png)
+
+- source_type: `storybook_canvas`
+  target_program: `mock-only`
+  capture_scope: `element`
+  requested_viewport: `1440x900`
+  viewport_strategy: `storybook-viewport`
+  margin_policy: `trim_only`
+  evidence_surface: `component`
+  sensitive_exclusion: `N/A`
+  submission_gate: `approved`
+  story_id_or_title: `Pages/CleanupPage/ConfirmDialogLatestScan`
+  state: `snapshot-backed confirmation with expanded resource groups`
+  evidence_note: 验证即时确认弹窗仍保留预计释放、扫描时间、四类资源分组与二次确认语义。
+
+![Cleanup confirmation dialog](./assets/cleanup-confirm-dialog-desktop.png)
+
+- source_type: `storybook_canvas`
+  target_program: `mock-only`
+  capture_scope: `element`
+  requested_viewport: `393x852`
+  viewport_strategy: `storybook-viewport`
+  margin_policy: `trim_only`
+  evidence_surface: `component`
+  sensitive_exclusion: `N/A`
+  submission_gate: `approved`
+  story_id_or_title: `Pages/CleanupPage/ConfirmDialogLatestScan`
+  state: `narrow confirmation with fixed footer`
+  evidence_note: 验证窄屏确认态的资源小计、安全说明与确认/取消入口仍完整可见。
+
+![Cleanup confirmation dialog mobile](./assets/cleanup-confirm-dialog-mobile.png)
 
 ## References
 
