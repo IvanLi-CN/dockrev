@@ -25,6 +25,7 @@ import {
   cloneFixture,
   parseCleanupScanRequest,
   partialCleanupResponse,
+  pendingCleanupScanResponse,
   buildMockDigestTagData,
   normalizeDigestValue,
   resolveMockEventSourcePollInterval,
@@ -776,51 +777,14 @@ export function installDockrevMockApi(
         (request.reason === 'page' || request.reason === 'confirm')
       ) {
         const ready = buildCleanupMockScanResponse(cleanupScenario, request)
-        return json(
-          {
-            ...ready,
-            status: 'pending',
-            refreshing: true,
-            retryAfterMs: 450,
-            scannedAt: null,
-            estimatedReclaimableBytes: null,
-            hasUnknownSize: false,
-            serverDiskUsage: null,
-            stackGroups: [],
-            unownedGroup: null,
-            confirmationFingerprint: null,
-          },
-          { status: 202 },
-        )
+        return json(pendingCleanupScanResponse(ready), { status: 202 })
       }
       if (cleanupScenario === 'cleanup-console-scan-pending') {
         const ready = buildCleanupMockScanResponse('cleanup-console', request)
         if (request.reason === 'page') {
-          return json(
-            {
-              ...ready,
-              status: 'pending',
-              refreshing: true,
-              retryAfterMs: 450,
-              scannedAt: null,
-              estimatedReclaimableBytes: null,
-              hasUnknownSize: false,
-              serverDiskUsage: null,
-              stackGroups: [],
-              unownedGroup: null,
-              confirmationFingerprint: null,
-            },
-            { status: 202 },
-          )
+          return json(pendingCleanupScanResponse(ready), { status: 202 })
         }
-        return json(
-          {
-            ...ready,
-            refreshing: true,
-            retryAfterMs: 450,
-          },
-          { status: 200 },
-        )
+        return json({ ...ready, refreshing: true, retryAfterMs: 450 }, { status: 200 })
       }
       if (cleanupScenario === 'cleanup-console-scan-slow') {
         await new Promise<void>((resolve) => {

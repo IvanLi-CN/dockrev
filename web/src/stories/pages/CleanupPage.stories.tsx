@@ -210,6 +210,7 @@ export const ApplyingAllState: Story = {
   play: async ({ canvasElement }) => {
     const doc = canvasElement.ownerDocument
     await waitForCondition(() => findButton(doc, '全部') != null)
+    await waitForCondition(() => canvasElement.textContent?.includes('空间概览') ?? false)
 
     findButton(doc, '全部')?.click()
     await waitForCondition(() => doc.body.textContent?.includes('确认清理全部') ?? false)
@@ -245,6 +246,7 @@ export const ConfirmDialogLatestScan: Story = {
   play: async ({ canvasElement }) => {
     const doc = canvasElement.ownerDocument
     await waitForCondition(() => findButton(doc, '全部') != null)
+    await waitForCondition(() => canvasElement.textContent?.includes('空间概览') ?? false)
 
     const trigger = findButton(doc, '全部')
     assertStory(trigger, 'topbar cleanup action missing')
@@ -276,6 +278,7 @@ export const ConfirmDialogScrollableLatestScan: Story = {
   play: async ({ canvasElement }) => {
     const doc = canvasElement.ownerDocument
     await waitForCondition(() => findButton(doc, '全部') != null)
+    await waitForCondition(() => canvasElement.textContent?.includes('空间概览') ?? false)
     findButton(doc, '全部')?.click()
     await waitForCondition(() => doc.body.textContent?.includes('确认清理全部') ?? false)
     await waitForCondition(() => doc.querySelectorAll('.cleanupConfirmGroupToggle').length === 4)
@@ -306,6 +309,7 @@ export const ConfirmPendingState: Story = {
   play: async ({ canvasElement }) => {
     const doc = canvasElement.ownerDocument
     await waitForCondition(() => findButton(doc, '全部') != null)
+    await waitForCondition(() => canvasElement.textContent?.includes('空间概览') ?? false)
     findButton(doc, '全部')?.click()
 
     await waitForCondition(() => doc.body.textContent?.includes('正在发现可清理内容') ?? false)
