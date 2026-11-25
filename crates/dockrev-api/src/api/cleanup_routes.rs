@@ -193,22 +193,17 @@ pub(super) async fn scan_cleanups(
                     .map_err(|err| map_internal(err.into()))?;
                 let estimate_version_supported =
                     snapshot.estimate_version == crate::api::types::CLEANUP_ESTIMATE_VERSION;
-                let is_fresh = estimate_version_supported
-                    && cleanup_snapshot_worker::cleanup_snapshot_is_fresh(&row.checked_at, now);
+                if !estimate_version_supported {
+                    return Ok(Json(cleanup_pending_response_with(&req, is_running)));
+                }
                 let mut refreshing = is_running;
                 let last_error = state.cleanup_snapshot_worker.last_error().await;
-                if (!is_fresh || req.refresh) && !refreshing {
-                    if !req.refresh
-                        && !is_fresh
-                        && let Some(last_error) = last_error.clone()
-                    {
-                        return Err(cleanup_snapshot_refresh_failed(last_error));
-                    }
+                let snapshot_age_ms =
+                    cleanup_snapshot_worker::cleanup_snapshot_age_ms(&row.checked_at, now);
+                if req.refresh && !refreshing {
                     refreshing = state.cleanup_snapshot_worker.enqueue().await
                         || state.cleanup_snapshot_worker.is_running();
-                    if !refreshing
-                        && let Some(last_error) = state.cleanup_snapshot_worker.last_error().await
-                    {
+                    if !refreshing && let Some(last_error) = last_error {
                         return Err(cleanup_snapshot_refresh_failed(last_error));
                     }
                 }
@@ -219,22 +214,22 @@ pub(super) async fn scan_cleanups(
                 )
                 .map_err(map_internal)?;
                 let mut response = plan.to_response(req.reason);
+                response.snapshot_age_ms = snapshot_age_ms;
                 response.refreshing = refreshing;
                 response.retry_after_ms = refreshing
                     .then_some(cleanup_snapshot_worker::CLEANUP_SNAPSHOT_PENDING_RETRY_AFTER_MS);
                 return Ok(Json(response));
             }
 
+            let mut refreshing = is_running;
             if req.refresh {
                 let started = state.cleanup_snapshot_worker.enqueue().await;
-                let refreshing = started || state.cleanup_snapshot_worker.is_running();
+                refreshing = started || state.cleanup_snapshot_worker.is_running();
                 if !refreshing
                     && let Some(last_error) = state.cleanup_snapshot_worker.last_error().await
                 {
                     return Err(cleanup_snapshot_refresh_failed(last_error));
                 }
-            } else if let Some(last_error) = state.cleanup_snapshot_worker.last_error().await {
-                return Err(cleanup_snapshot_refresh_failed(last_error));
             }
             Ok(Json(CleanupScanResponse {
                 status: CleanupScanStatus::Pending,
@@ -242,10 +237,11 @@ pub(super) async fn scan_cleanups(
                 preset: req.preset,
                 scope: req.scope,
                 scanned_at: None,
-                refreshing: true,
-                retry_after_ms: Some(
-                    cleanup_snapshot_worker::CLEANUP_SNAPSHOT_PENDING_RETRY_AFTER_MS,
-                ),
+                snapshot_age_ms: None,
+                scan_stage: None,
+                refreshing,
+                retry_after_ms: refreshing
+                    .then_some(cleanup_snapshot_worker::CLEANUP_SNAPSHOT_PENDING_RETRY_AFTER_MS),
                 estimated_reclaimable_bytes: None,
                 has_unknown_size: false,
                 server_disk_usage: None,
@@ -263,16 +259,14 @@ pub(super) async fn scan_cleanups(
                 let is_fresh = estimate_version_supported
                     && cleanup_snapshot_worker::cleanup_snapshot_is_fresh(&row.checked_at, now);
                 let last_error = state.cleanup_snapshot_worker.last_error().await;
-                if is_fresh && !is_running {
+                if is_fresh {
+                    let mut refreshing = is_running;
                     if req.refresh {
-                        let refreshing = state.cleanup_snapshot_worker.enqueue().await
+                        refreshing = state.cleanup_snapshot_worker.enqueue().await
                             || state.cleanup_snapshot_worker.is_running();
-                        if refreshing {
-                            return Ok(Json(cleanup_pending_response(&req)));
+                        if !refreshing && let Some(last_error) = last_error {
+                            return Err(cleanup_snapshot_refresh_failed(last_error));
                         }
-                    }
-                    if let Some(last_error) = last_error {
-                        return Err(cleanup_snapshot_refresh_failed(last_error));
                     }
                     let plan = cleanup::build_execution_plan_from_snapshot(
                         &snapshot,
@@ -280,7 +274,14 @@ pub(super) async fn scan_cleanups(
                         &snapshot.scanned_at,
                     )
                     .map_err(map_internal)?;
-                    return Ok(Json(plan.to_response(req.reason)));
+                    let mut response = plan.to_response(req.reason);
+                    response.snapshot_age_ms =
+                        cleanup_snapshot_worker::cleanup_snapshot_age_ms(&row.checked_at, now);
+                    response.refreshing = refreshing;
+                    response.retry_after_ms = refreshing.then_some(
+                        cleanup_snapshot_worker::CLEANUP_SNAPSHOT_PENDING_RETRY_AFTER_MS,
+                    );
+                    return Ok(Json(response));
                 }
                 if req.refresh {
                     let _ = state.cleanup_snapshot_worker.enqueue().await;
@@ -313,6 +314,8 @@ pub(super) async fn scan_cleanups(
                 preset: req.preset,
                 scope: req.scope,
                 scanned_at: None,
+                snapshot_age_ms: None,
+                scan_stage: None,
                 refreshing: true,
                 retry_after_ms: Some(
                     cleanup_snapshot_worker::CLEANUP_SNAPSHOT_PENDING_RETRY_AFTER_MS,
@@ -345,6 +348,10 @@ async fn cleanup_page_snapshot_response(
     let plan = cleanup::build_execution_plan_from_snapshot(&snapshot, req, &snapshot.scanned_at)
         .map_err(map_internal)?;
     let mut response = plan.to_response(CleanupScanReason::Page);
+    response.snapshot_age_ms = cleanup_snapshot_worker::cleanup_snapshot_age_ms(
+        &row.checked_at,
+        time::OffsetDateTime::now_utc(),
+    );
     response.refreshing = true;
     response.retry_after_ms =
         Some(cleanup_snapshot_worker::CLEANUP_SNAPSHOT_PENDING_RETRY_AFTER_MS);
@@ -352,12 +359,13 @@ async fn cleanup_page_snapshot_response(
 }
 
 async fn run_cleanup_scan_stream(state: Arc<AppState>, req: CleanupScanRequest, scan_id: String) {
-    let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<CleanupInventorySnapshot>();
+    let (tx, mut rx) =
+        tokio::sync::mpsc::unbounded_channel::<(CleanupInventorySnapshot, CleanupScanStage)>();
     let partial_state = state.clone();
     let partial_req = req.clone();
     let partial_scan_id = scan_id.clone();
     let partial_forwarder = tokio::spawn(async move {
-        while let Some(snapshot) = rx.recv().await {
+        while let Some((snapshot, stage)) = rx.recv().await {
             let Ok(plan) = cleanup::build_execution_plan_from_snapshot(
                 &snapshot,
                 &partial_req,
@@ -366,6 +374,11 @@ async fn run_cleanup_scan_stream(state: Arc<AppState>, req: CleanupScanRequest, 
                 continue;
             };
             let mut response = plan.to_response(CleanupScanReason::Page);
+            response.snapshot_age_ms = cleanup_snapshot_worker::cleanup_snapshot_age_ms(
+                &snapshot.scanned_at,
+                time::OffsetDateTime::now_utc(),
+            );
+            response.scan_stage = Some(stage);
             response.status = CleanupScanStatus::Pending;
             response.refreshing = true;
             response.retry_after_ms =
@@ -386,11 +399,15 @@ async fn run_cleanup_scan_stream(state: Arc<AppState>, req: CleanupScanRequest, 
     // Keep the full scan and its final upsert in the same critical section as
     // Stack-record deletion so an in-flight scan cannot resurrect a stale
     // ownership snapshot after deletion invalidates it.
-    let _snapshot_gate = state.cleanup_snapshot_worker.acquire_snapshot_gate().await;
+    let _scan_gate = state.cleanup_snapshot_worker.acquire_scan_gate().await;
+    let _snapshot_gate = state
+        .cleanup_snapshot_worker
+        .acquire_snapshot_read_gate()
+        .await;
     let result = state
         .cleanup_snapshot_worker
-        .build_inventory_snapshot_with_progress(move |snapshot| {
-            let _ = tx.send(snapshot);
+        .build_inventory_snapshot_with_progress(move |snapshot, stage| {
+            let _ = tx.send((snapshot, stage));
         })
         .await;
 
@@ -422,7 +439,7 @@ async fn run_cleanup_scan_stream(state: Arc<AppState>, req: CleanupScanRequest, 
                 finish_cleanup_scan_failed(&state, &scan_id, err.to_string()).await;
                 return;
             }
-            let response = match cleanup::build_execution_plan_from_snapshot(
+            let mut response = match cleanup::build_execution_plan_from_snapshot(
                 &snapshot,
                 &req,
                 &snapshot.scanned_at,
@@ -433,6 +450,10 @@ async fn run_cleanup_scan_stream(state: Arc<AppState>, req: CleanupScanRequest, 
                     return;
                 }
             };
+            response.snapshot_age_ms = cleanup_snapshot_worker::cleanup_snapshot_age_ms(
+                &snapshot.scanned_at,
+                time::OffsetDateTime::now_utc(),
+            );
             state
                 .cleanup_scan_runs
                 .append_to_active(&scan_id, CleanupScanRunPhase::Ready, Some(response), None)
@@ -493,7 +514,10 @@ pub(super) async fn apply_cleanups(
     let user = require_user(&state, &headers).await?;
     validate_cleanup_apply_request(&req)?;
     // Keep snapshot validation and job registration atomic with record deletion.
-    let _snapshot_gate = state.cleanup_snapshot_worker.acquire_snapshot_gate().await;
+    let _snapshot_gate = state
+        .cleanup_snapshot_worker
+        .acquire_snapshot_read_gate()
+        .await;
     let scan_req = CleanupScanRequest {
         reason: CleanupScanReason::Confirm,
         preset: req.preset.clone(),
@@ -523,9 +547,8 @@ pub(super) async fn apply_cleanups(
     let now = time::OffsetDateTime::now_utc();
     let is_fresh = snapshot.estimate_version == crate::api::types::CLEANUP_ESTIMATE_VERSION
         && cleanup_snapshot_worker::cleanup_snapshot_is_fresh(&snapshot_row.checked_at, now);
-    let is_running = state.cleanup_snapshot_worker.is_running();
-    let last_error = state.cleanup_snapshot_worker.last_error().await;
-    if !is_fresh || is_running {
+    if !is_fresh {
+        let is_running = state.cleanup_snapshot_worker.is_running();
         if !is_running {
             let _ = state.cleanup_snapshot_worker.enqueue().await;
             if !state.cleanup_snapshot_worker.is_running()
@@ -537,9 +560,6 @@ pub(super) async fn apply_cleanups(
         return Err(ApiError::cleanup_snapshot_stale(cleanup_pending_response(
             &scan_req,
         )));
-    }
-    if let Some(last_error) = last_error {
-        return Err(cleanup_snapshot_refresh_failed(last_error));
     }
     let plan =
         cleanup::build_execution_plan_from_snapshot(&snapshot, &scan_req, &snapshot.scanned_at)
@@ -560,9 +580,10 @@ pub(super) async fn apply_cleanups(
             has_unknown_size = plan.has_unknown_size(),
             "cleanup apply rejected because confirmation snapshot is stale"
         );
-        return Err(ApiError::cleanup_snapshot_stale(
-            plan.to_response(CleanupScanReason::Confirm),
-        ));
+        let mut latest = plan.to_response(CleanupScanReason::Confirm);
+        latest.snapshot_age_ms =
+            cleanup_snapshot_worker::cleanup_snapshot_age_ms(&snapshot_row.checked_at, now);
+        return Err(ApiError::cleanup_snapshot_stale(latest));
     }
 
     if !plan.validate_volume_identities(&state.runner).await {
@@ -621,14 +642,24 @@ pub(super) async fn apply_cleanups(
 }
 
 fn cleanup_pending_response(req: &CleanupScanRequest) -> CleanupScanResponse {
+    cleanup_pending_response_with(req, true)
+}
+
+fn cleanup_pending_response_with(
+    req: &CleanupScanRequest,
+    refreshing: bool,
+) -> CleanupScanResponse {
     CleanupScanResponse {
         status: CleanupScanStatus::Pending,
         reason: req.reason.clone(),
         preset: req.preset.clone(),
         scope: req.scope.clone(),
         scanned_at: None,
-        refreshing: true,
-        retry_after_ms: Some(cleanup_snapshot_worker::CLEANUP_SNAPSHOT_PENDING_RETRY_AFTER_MS),
+        snapshot_age_ms: None,
+        scan_stage: None,
+        refreshing,
+        retry_after_ms: refreshing
+            .then_some(cleanup_snapshot_worker::CLEANUP_SNAPSHOT_PENDING_RETRY_AFTER_MS),
         estimated_reclaimable_bytes: None,
         has_unknown_size: false,
         server_disk_usage: None,

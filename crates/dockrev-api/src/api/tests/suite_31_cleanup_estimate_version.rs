@@ -14,7 +14,7 @@ async fn cleanup_scan_uses_image_unique_usage_by_exact_image_id() {
         state.db.clone(),
         runner,
         Some(image_unique_sizes),
-        |_| {},
+        |_, _| {},
     )
     .await
     .unwrap();

@@ -96,7 +96,7 @@ async fn cleanup_scan_omits_builder_cache_when_no_inventory_hint_exists() {
 }
 
 #[tokio::test]
-async fn cleanup_confirm_pending_poll_does_not_reenqueue_refresh() {
+async fn cleanup_confirm_returns_ready_while_refresh_runs_without_reenqueue() {
     let db_path = format!("/tmp/dockrev-cleanup-confirm-poll-{}.sqlite3", ulid::Ulid::new());
     let runner = Arc::new(CleanupRunner::stale_on_second_scan());
     let state = test_state_with(&db_path, Arc::new(FakeRegistry), runner.clone()).await;
@@ -159,8 +159,13 @@ services:
         .unwrap();
     assert_eq!(pending_resp.status(), 200);
     let pending_body = response_json(pending_resp).await;
-    assert_eq!(pending_body["status"].as_str(), Some("pending"));
+    assert_eq!(pending_body["status"].as_str(), Some("ready"));
     assert_eq!(pending_body["refreshing"].as_bool(), Some(true));
+    assert!(
+        pending_body["confirmationFingerprint"]
+            .as_str()
+            .is_some_and(|value| !value.is_empty())
+    );
 
     for _ in 0..200 {
         if !state.cleanup_snapshot_worker.is_running() {
@@ -309,7 +314,7 @@ async fn cleanup_confirm_returns_error_after_worker_failure() {
 }
 
 #[tokio::test]
-async fn cleanup_confirm_and_apply_reject_fresh_snapshot_after_worker_failure() {
+async fn cleanup_confirm_and_apply_accept_fresh_snapshot_after_worker_failure() {
     let db_path = format!(
         "/tmp/dockrev-cleanup-fresh-failure-{}.sqlite3",
         ulid::Ulid::new()
@@ -356,11 +361,13 @@ async fn cleanup_confirm_and_apply_reject_fresh_snapshot_after_worker_failure() 
         )
         .await
         .unwrap();
-    assert_eq!(confirm_response.status(), 500);
+    assert_eq!(confirm_response.status(), 200);
     let confirm_body = response_json(confirm_response).await;
-    assert_eq!(
-        confirm_body["error"]["message"].as_str(),
-        Some("cleanup snapshot refresh failed")
+    assert_eq!(confirm_body["status"].as_str(), Some("ready"));
+    assert!(
+        confirm_body["confirmationFingerprint"]
+            .as_str()
+            .is_some_and(|value| !value.is_empty())
     );
     assert!(!confirm_body.to_string().contains("boom"));
 
@@ -387,7 +394,7 @@ async fn cleanup_confirm_and_apply_reject_fresh_snapshot_after_worker_failure() 
         .unwrap();
     assert_eq!(retry_response.status(), 200);
     let retry_body = response_json(retry_response).await;
-    assert_eq!(retry_body["status"].as_str(), Some("pending"));
+    assert_eq!(retry_body["status"].as_str(), Some("ready"));
     assert_eq!(retry_body["refreshing"].as_bool(), Some(true));
     let retry_ready = wait_for_cleanup_scan_ready(
         &app,
@@ -424,13 +431,19 @@ async fn cleanup_confirm_and_apply_reject_fresh_snapshot_after_worker_failure() 
         )
         .await
         .unwrap();
-    assert_eq!(apply_response.status(), 500);
+    assert_eq!(apply_response.status(), 200);
     let apply_body = response_json(apply_response).await;
-    assert_eq!(
-        apply_body["error"]["message"].as_str(),
-        Some("cleanup snapshot refresh failed")
-    );
-    assert!(!apply_body.to_string().contains("boom"));
+    let job_id = apply_body["jobId"]
+        .as_str()
+        .expect("apply returns a job id")
+        .to_string();
+    let queued = state
+        .db
+        .get_job(&job_id)
+        .await
+        .unwrap()
+        .expect("job created");
+    assert_eq!(queued.r#type.as_str(), "cleanup_apply");
 }
 
 #[tokio::test]
@@ -562,7 +575,7 @@ async fn cleanup_scan_run_streams_partial_and_ready_events() {
 }
 
 #[tokio::test]
-async fn cleanup_page_stale_poll_reenqueues_refresh_when_worker_is_idle() {
+async fn cleanup_page_stale_poll_returns_stale_snapshot_without_reenqueue() {
     let db_path = format!("/tmp/dockrev-cleanup-page-stale-poll-{}.sqlite3", ulid::Ulid::new());
     let runner = Arc::new(CleanupRunner::stale_on_second_scan());
     let state = test_state_with(&db_path, Arc::new(FakeRegistry), runner.clone()).await;
@@ -626,19 +639,18 @@ async fn cleanup_page_stale_poll_reenqueues_refresh_when_worker_is_idle() {
     assert_eq!(poll_resp.status(), 200);
     let poll_body = response_json(poll_resp).await;
     assert_eq!(poll_body["status"].as_str(), Some("ready"));
-    assert_eq!(poll_body["refreshing"].as_bool(), Some(true));
-
-    for _ in 0..200 {
-        if runner.stale_generation() >= 3 {
-            break;
-        }
-        tokio::time::sleep(Duration::from_millis(10)).await;
-    }
-    assert_eq!(runner.stale_generation(), 3);
+    assert_eq!(poll_body["refreshing"].as_bool(), Some(false));
+    assert!(
+        poll_body["snapshotAgeMs"]
+            .as_u64()
+            .unwrap_or_default()
+            > 300_000
+    );
+    assert_eq!(runner.stale_generation(), 2);
 }
 
 #[tokio::test]
-async fn cleanup_page_returns_error_after_initial_refresh_failure_until_explicit_retry() {
+async fn cleanup_page_returns_pending_after_initial_refresh_failure_until_explicit_retry() {
     let db_path = format!("/tmp/dockrev-cleanup-initial-refresh-failure-{}.sqlite3", ulid::Ulid::new());
     let runner = Arc::new(CleanupRunner::volume_in_use());
     let state = test_state_with(&db_path, Arc::new(FakeRegistry), runner).await;
@@ -669,13 +681,11 @@ async fn cleanup_page_returns_error_after_initial_refresh_failure_until_explicit
         )
         .await
         .unwrap();
-    assert_eq!(failing_resp.status(), 500);
+    assert_eq!(failing_resp.status(), 200);
     let failing_body = response_json(failing_resp).await;
-    assert_eq!(failing_body["error"]["code"], "internal");
-    assert_eq!(
-        failing_body["error"]["message"].as_str(),
-        Some("cleanup snapshot refresh failed")
-    );
+    assert_eq!(failing_body["status"].as_str(), Some("pending"));
+    assert_eq!(failing_body["refreshing"].as_bool(), Some(false));
+    assert!(failing_body["snapshotAgeMs"].is_null());
     assert!(!failing_body.to_string().contains("boom"));
     assert!(!state.cleanup_snapshot_worker.is_running());
 
@@ -719,7 +729,7 @@ async fn cleanup_page_returns_error_after_initial_refresh_failure_until_explicit
 }
 
 #[tokio::test]
-async fn cleanup_page_returns_error_for_stale_cached_snapshot_after_refresh_failure() {
+async fn cleanup_page_returns_stale_snapshot_after_refresh_failure() {
     let db_path = format!(
         "/tmp/dockrev-cleanup-stale-refresh-failure-{}.sqlite3",
         ulid::Ulid::new()
@@ -770,12 +780,15 @@ async fn cleanup_page_returns_error_for_stale_cached_snapshot_after_refresh_fail
         )
         .await
         .unwrap();
-    assert_eq!(resp.status(), 500);
+    assert_eq!(resp.status(), 200);
     let body = response_json(resp).await;
-    assert_eq!(body["error"]["code"], "internal");
-    assert_eq!(
-        body["error"]["message"].as_str(),
-        Some("cleanup snapshot refresh failed")
+    assert_eq!(body["status"].as_str(), Some("ready"));
+    assert_eq!(body["refreshing"].as_bool(), Some(false));
+    assert!(
+        body["snapshotAgeMs"]
+            .as_u64()
+            .unwrap_or_default()
+            > 300_000
     );
     assert!(!body.to_string().contains("boom"));
     assert!(!state.cleanup_snapshot_worker.is_running());

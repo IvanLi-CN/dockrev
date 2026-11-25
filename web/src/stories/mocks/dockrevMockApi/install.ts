@@ -25,6 +25,7 @@ import {
   cloneFixture,
   parseCleanupScanRequest,
   partialCleanupResponse,
+  pendingCleanupScanResponse,
   buildMockDigestTagData,
   normalizeDigestValue,
   resolveMockEventSourcePollInterval,
@@ -674,10 +675,19 @@ export function installDockrevMockApi(
       const request = parseCleanupScanRequest(init?.body)
       cleanupRuntime.nextScanRunSeq += 1
       const scanId = `mock-cleanup-scan-${cleanupRuntime.nextScanRunSeq}`
+      const discoveryScenario =
+        cleanupScenario === 'cleanup-console-discovery' ||
+        cleanupScenario === 'cleanup-console-discovery-failed'
       const previousSnapshot =
-        cleanupScenario === 'cleanup-console-scan-pending' ? null : buildCleanupMockScanResponse(cleanupScenario, request, 1)
+        cleanupScenario === 'cleanup-console-scan-pending' || discoveryScenario
+          ? null
+          : buildCleanupMockScanResponse(cleanupScenario, request, 1)
       const ready = buildCleanupMockScanResponse(cleanupScenario, request, cleanupScenario === 'cleanup-console-stale' ? 2 : 1)
-      const holdPartial = cleanupScenario === 'cleanup-console-scan-slow' && cleanupRuntime.nextScanRunSeq > 1
+      const holdPartial =
+        (cleanupScenario === 'cleanup-console-scan-slow' && cleanupRuntime.nextScanRunSeq > 1) ||
+        cleanupScenario === 'cleanup-console-expiring' ||
+        cleanupScenario === 'cleanup-console-confirm-pending' ||
+        discoveryScenario
       const events: Array<{ id: number; event: string; data: unknown }> = [
         {
           id: 1,
@@ -691,7 +701,13 @@ export function installDockrevMockApi(
           event: 'scan_partial',
           data: { scanId, phase: 'scan_partial', response: partialCleanupResponse(ready) },
         })
-        if (!holdPartial) {
+        if (cleanupScenario === 'cleanup-console-discovery-failed') {
+          events.push({
+            id: 3,
+            event: 'scan_failed',
+            data: { scanId, phase: 'scan_failed', message: 'cleanup scan failed' },
+          })
+        } else if (!holdPartial) {
           events.push({
             id: 3,
             event: 'scan_ready',
@@ -725,7 +741,7 @@ export function installDockrevMockApi(
       const request = parseCleanupScanRequest(init?.body)
       if (request.reason === 'confirm' && cleanupScenario === 'cleanup-console-confirm-pending') {
         const ready = buildCleanupMockScanResponse(cleanupScenario, request)
-        if (request.refresh && !cleanupRuntime.confirmPendingConsumed) {
+        if (!cleanupRuntime.confirmPendingConsumed) {
           cleanupRuntime.confirmPendingConsumed = true
           return json(
             {
@@ -755,34 +771,20 @@ export function installDockrevMockApi(
         }
         return json(buildCleanupMockScanResponse(cleanupScenario, request))
       }
+      if (
+        (cleanupScenario === 'cleanup-console-discovery' ||
+          cleanupScenario === 'cleanup-console-discovery-failed') &&
+        (request.reason === 'page' || request.reason === 'confirm')
+      ) {
+        const ready = buildCleanupMockScanResponse(cleanupScenario, request)
+        return json(pendingCleanupScanResponse(ready), { status: 202 })
+      }
       if (cleanupScenario === 'cleanup-console-scan-pending') {
         const ready = buildCleanupMockScanResponse('cleanup-console', request)
         if (request.reason === 'page') {
-          return json(
-            {
-              ...ready,
-              status: 'pending',
-              refreshing: true,
-              retryAfterMs: 450,
-              scannedAt: null,
-              estimatedReclaimableBytes: null,
-              hasUnknownSize: false,
-              serverDiskUsage: null,
-              stackGroups: [],
-              unownedGroup: null,
-              confirmationFingerprint: null,
-            },
-            { status: 202 },
-          )
+          return json(pendingCleanupScanResponse(ready), { status: 202 })
         }
-        return json(
-          {
-            ...ready,
-            refreshing: true,
-            retryAfterMs: 450,
-          },
-          { status: 200 },
-        )
+        return json({ ...ready, refreshing: true, retryAfterMs: 450 }, { status: 200 })
       }
       if (cleanupScenario === 'cleanup-console-scan-slow') {
         await new Promise<void>((resolve) => {

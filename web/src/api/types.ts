@@ -840,6 +840,8 @@ export type CleanupResourceKind = 'image' | 'container' | 'network' | 'volume' |
 
 export type CleanupScanReason = 'page' | 'confirm'
 
+export type CleanupScanStage = 'containers' | 'images' | 'volumes' | 'networks' | 'builder_cache'
+
 export type CleanupApplyReason = 'ui'
 
 export type CleanupScanRequest = {
@@ -899,6 +901,8 @@ export type CleanupScanResponse = {
   preset: CleanupPreset
   scope: CleanupScope
   scannedAt?: string | null
+  snapshotAgeMs?: number | null
+  scanStage?: CleanupScanStage | null
   refreshing?: boolean
   retryAfterMs?: number | null
   estimatedReclaimableBytes?: number | null

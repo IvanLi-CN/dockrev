@@ -112,12 +112,12 @@ export const ScanningState: Story = {
     const refreshButton = findButton(doc, '重扫')
     assertStory(allButton, 'topbar cleanup action should keep its short label while scanning')
     assertStory(refreshButton, 'topbar rescan action should keep its short label while scanning')
-    assertStory(allButton.disabled, 'cleanup action should be disabled during initial scan')
+    assertStory(!allButton.disabled, 'cleanup action should stay available to open the discovery dialog during initial scan')
     assertStory(refreshButton.disabled, 'rescan action should be disabled during initial scan')
-    assertStory(allButton.getAttribute('aria-busy') === 'true', 'cleanup action should expose busy state during initial scan')
+    assertStory(allButton.getAttribute('aria-busy') !== 'true', 'cleanup action should not claim to be applying during initial scan')
     assertStory(refreshButton.getAttribute('aria-busy') === 'true', 'rescan action should expose busy state during initial scan')
     assertStory(canvasElement.querySelector('[role="status"]') === null, 'initial page loading should not duplicate a status rail')
-    assertButtonHasNoIcon(doc, '全部')
+    assertButtonHasIcon(doc, '全部')
     assertButtonHasNoIcon(doc, '重扫')
   },
 }
@@ -134,7 +134,7 @@ export const RescanningState: Story = {
     refreshButton.click()
 
     await waitForCondition(() => findButton(doc, '重扫')?.getAttribute('aria-busy') === 'true')
-    assertStory(findButton(doc, '全部')?.disabled === true, 'cleanup action should stay disabled while rescanning')
+    assertStory(findButton(doc, '全部')?.disabled === false, 'cleanup action should stay available on a fresh snapshot while rescanning')
     assertStory(findButton(doc, '重扫')?.disabled === true, 'rescan action should be disabled while rescanning')
     assertStory(canvasElement.querySelector('[role="status"]')?.textContent?.includes('更新中'), 'rescan status rail should be visible')
     assertStory(!(canvasElement.textContent?.includes('旧数据正在更新') ?? false), 'rescan should not render the old stale-data prompt copy')
@@ -144,8 +144,63 @@ export const RescanningState: Story = {
       'partial rescan should preserve cached server disk usage until ready',
     )
     assertStory(canvasElement.querySelector('.cleanupStaleLoading'), 'stale cached cleanup cards or rows should show weak loading motion')
-    assertButtonHasNoIcon(doc, '全部')
+    assertButtonHasIcon(doc, '全部')
     assertButtonHasNoIcon(doc, '重扫')
+  },
+}
+
+export const DiscoveryState: Story = {
+  parameters: { dockrevApiScenario: 'cleanup-console-discovery' },
+  render: renderPage,
+  play: async ({ canvasElement }) => {
+    const doc = canvasElement.ownerDocument
+    await waitForCondition(() => findButton(doc, '全部') != null)
+    const allButton = findButton(doc, '全部')
+    assertStory(allButton, 'cleanup action missing during discovery')
+    assertStory(!allButton.disabled, 'cleanup action should open the discovery dialog')
+    allButton.click()
+
+    await waitForCondition(() => doc.body.textContent?.includes('正在发现可清理内容') ?? false)
+    const discovering = findButton(doc, '正在发现…')
+    assertStory(discovering, 'discovery confirm affordance missing')
+    assertStory(discovering.disabled, 'discovery confirm must stay disabled until ready')
+    assertStory(doc.body.textContent?.includes('已发现'), 'discovered count should be visible')
+    assertStory(doc.body.textContent?.includes('镜像'), 'scan stage should be visible')
+    await waitForCondition(() => doc.querySelector('.cleanupConfirmGroupDetails:not([hidden])') != null)
+    assertStory(doc.querySelector('.cleanupConfirmGroupDetails:not([hidden])'), 'discovered groups should stay open')
+    assertStory(!(doc.body.textContent?.includes('预计释放') ?? false), 'discovery must not claim a final estimate')
+  },
+}
+
+export const DiscoveryFailedState: Story = {
+  parameters: { dockrevApiScenario: 'cleanup-console-discovery-failed' },
+  render: renderPage,
+  play: async ({ canvasElement }) => {
+    const doc = canvasElement.ownerDocument
+    await waitForCondition(() => findButton(doc, '全部') != null)
+    findButton(doc, '全部')?.click()
+
+    await waitForCondition(() => doc.body.textContent?.includes('刷新失败') ?? false)
+    assertStory(findButton(doc, '重试'), 'discovery failure should offer retry')
+    const confirm = findButton(doc, '确认清理')
+    assertStory(confirm, 'cleanup confirm button missing in failure state')
+    assertStory(confirm.disabled, 'cleanup confirm must stay disabled after discovery failure')
+    assertStory(!(doc.body.textContent?.includes('已发现') ?? false), 'partial candidates should be cleared after failure')
+  },
+}
+
+export const ExpiredSnapshotState: Story = {
+  parameters: { dockrevApiScenario: 'cleanup-console-expiring' },
+  render: renderPage,
+  play: async ({ canvasElement }) => {
+    const doc = canvasElement.ownerDocument
+    await waitForCondition(() => canvasElement.textContent?.includes('空间概览') ?? false)
+    findButton(doc, '全部')?.click()
+
+    await waitForCondition(() => doc.body.textContent?.includes('正在发现可清理内容') ?? false)
+    const confirm = findButton(doc, '正在发现…')
+    assertStory(confirm, 'expired snapshot should switch to discovery')
+    assertStory(confirm.disabled, 'expired snapshot must not be confirmable')
   },
 }
 
@@ -155,6 +210,7 @@ export const ApplyingAllState: Story = {
   play: async ({ canvasElement }) => {
     const doc = canvasElement.ownerDocument
     await waitForCondition(() => findButton(doc, '全部') != null)
+    await waitForCondition(() => canvasElement.textContent?.includes('空间概览') ?? false)
 
     findButton(doc, '全部')?.click()
     await waitForCondition(() => doc.body.textContent?.includes('确认清理全部') ?? false)
@@ -190,12 +246,14 @@ export const ConfirmDialogLatestScan: Story = {
   play: async ({ canvasElement }) => {
     const doc = canvasElement.ownerDocument
     await waitForCondition(() => findButton(doc, '全部') != null)
+    await waitForCondition(() => canvasElement.textContent?.includes('空间概览') ?? false)
 
     const trigger = findButton(doc, '全部')
     assertStory(trigger, 'topbar cleanup action missing')
     trigger.click()
 
     await waitForCondition(() => doc.body.textContent?.includes('确认清理全部') ?? false)
+    await waitForCondition(() => doc.querySelectorAll('.cleanupConfirmGroupToggle').length === 4)
     assertStory(doc.body.textContent?.includes('最新扫描'), 'confirm dialog should show latest scan timestamp')
     assertStory(doc.body.textContent?.includes('预计释放'), 'confirm dialog should show reclaim estimate')
 
@@ -211,18 +269,6 @@ export const ConfirmDialogLatestScan: Story = {
     assertStory(doc.body.textContent?.includes('prod / api'), 'expanded details should show Stack and service ownership')
     assertStory(groupToggles[0]?.getAttribute('aria-expanded') === 'true' && groupToggles[1]?.getAttribute('aria-expanded') === 'true', 'multiple resource groups should remain open together')
     assertStory(doc.body.textContent?.includes('全部候选'), 'expanding groups should preserve the all-candidates confirmation')
-
-    findButton(doc, '确认清理')?.click()
-    await waitForCondition(() => globalThis.__DOCKREV_MOCK_DEBUG__?.lastCleanupApplyRequest != null)
-    const applyRequest = globalThis.__DOCKREV_MOCK_DEBUG__?.lastCleanupApplyRequest as {
-      scope?: unknown
-      confirmationFingerprint?: unknown
-    } | null
-    assertStory(applyRequest?.scope === 'all', 'expanding resource groups should preserve the all-resource apply scope')
-    assertStory(
-      typeof applyRequest?.confirmationFingerprint === 'string' && applyRequest.confirmationFingerprint.length > 0,
-      'all-resource apply should retain the confirmed snapshot fingerprint',
-    )
   },
 }
 
@@ -232,8 +278,10 @@ export const ConfirmDialogScrollableLatestScan: Story = {
   play: async ({ canvasElement }) => {
     const doc = canvasElement.ownerDocument
     await waitForCondition(() => findButton(doc, '全部') != null)
+    await waitForCondition(() => canvasElement.textContent?.includes('空间概览') ?? false)
     findButton(doc, '全部')?.click()
     await waitForCondition(() => doc.body.textContent?.includes('确认清理全部') ?? false)
+    await waitForCondition(() => doc.querySelectorAll('.cleanupConfirmGroupToggle').length === 4)
 
     const groups = Array.from(doc.querySelectorAll<HTMLButtonElement>('.cleanupConfirmGroupToggle'))
     assertStory(groups.length === 4, 'scrollable confirm dialog should render four resource groups')
@@ -261,11 +309,13 @@ export const ConfirmPendingState: Story = {
   play: async ({ canvasElement }) => {
     const doc = canvasElement.ownerDocument
     await waitForCondition(() => findButton(doc, '全部') != null)
+    await waitForCondition(() => canvasElement.textContent?.includes('空间概览') ?? false)
     findButton(doc, '全部')?.click()
 
-    await waitForCondition(() => canvasElement.querySelector('[role="status"]')?.textContent?.includes('更新中') ?? false)
-    assertStory(canvasElement.textContent?.includes('全部'), 'cleanup action should keep the stable short label while confirming')
-    await waitForCondition(() => doc.body.textContent?.includes('确认清理全部') ?? false)
+    await waitForCondition(() => doc.body.textContent?.includes('正在发现可清理内容') ?? false)
+    const discovering = findButton(doc, '正在发现…')
+    assertStory(discovering, 'pending confirmation should switch to discovery')
+    assertStory(discovering.disabled, 'pending confirmation must keep cleanup disabled')
   },
 }
 

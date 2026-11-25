@@ -2,6 +2,12 @@ import { ApiError, type CleanupPreset, type CleanupResourceItem, type CleanupRes
 
 const PRESET_ORDER: CleanupPreset[] = ['conservative', 'balanced', 'project_deep_clean', 'aggressive']
 
+export const CLEANUP_SNAPSHOT_MAX_AGE_MS = 300_000
+export const CLEANUP_REFRESH_MIN_LEAD_MS = 60_000
+export const CLEANUP_REFRESH_MAX_LEAD_MS = 240_000
+export const CLEANUP_IDLE_STOP_MS = 30 * 60_000
+export const CLEANUP_REFRESH_BACKOFF_MS = [60_000, 120_000, 240_000, 480_000, 960_000, 1_800_000]
+
 export const KIND_LABEL: Record<CleanupResourceKind, string> = {
   image: '镜像',
   container: '容器',
@@ -108,6 +114,62 @@ export function formatPercent(value: number): string {
 
 export function formatUnknownCount(count: number): string {
   return `${count} 项大小未知`
+}
+
+export function snapshotAgeNow(
+  response: Pick<CleanupScanResponse, 'snapshotAgeMs'>,
+  receivedAtMs: number,
+  nowMs: number,
+): number | null {
+  const reported = response.snapshotAgeMs
+  if (typeof reported !== 'number' || !Number.isFinite(reported) || reported < 0) return null
+  return reported + Math.max(0, nowMs - receivedAtMs)
+}
+
+export function isSnapshotFresh(
+  ageMs: number | null,
+  maxAgeMs = CLEANUP_SNAPSHOT_MAX_AGE_MS,
+): boolean {
+  return ageMs != null && ageMs < maxAgeMs
+}
+
+export function cleanupRefreshLeadMs(lastScanDurationMs?: number | null): number {
+  const known =
+    typeof lastScanDurationMs === 'number' && Number.isFinite(lastScanDurationMs) && lastScanDurationMs > 0
+      ? lastScanDurationMs + 15_000
+      : CLEANUP_REFRESH_MIN_LEAD_MS
+  return Math.min(CLEANUP_REFRESH_MAX_LEAD_MS, Math.max(CLEANUP_REFRESH_MIN_LEAD_MS, known))
+}
+
+export function nextCleanupRefreshDelayMs(
+  ageMs: number | null,
+  lastScanDurationMs?: number | null,
+): number | null {
+  if (ageMs == null) return null
+  return Math.max(0, cleanupRefreshLeadMs(lastScanDurationMs) - ageMs)
+}
+
+export function cleanupFailureBackoffMs(attempt: number): number {
+  const index = Math.min(Math.max(0, Math.trunc(attempt)), CLEANUP_REFRESH_BACKOFF_MS.length - 1)
+  return CLEANUP_REFRESH_BACKOFF_MS[index]
+}
+
+export function shouldStopCleanupRefresh(lastInteractionAtMs: number, nowMs: number): boolean {
+  return nowMs - lastInteractionAtMs >= CLEANUP_IDLE_STOP_MS
+}
+
+export function sumKnownReclaimableBytes(response: CleanupScanResponse): number {
+  let total = 0
+  for (const stack of response.stackGroups) {
+    for (const resource of stack.stackOrphans) total += resource.estimatedReclaimableBytes ?? 0
+    for (const service of stack.services) {
+      for (const resource of service.resources) total += resource.estimatedReclaimableBytes ?? 0
+    }
+  }
+  for (const resource of response.unownedGroup?.resources ?? []) {
+    total += resource.estimatedReclaimableBytes ?? 0
+  }
+  return total
 }
 
 export function countVisibleResources(response: CleanupScanResponse): number {
@@ -447,6 +509,55 @@ export function projectResponseForPreset(pageScan: CleanupScanResponse, preset: 
 
 /** Apply cleanup context filters to the rendered response only. The scan and
  * apply requests continue to use the original page scope and fingerprint. */
+export type CleanupTargetScope = {
+  scope: 'all' | 'stack' | 'service'
+  stackId?: string
+  serviceId?: string
+}
+
+export function projectResponseForTarget(
+  response: CleanupScanResponse,
+  target: CleanupTargetScope,
+): CleanupScanResponse {
+  if (target.scope === 'all') return response
+  const stackGroups = response.stackGroups
+    .filter((stack) => stack.stackId === target.stackId)
+    .map((stack) => {
+      const services =
+        target.scope === 'service'
+          ? stack.services.filter((service) => service.serviceId === target.serviceId)
+          : stack.services
+      const stackOrphans = target.scope === 'service' ? [] : stack.stackOrphans
+      const resources = [...stackOrphans, ...services.flatMap((service) => service.resources)]
+      return {
+        ...stack,
+        stackOrphans,
+        services,
+        estimatedReclaimableBytes: resources.reduce(
+          (sum, resource) => sum + (resource.estimatedReclaimableBytes ?? 0),
+          0,
+        ),
+        hasUnknownSize: resources.some(itemHasUnknownSize),
+      }
+    })
+    .filter((stack) => stack.stackOrphans.length > 0 || stack.services.length > 0)
+  const resources = stackGroups.flatMap((stack) => [
+    ...stack.stackOrphans,
+    ...stack.services.flatMap((service) => service.resources),
+  ])
+  return {
+    ...response,
+    stackGroups,
+    unownedGroup: null,
+    estimatedReclaimableBytes: resources.reduce(
+      (sum, resource) => sum + (resource.estimatedReclaimableBytes ?? 0),
+      0,
+    ),
+    hasUnknownSize: resources.some(itemHasUnknownSize),
+    confirmationFingerprint: null,
+  }
+}
+
 export function filterCleanupResponseForView(
   response: CleanupScanResponse,
   scope: 'all' | 'stack' | 'service',

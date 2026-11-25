@@ -321,6 +321,7 @@ None
 - Cleanup confirm/apply 使用固定 300 秒 freshness；confirm 轮询提供可见、可重试的状态栏与稳定短按钮标签，worker 失败终态不再无限 pending。
 - 2026-10-04：镜像估算改为 Docker 独占空间并版本化失效旧快照；确认清理对话框增加资源类型折叠小计。
 - Mock-only cleanup pending/failed scenarios retain the 1200-line installer budget without changing the API or confirmation flow.
+- 2026-11-25：交互合同由 `cleanup-snapshot-first-interaction` 接管：快照优先加载、即时发现态弹窗、前台自动刷新与扫描期间 apply 准入；本规格原先的强制 confirm-scan 与扫描期间等待规则被替换。
 
 ## 参考（References）
 

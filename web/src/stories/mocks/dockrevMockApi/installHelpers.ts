@@ -44,6 +44,23 @@ export function parseCleanupScanRequest(body: unknown): CleanupScanRequest {
   }
 }
 
+export function pendingCleanupScanResponse(response: CleanupScanResponse): CleanupScanResponse {
+  return {
+    ...response,
+    status: 'pending',
+    refreshing: true,
+    retryAfterMs: 450,
+    scannedAt: null,
+    snapshotAgeMs: null,
+    estimatedReclaimableBytes: null,
+    hasUnknownSize: false,
+    serverDiskUsage: null,
+    stackGroups: [],
+    unownedGroup: null,
+    confirmationFingerprint: null,
+  }
+}
+
 export function partialCleanupResponse(response: CleanupScanResponse): CleanupScanResponse {
   const firstStack = response.stackGroups[0]
   const partialStacks = firstStack
@@ -58,6 +75,8 @@ export function partialCleanupResponse(response: CleanupScanResponse): CleanupSc
   return {
     ...response,
     status: 'pending',
+    scanStage: 'networks',
+    snapshotAgeMs: 0,
     refreshing: true,
     retryAfterMs: 450,
     serverDiskUsage: null,

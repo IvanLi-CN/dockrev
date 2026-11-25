@@ -6,7 +6,7 @@ use std::{
     time::Duration,
 };
 
-use tokio::sync::Mutex;
+use tokio::sync::{Mutex, RwLock};
 
 use crate::{
     cleanup, db::Db, docker_engine::DockerEngineClient, now_rfc3339, runner::CommandRunner,
@@ -24,7 +24,8 @@ pub struct CleanupSnapshotWorker {
     running: Arc<AtomicBool>,
     pending: Arc<AtomicBool>,
     last_error: Arc<Mutex<Option<String>>>,
-    snapshot_gate: Arc<Mutex<()>>,
+    snapshot_gate: Arc<RwLock<()>>,
+    scan_gate: Arc<Mutex<()>>,
 }
 
 impl CleanupSnapshotWorker {
@@ -36,7 +37,8 @@ impl CleanupSnapshotWorker {
             running: Arc::new(AtomicBool::new(false)),
             pending: Arc::new(AtomicBool::new(false)),
             last_error: Arc::new(Mutex::new(None)),
-            snapshot_gate: Arc::new(Mutex::new(())),
+            snapshot_gate: Arc::new(RwLock::new(())),
+            scan_gate: Arc::new(Mutex::new(())),
         }
     }
 
@@ -47,7 +49,10 @@ impl CleanupSnapshotWorker {
 
     pub async fn build_inventory_snapshot_with_progress(
         &self,
-        on_partial: impl FnMut(crate::api::types::CleanupInventorySnapshot) + Send,
+        on_partial: impl FnMut(
+            crate::api::types::CleanupInventorySnapshot,
+            crate::api::types::CleanupScanStage,
+        ) + Send,
     ) -> anyhow::Result<crate::api::types::CleanupInventorySnapshot> {
         let image_unique_sizes = match &self.docker_engine {
             Some(docker_engine) => match docker_engine.image_disk_usage().await {
@@ -88,7 +93,7 @@ impl CleanupSnapshotWorker {
         &self,
         observed_snapshot_json: &str,
     ) -> anyhow::Result<bool> {
-        let _snapshot_guard = self.snapshot_gate.lock().await;
+        let _snapshot_guard = self.snapshot_gate.read().await;
         if let Some(current) = self
             .db
             .get_cleanup_inventory_snapshot(CLEANUP_SNAPSHOT_KEY)
@@ -116,8 +121,18 @@ impl CleanupSnapshotWorker {
         self.running.load(Ordering::SeqCst)
     }
 
-    pub(crate) async fn acquire_snapshot_gate(&self) -> tokio::sync::MutexGuard<'_, ()> {
-        self.snapshot_gate.lock().await
+    pub(crate) async fn acquire_snapshot_read_gate(&self) -> tokio::sync::RwLockReadGuard<'_, ()> {
+        self.snapshot_gate.read().await
+    }
+
+    pub(crate) async fn acquire_snapshot_write_gate(
+        &self,
+    ) -> tokio::sync::RwLockWriteGuard<'_, ()> {
+        self.snapshot_gate.write().await
+    }
+
+    pub(crate) async fn acquire_scan_gate(&self) -> tokio::sync::MutexGuard<'_, ()> {
+        self.scan_gate.lock().await
     }
 
     pub async fn last_error(&self) -> Option<String> {
@@ -137,7 +152,7 @@ impl CleanupSnapshotWorker {
             *last_error = result.err().map(|err| err.to_string());
             drop(last_error);
 
-            let snapshot_guard = self.snapshot_gate.lock().await;
+            let snapshot_guard = self.scan_gate.lock().await;
             if self.pending.swap(false, Ordering::SeqCst) {
                 drop(snapshot_guard);
                 continue;
@@ -159,8 +174,11 @@ impl CleanupSnapshotWorker {
     }
 
     async fn refresh_once(&self) -> anyhow::Result<()> {
-        let _snapshot_gate = self.snapshot_gate.lock().await;
-        let snapshot = self.build_inventory_snapshot_with_progress(|_| {}).await?;
+        let _scan_gate = self.scan_gate.lock().await;
+        let _snapshot_gate = self.snapshot_gate.read().await;
+        let snapshot = self
+            .build_inventory_snapshot_with_progress(|_, _| {})
+            .await?;
         let now = now_rfc3339()?;
         let checked_at = snapshot.scanned_at.clone();
         let snapshot_json = serde_json::to_string(&snapshot)?;
@@ -183,6 +201,17 @@ pub fn cleanup_snapshot_is_fresh(checked_at: &str, now: time::OffsetDateTime) ->
         return false;
     };
     (now - checked_at) <= time::Duration::seconds(CLEANUP_CONFIRM_MAX_AGE_SECONDS)
+}
+
+pub fn cleanup_snapshot_age_ms(checked_at: &str, now: time::OffsetDateTime) -> Option<u64> {
+    let checked_at =
+        time::OffsetDateTime::parse(checked_at, &time::format_description::well_known::Rfc3339)
+            .ok()?;
+    let age = now - checked_at;
+    if age.is_negative() {
+        return Some(0);
+    }
+    u64::try_from(age.whole_milliseconds()).ok()
 }
 
 #[allow(dead_code)]
