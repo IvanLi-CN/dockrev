@@ -27,8 +27,6 @@ export const PUBLIC_DEMO_CLEANUP_SCENARIOS = [
   'cleanup-console-storage-normal',
   'cleanup-console-confirm-pending',
   'cleanup-console-confirm-failed',
-  'cleanup-console-discovery',
-  'cleanup-console-discovery-failed',
 ] as const
 export type PublicDemoCleanupScenario = (typeof PUBLIC_DEMO_CLEANUP_SCENARIOS)[number]
 export const PUBLIC_DEMO_ASYNC_STATES = ['default', 'cold', 'cache-refresh', 'error', 'job-detail-retry'] as const
@@ -128,13 +126,6 @@ export function readPublicDemoManagementEvents(): PublicDemoManagementEvents {
   } catch {
     return 'default'
   }
-}
-
-export function navigateToPublicDemoCleanupScenario(scenario: PublicDemoCleanupScenario) {
-  if (typeof window === 'undefined') return
-  const url = new URL(`${appBasePath()}cleanup`, window.location.origin)
-  url.searchParams.set('demoCleanupScenario', scenario)
-  window.location.assign(url.toString())
 }
 
 export function readPublicDemoCleanupScenario(): PublicDemoCleanupScenario {

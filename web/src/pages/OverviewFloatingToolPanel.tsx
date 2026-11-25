@@ -23,10 +23,8 @@ import {
 } from './overviewToolPanelState'
 import {
   clearPendingPagesDemoRestoreState,
-  navigateToPublicDemoCleanupScenario,
   readPublicDemoSessionSummary,
   resetPublicDemoSessionState,
-  type PublicDemoCleanupScenario,
 } from '../demo/publicDemoControls'
 import { navigate, type Route } from '../routes'
 
@@ -411,16 +409,6 @@ export function HomepageFloatingToolPanel(props: {
     return snapOverviewToolPanelSide(visibleRect.left, bounds, panelSize.width)
   }, [bounds, panelSize.width, panelState, visibleRect])
   const demoSummary = readPublicDemoSessionSummary()
-  const cleanupScenarioActions: Array<{
-    label: string
-    note: string
-    scenario: PublicDemoCleanupScenario
-  }> = [
-    { label: '新鲜快照', note: '直接确认', scenario: 'cleanup-console-storage-normal' },
-    { label: '发现态', note: '确认 pending', scenario: 'cleanup-console-confirm-pending' },
-    { label: '发现失败', note: '扫描失败', scenario: 'cleanup-console-discovery-failed' },
-    { label: '确认失败', note: 'apply 前失败', scenario: 'cleanup-console-confirm-failed' },
-  ]
   const routeActions: Array<{ label: string; note: string; route: Route }> = [
     { label: 'Queue 假写', note: '任务队列与进度', route: { name: 'queue' } },
     { label: 'GHCR 假写', note: 'Webhook 维护', route: { name: 'ghcr-webhook-registry' } },
@@ -499,24 +487,6 @@ export function HomepageFloatingToolPanel(props: {
               </Button>
             ))}
           </div>
-        </div>
-
-        <div className="homepageToolFloatSection">
-          <div className="homepageToolFloatLabel">Cleanup 场景</div>
-          <div className="homepageToolActionGrid homepageToolActionGridCompact">
-            {cleanupScenarioActions.map((action) => (
-              <Button
-                key={action.label}
-                className="homepageToolActionButton"
-                onClick={() => navigateToPublicDemoCleanupScenario(action.scenario)}
-                variant="ghost"
-              >
-                <span>{action.label}</span>
-                <span className="homepageToolActionNote">{action.note}</span>
-              </Button>
-            ))}
-          </div>
-          <div className="homepageToolFloatHint">当前：{demoSummary.cleanupScenario}</div>
         </div>
 
         <div className="homepageToolFloatSection">

@@ -338,12 +338,6 @@ export const PublicDemoControlPanel: Story = {
         !canvasElement.textContent?.includes("sessionStorage"),
       "expected the public demo control panel to use concise descriptive copy instead of implementation-detail requirements",
     );
-    expectStory(
-      canvasElement.textContent?.includes("Cleanup 场景") &&
-        canvasElement.textContent?.includes("发现态") &&
-        canvasElement.textContent?.includes("发现失败"),
-      "expected the public demo control panel to expose cleanup scenario inspection controls",
-    );
 
     const floatWindow = canvasElement.querySelector<HTMLElement>(".homepageToolFloatWindow");
     const floatHead = canvasElement.querySelector<HTMLElement>(".homepageToolFloatHead");
