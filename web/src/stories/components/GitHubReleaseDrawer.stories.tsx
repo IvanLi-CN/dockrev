@@ -2,9 +2,9 @@ import type { CSSProperties, ReactNode } from 'react'
 import type { Meta, StoryObj } from '@storybook/react'
 
 import { GitHubReleaseDrawer } from '../../components/GitHubReleaseDrawer'
-import type { DockrevMockGitHubReleasesDataset } from '../mocks/dockrevMockApi'
-import { buildFixture } from '../mocks/dockrevMockApi/fixturesMisc'
-import { withDockrevMockApi } from '../mocks/withDockrevMockApi'
+import type { DockrevMockGitHubReleasesDataset } from '../../mock/dockrevMockApi'
+import { buildFixture } from '../../mock/dockrevMockApi/fixturesMisc'
+import { withDockrevMockApi } from '../../mock/withDockrevMockApi'
 
 const STORY_REPO = {
   fullName: 'ivanli-cn/codex-vibe-monitor',

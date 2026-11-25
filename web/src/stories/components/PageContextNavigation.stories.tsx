@@ -8,7 +8,7 @@ import {
 } from '../../components/PageContextNavigation'
 import type { CleanupResourceKind } from '../../api'
 import { KIND_LABEL } from '../../pages/cleanupPageModel'
-import { withDockrevMockApi } from '../mocks/withDockrevMockApi'
+import { withDockrevMockApi } from '../../mock/withDockrevMockApi'
 import { expectStory } from '../pages/storyAssertions'
 
 const meta: Meta = {

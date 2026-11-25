@@ -1,0 +1,4 @@
+# `bun test` runs the unit suite in `tests/`. The Playwright specs in `e2e/`
+# are executed by `bun run e2e`, not by the Bun test runner.
+[test]
+root = "./tests"

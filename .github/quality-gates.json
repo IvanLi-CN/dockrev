@@ -23,13 +23,13 @@
   "required_checks": ["Review Policy Gate", "Quality Gates Contract"],
   "informational_checks": [
     "Detect changes", "Lint & Checks", "Worktree bootstrap smoke", "Backend Tests",
-    "Frontend lint + build", "Frontend Storybook build", "Frontend Storybook test",
+    "Frontend lint + build", "Demo site smoke", "Frontend Storybook build", "Frontend Storybook test",
     "Deploy Smoke", "Release build check (PR)"
   ],
   "waivers": [],
   "expected_pr_workflows": [
     {"workflow": "Quality Gates Contract", "jobs": ["Quality Gates Contract"]},
     {"workflow": "Review Policy", "jobs": ["Review Policy Gate"]},
-    {"workflow": "CI (PR)", "jobs": ["Detect changes", "Lint & Checks", "Worktree bootstrap smoke", "Backend Tests", "Deploy Smoke", "Frontend lint + build", "Frontend Storybook build", "Frontend Storybook test", "Release build check (PR)"]}
+    {"workflow": "CI (PR)", "jobs": ["Detect changes", "Lint & Checks", "Worktree bootstrap smoke", "Backend Tests", "Deploy Smoke", "Frontend lint + build", "Demo site smoke", "Frontend Storybook build", "Frontend Storybook test", "Release build check (PR)"]}
   ]
 }

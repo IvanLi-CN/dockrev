@@ -2,8 +2,8 @@ import type { Meta, StoryObj } from "@storybook/react";
 import { userEvent, within } from "storybook/test";
 import { StackDetailPage } from "../../pages/StackDetailPage";
 import { currentRoutePathname } from "../../routes";
-import { PageHarness } from "../mocks/PageHarness";
-import { withDockrevMockApi } from "../mocks/withDockrevMockApi";
+import { PageHarness } from "../../mock/PageHarness";
+import { withDockrevMockApi } from "../../mock/withDockrevMockApi";
 import { assertRecentUpdateClickNavigation } from "./recentUpdateStoryAssertions";
 import { expectStory, findButton, findLink, waitForCondition } from "./storyAssertions";
 

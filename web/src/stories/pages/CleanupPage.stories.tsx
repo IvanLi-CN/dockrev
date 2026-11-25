@@ -1,7 +1,7 @@
 import type { Meta, StoryObj } from '@storybook/react'
 import { CleanupPage } from '../../pages/CleanupPage'
-import { PageHarness } from '../mocks/PageHarness'
-import { withDockrevMockApi } from '../mocks/withDockrevMockApi'
+import { PageHarness } from '../../mock/PageHarness'
+import { withDockrevMockApi } from '../../mock/withDockrevMockApi'
 
 const meta: Meta<typeof CleanupPage> = {
   title: 'Pages/CleanupPage',

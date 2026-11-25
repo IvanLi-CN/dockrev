@@ -34,6 +34,8 @@ import { BrandLogo } from "./BrandLogo";
 import { DeployWelcomePage } from "./pages/DeployWelcomePage";
 import { UnauthorizedPage } from "./pages/UnauthorizedPage";
 import { useRoute } from "./useRoute";
+import { DemoInspector } from "./demo/DemoInspector";
+import { isDemoBundle } from "./buildInfo";
 import { usePwaStatus } from "./pwaStatus";
 import { useManagementEventBatch, useManagementEvents } from "./managementEvents";
 import { AppShellStatusBanner } from "./components/AppShellStatusBanner";
@@ -576,6 +578,7 @@ export default function App() {
           />
         ) : null}
           </AppShell>
+          {isDemoBundle() ? <DemoInspector /> : null}
           <GitHubReleaseDrawer
             open={releaseDrawerState.open}
             serviceId={releaseDrawerState.serviceId}

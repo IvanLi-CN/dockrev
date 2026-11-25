@@ -1,7 +1,7 @@
 import type { Meta, StoryObj } from '@storybook/react'
 import { VersionInferencePage } from '../../pages/VersionInferencePage'
-import { PageHarness } from '../mocks/PageHarness'
-import { withDockrevMockApi } from '../mocks/withDockrevMockApi'
+import { PageHarness } from '../../mock/PageHarness'
+import { withDockrevMockApi } from '../../mock/withDockrevMockApi'
 
 function sleep(ms: number) {
   return new Promise((resolve) => setTimeout(resolve, ms))

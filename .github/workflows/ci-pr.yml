@@ -195,12 +195,54 @@ jobs:
 
       - name: Front-end lint + build
         shell: bash
+        env:
+          DOCKREV_BUILD_VERSION: 0.0.0-pr.${{ github.event.pull_request.head.sha }}
+          DOCKREV_BUILD_CHANNEL: pr
+          DOCKREV_SOURCE_SHA: ${{ github.event.pull_request.head.sha }}
         run: |
           set -euo pipefail
           cd web
           bun run lint
           bun run build
-          DOCKREV_WEB_BASE=/demo/ bun run build:demo:pages
+          bun run build:demo
+
+  demo-site-smoke:
+    name: Demo site smoke
+    runs-on: ubuntu-24.04
+    needs: [changes]
+    if: ${{ needs.changes.outputs.web == 'true' }}
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.6
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Install web dependencies
+        run: bun install --cwd web --frozen-lockfile
+
+      - name: Install Playwright Chromium
+        run: bun ./web/node_modules/.bin/playwright install chromium
+
+      - name: Build and smoke the standalone demo site
+        shell: bash
+        env:
+          DOCKREV_BUILD_VERSION: 0.0.0-pr.${{ github.event.pull_request.head.sha }}
+          DOCKREV_BUILD_CHANNEL: pr
+          DOCKREV_SOURCE_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+          bun run --cwd web build:demo
+          test -f web/dist-demo/index.html
+          test -f web/dist-demo/build-info.json
+          test -f web/dist-demo/edgeone.json
+          test ! -d web/dist-demo/demo
+          ! grep -q '/demo/' web/dist-demo/index.html
+          node ./web/scripts/demo-site-smoke.mjs web/dist-demo
 
   frontend-storybook-build:
     name: Frontend Storybook build

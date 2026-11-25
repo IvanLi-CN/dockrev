@@ -1,8 +1,8 @@
 import type { Meta, StoryObj } from "@storybook/react";
 import { ServiceDetailPage } from "../../pages/ServiceDetailPage";
-import { withDockrevMockApi } from "../mocks/withDockrevMockApi";
-import { buildServiceLogsSsePayload } from "../mocks/dockrevMockApi/shared";
-import { buildLongLogsSnapshot } from "./serviceDetailPageStoryFixtures";
+import { withDockrevMockApi } from "../../mock/withDockrevMockApi";
+import { buildServiceLogsSsePayload } from "../../mock/dockrevMockApi/shared";
+import { buildLongLogsSnapshot } from "../../mock/serviceDetailFixtures";
 import { render } from "./serviceDetailStoryShared";
 
 const meta: Meta<typeof ServiceDetailPage> = {

@@ -1,6 +1,6 @@
 import type { ServiceLifecycleSnapshotResponse } from "../../api";
 import { currentRoutePathname } from "../../routes";
-import { buildDateBoundaryLogsSnapshot } from "./serviceDetailPageStoryFixtures";
+import { buildDateBoundaryLogsSnapshot } from "../../mock/serviceDetailFixtures";
 import { render, type ServiceDetailStory } from "./serviceDetailStoryShared";
 import { expectStory, findButton, findLink, normalizeText, waitForCondition } from "./storyAssertions";
 

@@ -15,8 +15,10 @@ Complete deployment, usage, operations, troubleshooting, and API docs live in th
 - Port override: `DOCS_PORT=<port> bun run docs:dev` / `DOCS_PORT=<port> bun run docs:preview`
 - Online (GitHub Pages): published by `.github/workflows/docs-pages.yml`
   - Docs: site root
-  - Demo: `/demo/` public product surface
   - Storybook: `/storybook/` QA/component surface
+- Online demo (separate site, EdgeOne Makers): <https://dockrev-demo.ivanli.cc/>
+  - Source: `web/` demo build (`vite --mode demo`, `dist-demo/`)
+  - Deployed only by `Release`; the bundle carries its own build-time version
 
 This README intentionally stays as a quick entrypoint.
 
@@ -73,14 +75,16 @@ bun install
 bun run dev
 ```
 
-Pure front-end app demo:
+Public demo site (separate deployment, mock-only):
 
 ```bash
 cd web
-bun run demo:app
+bun run demo:app        # dev server on the demo variant
+bun run build:demo      # static site in web/dist-demo/
+bun run test:demo-site  # deep-link + scene smoke over dist-demo/
 ```
 
-Open the Vite URL printed by the command at `/demo/`. The demo reuses the real React app routes/state model with browser-only mock data from `VITE_DOCKREV_DEMO=app`; it is the public product demo surface, not a Storybook replacement.
+The demo is its own site, not a docs subdirectory. It reuses the real app routes and state model with browser-only mock data, and its version comes from the build (`web/build-info.json`), never from `/api/version`.
 
 Storybook:
 
@@ -116,7 +120,7 @@ Open:
 - Supervisor: `http://127.0.0.1:50884/`
 - API health: `http://127.0.0.1:50883/api/health`
 - API version: `http://127.0.0.1:50883/api/version`
-- Mock-only demo: run `bun run demo:app`, then open the printed Vite URL at `/demo/`
+- Mock-only demo: run `bun run demo:app` and open the printed Vite URL
 
 ## Runtime config
 
@@ -165,7 +169,7 @@ Environment variables (Supervisor):
 ## UI: navigation / scan / preview / apply
 
 - Public Demo vs Storybook:
-  - Demo (`/demo/`) is the shareable product surface with real routes and seeded mock state.
+  - Demo (`https://dockrev-demo.ivanli.cc/`) is a separate site with real routes and seeded mock state.
   - Storybook (`/storybook/`) remains the QA/component/state gallery and is not the public product demo.
 
 - Navigation: Overview (`/`) is a Homepage-compatible service launcher with grouped cards, search, and live resource summaries.

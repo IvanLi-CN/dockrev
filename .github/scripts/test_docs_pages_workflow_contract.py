@@ -1,5 +1,9 @@
 #!/usr/bin/env python3
-"""Static contract checks for retry-safe GitHub Pages deployment artifacts."""
+"""Static contract checks for retry-safe GitHub Pages deployment artifacts.
+
+The public demo is a separate EdgeOne site, so the docs Pages workflow must not
+build, assemble, or smoke it.
+"""
 
 from pathlib import Path
 
@@ -24,4 +28,13 @@ deploy_section = workflow[deploy_start:]
 assert f"name: {artifact_expression}" in upload_section
 assert f"artifact_name: {artifact_expression}" in deploy_section
 
-print("PASS: Docs Pages retry artifact contract")
+assert "build:demo" not in workflow, "docs Pages must not build the demo site"
+assert "assemble-pages-site.sh .tmp/docs-site .tmp/storybook-static .tmp/web-demo" not in workflow
+assert "demo-pages-smoke.mjs" not in workflow
+
+assembly = (ROOT / ".github/scripts/assemble-pages-site.sh").read_text(encoding="utf-8")
+assert "<demo_dir>" not in assembly, "assembly script must not accept a demo dir"
+assert "mkdir -p \"$output_dir/storybook\" \"$output_dir/demo\"" not in assembly
+assert 'if [[ -e "$output_dir/demo" ]]' in assembly
+
+print("PASS: Docs Pages retry artifact contract (demo site is separate)")

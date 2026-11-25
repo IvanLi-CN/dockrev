@@ -1,5 +1,18 @@
 # React + TypeScript + Vite
 
+## Public demo site (separate deployment)
+
+The demo is its own static site, not a docs subdirectory.
+
+- Dev: `bun run demo:app` (serves the demo variant on the root base)
+- Build: `bun run build:demo` → `dist-demo/` with `build-info.json` and `edgeone.json`
+- Smoke: `bun run test:demo-site`
+- E2E: `bun run e2e` (Playwright, runs against `dist-demo/`)
+
+Version is fixed at build time: CI passes `DOCKREV_BUILD_VERSION` / `DOCKREV_BUILD_CHANNEL` /
+`DOCKREV_SOURCE_SHA`; without them the build falls back to `main+<sha>`, `0.0.0-pr.<sha>` or
+`0.0.0-local`. The demo never asks a backend for its version.
+
 ## Storybook
 
 在 `web/` 目录下执行：

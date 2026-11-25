@@ -1,0 +1,241 @@
+.demoInspectorPanel,
+.demoInspectorDrawer {
+  position: fixed;
+  /* Above the app shell chrome (drawers/navs use up to 1020). */
+  z-index: 1200;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  width: 320px;
+  max-height: min(78vh, 720px);
+  padding: 14px;
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  background: color-mix(in srgb, var(--panel) 92%, transparent);
+  box-shadow: 0 18px 48px rgba(4, 14, 30, 0.42);
+  backdrop-filter: blur(12px);
+  overflow: auto;
+}
+
+.demoInspectorDrawer {
+  inset: auto 0 0 0;
+  width: auto;
+  max-height: 82vh;
+  border-radius: 18px 18px 0 0;
+}
+
+.demoInspectorDrawerRoot {
+  position: fixed;
+  inset: 0;
+  z-index: 1200;
+  display: flex;
+  align-items: flex-end;
+}
+
+.demoInspectorDrawerScrim {
+  position: absolute;
+  inset: 0;
+  background: rgba(2, 8, 18, 0.55);
+}
+
+.demoInspectorHead {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.demoInspectorHeadActions {
+  display: flex;
+  gap: 4px;
+}
+
+.demoInspectorEyebrow {
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--muted-foreground);
+}
+
+.demoInspectorTitle {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+  word-break: break-word;
+}
+
+.demoInspectorBody {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.demoInspectorSection {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.demoInspectorLabel {
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--muted-foreground);
+}
+
+.demoInspectorFieldStack {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.demoInspectorSceneList {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.demoInspectorSceneButton {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 7px 10px;
+  border: 1px solid transparent;
+  border-radius: 10px;
+  background: var(--muted-surface);
+  color: var(--text);
+  font-size: 13px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.demoInspectorSceneButton:hover {
+  border-color: var(--border);
+}
+
+.demoInspectorSceneButton[aria-pressed='true'] {
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 32%, transparent);
+}
+
+.demoInspectorSceneNote {
+  font-size: 11px;
+  color: var(--muted-foreground);
+}
+
+.demoInspectorMutations {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  font-size: 12px;
+}
+
+.demoInspectorMutations li {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 5px 8px;
+  border-radius: 8px;
+  background: var(--muted-surface);
+}
+
+.demoInspectorMutationLabel {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.demoInspectorMutationTime {
+  color: var(--muted-foreground);
+  font-variant-numeric: tabular-nums;
+}
+
+.demoInspectorEmpty {
+  margin: 0;
+  font-size: 12px;
+  color: var(--muted-foreground);
+}
+
+.demoInspectorShare {
+  display: block;
+  padding: 6px 8px;
+  border-radius: 8px;
+  background: var(--muted-surface);
+  font-size: 11px;
+  word-break: break-all;
+}
+
+.demoInspectorActionRow {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.demoInspectorFooter {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 11px;
+  color: var(--muted-foreground);
+}
+
+.demoInspectorReset {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  border-top: 1px solid var(--border);
+  padding-top: 10px;
+}
+
+.demoInspectorResetNote {
+  font-size: 11px;
+  color: var(--muted-foreground);
+}
+
+.demoInspectorHiddenCollapse {
+  display: none;
+}
+
+.demoInspectorBubble,
+.demoInspectorReveal,
+.demoInspectorMobileBubble {
+  position: fixed;
+  z-index: 1200;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 6px 10px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--panel) 92%, transparent);
+  color: var(--text);
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  cursor: pointer;
+}
+
+.demoInspectorBubble {
+  top: 40%;
+}
+
+.demoInspectorReveal {
+  right: 0;
+  bottom: 24px;
+  border-radius: 999px 0 0 999px;
+}
+
+.demoInspectorMobileBubble {
+  /* Clears the mobile bottom navigation bar. */
+  right: 12px;
+  bottom: calc(76px + env(safe-area-inset-bottom));
+}
+
+@media (max-width: 960px) {
+  .demoInspectorPanel {
+    display: none;
+  }
+}

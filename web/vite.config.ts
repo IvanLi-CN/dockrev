@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto'
+import { execFileSync } from 'node:child_process'
 import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { fileURLToPath, URL } from 'node:url'
@@ -7,6 +8,116 @@ import tailwindcss from '@tailwindcss/vite'
 import react from '@vitejs/plugin-react'
 import { VitePWA, type ExtendManifestEntriesHook, type VitePluginPWAAPI } from 'vite-plugin-pwa'
 import { buildRouteContract } from './src/routeContract'
+
+type BuildVariant = 'live' | 'demo'
+type BuildChannel = 'release' | 'main' | 'pr' | 'local'
+
+type ResolvedBuildInfo = {
+  variant: BuildVariant
+  version: string
+  channel: BuildChannel
+  sourceSha: string | null
+  builtAt: string
+}
+
+/**
+ * Route patterns that must resolve to the SPA entry when the demo site is
+ * hosted without a rewrite-capable web server. Derived from the same route
+ * contract the app uses, so a new page cannot silently lose its deep link.
+ */
+const DEMO_REWRITE_PATTERNS = [
+  '/queue',
+  '/queue/*',
+  '/services',
+  '/services/*',
+  '/cleanup',
+  '/deploy-check',
+  '/settings',
+  '/settings/*',
+] as const
+
+function readGitSha(): string | null {
+  try {
+    return execFileSync('git', ['rev-parse', 'HEAD'], { encoding: 'utf8' }).trim() || null
+  } catch {
+    return null
+  }
+}
+
+function readGitDirty(): boolean {
+  try {
+    return execFileSync('git', ['status', '--porcelain'], { encoding: 'utf8' }).trim().length > 0
+  } catch {
+    return false
+  }
+}
+
+function resolveBuildInfo(
+  variant: BuildVariant,
+  env: Record<string, string>,
+  command: 'build' | 'serve',
+): ResolvedBuildInfo {
+  const explicitVersion = (env.DOCKREV_BUILD_VERSION ?? '').trim()
+  const declaredChannel = (env.DOCKREV_BUILD_CHANNEL ?? '').trim().toLowerCase()
+  const sourceSha = (env.DOCKREV_SOURCE_SHA ?? process.env.GITHUB_SHA ?? readGitSha() ?? '').trim() || null
+  const shortSha = sourceSha ? sourceSha.slice(0, 7) : null
+  const builtAt = new Date().toISOString()
+
+  if (explicitVersion) {
+    return {
+      variant,
+      version: explicitVersion,
+      channel: declaredChannel === 'main' || declaredChannel === 'pr' ? declaredChannel : 'release',
+      sourceSha,
+      builtAt,
+    }
+  }
+  if (declaredChannel === 'main' && shortSha) {
+    return { variant, version: `main+${shortSha}`, channel: 'main', sourceSha, builtAt }
+  }
+  if (declaredChannel === 'pr' && shortSha) {
+    return { variant, version: `0.0.0-pr.${shortSha}`, channel: 'pr', sourceSha, builtAt }
+  }
+  const localVersion = shortSha
+    ? `0.0.0-local${command === 'build' && readGitDirty() ? '.dirty' : ''}+${shortSha}`
+    : '0.0.0-local'
+  return { variant, version: localVersion, channel: 'local', sourceSha, builtAt }
+}
+
+function buildInfoPlugin(info: ResolvedBuildInfo): Plugin {
+  return {
+    name: 'dockrev-build-info',
+    apply: 'build',
+    generateBundle() {
+      this.emitFile({
+        type: 'asset',
+        fileName: 'build-info.json',
+        source: `${JSON.stringify(info, null, 2)}\n`,
+      })
+    },
+  }
+}
+
+function demoEdgeOneRewritesPlugin(enabled: boolean): Plugin {
+  return {
+    name: 'dockrev-demo-edgeone-rewrites',
+    apply: 'build',
+    generateBundle() {
+      if (!enabled) return
+      this.emitFile({
+        type: 'asset',
+        fileName: 'edgeone.json',
+        source: `${JSON.stringify(
+          {
+            rewrites: DEMO_REWRITE_PATTERNS.map((source) => ({ source, destination: '/index.html' })),
+          },
+          null,
+          2,
+        )}\n`,
+      })
+    },
+  }
+}
 
 const INSTALL_ICON_SOURCES = [
   'favicon.svg',
@@ -134,10 +245,22 @@ export default defineConfig(({ command, mode }) => {
     const parsed = Number(value)
     return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback
   }
-  const devPort = parsePort(env.DOCKREV_WEB_DEV_PORT, 50884)
-  const previewPort = parsePort(env.DOCKREV_WEB_PREVIEW_PORT, 50885)
-  const base = normalizeBasePath(env.DOCKREV_WEB_BASE)
-  const pwaEnabled = !['0', 'false', 'off'].includes((env.DOCKREV_PWA ?? '').trim().toLowerCase())
+  const variant: BuildVariant = mode === 'demo' ? 'demo' : 'live'
+  // The demo dev/preview servers are separate surfaces, so they never share a
+  // port with the live app or Storybook.
+  const devPort = parsePort(
+    variant === 'demo' ? env.DOCKREV_DEMO_DEV_PORT : env.DOCKREV_WEB_DEV_PORT,
+    variant === 'demo' ? 50888 : 50884,
+  )
+  const previewPort = parsePort(
+    variant === 'demo' ? env.DOCKREV_DEMO_PREVIEW_PORT : env.DOCKREV_WEB_PREVIEW_PORT,
+    variant === 'demo' ? 50889 : 50885,
+  )
+  const buildInfo = resolveBuildInfo(variant, env, command)
+  const base = normalizeBasePath(variant === 'demo' ? (env.DOCKREV_DEMO_BASE ?? '/') : env.DOCKREV_WEB_BASE)
+  // The demo site is a static artifact with no service worker and no install contract.
+  const pwaEnabled =
+    variant !== 'demo' && !['0', 'false', 'off'].includes((env.DOCKREV_PWA ?? '').trim().toLowerCase())
   const publicDir = fileURLToPath(new URL('./public', import.meta.url))
   const installIconAssets = resolveInstallIconAssets(publicDir)
   const installIconUrl = (source: (typeof INSTALL_ICON_SOURCES)[number]) => {
@@ -182,6 +305,10 @@ export default defineConfig(({ command, mode }) => {
   return {
     base,
     appType: 'mpa',
+    define: {
+      __DOCKREV_BUILD_INFO__: JSON.stringify(buildInfo),
+      'import.meta.env.VITE_DOCKREV_VARIANT': JSON.stringify(variant),
+    },
     plugins: [
       dockrevAppHtmlPlugin(installIconAssets, base, command),
       react(),
@@ -191,6 +318,8 @@ export default defineConfig(({ command, mode }) => {
       excludeManifestFromPrecache(pwaEnabled),
       routeContractPlugin(base),
       notFoundHtmlPlugin,
+      buildInfoPlugin(buildInfo),
+      demoEdgeOneRewritesPlugin(variant === 'demo'),
     ],
     resolve: {
       alias: {
@@ -212,10 +341,15 @@ export default defineConfig(({ command, mode }) => {
       strictPort: true,
     },
     build: {
+      outDir: variant === 'demo' ? 'dist-demo' : 'dist',
       rollupOptions: {
         input: {
           index: fileURLToPath(new URL('./index.html', import.meta.url)),
-          '404': fileURLToPath(new URL('./404.html', import.meta.url)),
+          // The demo site rewrites every app route to index.html through
+          // edgeone.json; only the live app keeps the static 404 entry.
+          ...(variant === 'demo'
+            ? {}
+            : { '404': fileURLToPath(new URL('./404.html', import.meta.url)) }),
         },
       },
     },

@@ -187,6 +187,15 @@ export function navigate(route: Route) {
   notify()
 }
 
+/**
+ * Client-side navigation to an already-built internal href, e.g. a demo scene
+ * URL that carries its own share state. Never reloads the document.
+ */
+export function navigateToHref(next: string) {
+  window.history.pushState({}, '', next)
+  notify()
+}
+
 export function subscribeNavigation(listener: NavListener) {
   listeners.add(listener)
   return () => {

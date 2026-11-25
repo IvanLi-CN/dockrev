@@ -4,7 +4,7 @@ import { AppShell } from '../../Shell'
 import { DetailRouteServiceTree } from '../../components/DetailRouteServiceTree'
 import type { Route } from '../../routes'
 import { Button } from '../../ui'
-import { withDockrevMockApi } from '../mocks/withDockrevMockApi'
+import { withDockrevMockApi } from '../../mock/withDockrevMockApi'
 import { buildTopbarAuthIdentityFromSettings } from '../../topbarAuthIdentity'
 
 function expectStory(condition: unknown, message: string): asserts condition {

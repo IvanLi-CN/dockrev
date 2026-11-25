@@ -6,7 +6,7 @@ import type {
 } from '../../api'
 import { StatusRemark } from '../../ui'
 import { serviceRowStatus } from '../../updateStatus'
-import { withDockrevMockApi } from '../mocks/withDockrevMockApi'
+import { withDockrevMockApi } from '../../mock/withDockrevMockApi'
 
 const meta: Meta<typeof StatusRemark> = {
   title: 'Components/StatusRemark',

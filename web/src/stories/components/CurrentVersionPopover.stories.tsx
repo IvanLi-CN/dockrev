@@ -1,7 +1,7 @@
 import type { Meta, StoryObj } from '@storybook/react'
 import { CurrentVersionPopover } from '../../components/CurrentVersionPopover'
 import { ArrowRightIcon } from '../../ui'
-import { withDockrevMockApi } from '../mocks/withDockrevMockApi'
+import { withDockrevMockApi } from '../../mock/withDockrevMockApi'
 
 function d(fill: string, last2: string) {
   return `sha256:${fill.repeat(62)}${last2}`

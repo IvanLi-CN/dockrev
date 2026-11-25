@@ -5,7 +5,7 @@ import type {
   Service,
 } from '../../api'
 import { AggregateUpdatePreviewList, type AggregateUpdatePreviewListItem } from '../../components/AggregateUpdatePreviewList'
-import { withDockrevMockApi } from '../mocks/withDockrevMockApi'
+import { withDockrevMockApi } from '../../mock/withDockrevMockApi'
 
 const meta: Meta<typeof AggregateUpdatePreviewList> = {
   title: 'Components/AggregateUpdatePreviewList',

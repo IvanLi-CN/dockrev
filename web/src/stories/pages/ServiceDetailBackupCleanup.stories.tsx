@@ -1,6 +1,6 @@
 import type { Meta } from "@storybook/react";
 import { ServiceDetailPage } from "../../pages/ServiceDetailPage";
-import { withDockrevMockApi } from "../mocks/withDockrevMockApi";
+import { withDockrevMockApi } from "../../mock/withDockrevMockApi";
 import { expectStory, normalizeText, waitForCondition } from "./storyAssertions";
 import { findSectionCard, findTab, render, type ServiceDetailStory } from "./serviceDetailStoryShared";
 

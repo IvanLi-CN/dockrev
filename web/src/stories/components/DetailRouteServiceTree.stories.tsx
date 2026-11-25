@@ -3,7 +3,7 @@ import { fireEvent, userEvent, within } from 'storybook/test'
 import { DetailRouteServiceTree } from '../../components/DetailRouteServiceTree'
 import { ConfirmProvider } from '../../ConfirmProvider'
 import { SERVICE_TREE_REFRESH_EVENT } from '../../serviceTreeRefresh'
-import { withDockrevMockApi } from '../mocks/withDockrevMockApi'
+import { withDockrevMockApi } from '../../mock/withDockrevMockApi'
 import { expectStory, waitForCondition } from '../pages/storyAssertions'
 
 const route = { name: 'service', stackId: 'stack-prod', serviceId: 'svc-prod-api', section: 'overview' } as const
