@@ -296,7 +296,9 @@ function EnvironmentControls(props: {
             ))}
           </ToggleGroup>
         )}
-        <small className="demoInspectorSettingNote">{formatDemoDelaySummary(shareState)}</small>
+        {shareState.connection === 'offline' ? (
+          <small className="demoInspectorSettingNote">离线时请求直接失败，恢复在线后沿用当前延迟设置。</small>
+        ) : null}
       </div>
 
       <div className="demoInspectorSetting">
@@ -357,7 +359,7 @@ function EnvironmentControls(props: {
         {props.advancedOpen ? (
           <div className="demoInspectorAdvancedContent" id="demo-inspector-advanced-content">
             <div className="demoInspectorAdvancedRow">
-              <div>
+              <div className="demoInspectorAdvancedText">
                 <span className="demoInspectorSettingLabel">自定义延迟</span>
                 <small className="demoInspectorSettingNote">启用后使用下方毫秒数。</small>
               </div>
@@ -392,7 +394,7 @@ function EnvironmentControls(props: {
               ) : null}
             </label>
             <div className="demoInspectorAdvancedRow">
-              <div>
+              <div className="demoInspectorAdvancedText">
                 <span className="demoInspectorSettingLabel">动效偏好</span>
                 <small className="demoInspectorSettingNote">同时作用于产品动效与环境背景。</small>
               </div>
@@ -751,7 +753,7 @@ function InspectorHeader(props: {
             WEB DEMO
           </span>
           <h2>Inspector</h2>
-          <p>构建时隔离 · 仅内存模拟 · {props.version}</p>
+          <p>构建时隔离 · 仅内存模拟</p>
         </div>
         <div className="demoInspectorHeadActions">
           {props.onDockToggle ? (
@@ -775,6 +777,9 @@ function InspectorHeader(props: {
           SIMULATED
         </span>
         <code title={props.pathname}>{props.pathname}</code>
+        <code className="demoInspectorVersion" title={`build ${props.version}`}>
+          {props.version}
+        </code>
       </div>
     </>
   )

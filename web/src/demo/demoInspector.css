@@ -108,6 +108,12 @@
   white-space: nowrap;
 }
 
+.demoInspectorStatusRow .demoInspectorVersion {
+  flex: 0 0 auto;
+  margin-left: auto;
+  opacity: 0.75;
+}
+
 .demoInspectorScroll {
   display: flex;
   flex-direction: column;
@@ -226,6 +232,13 @@
   align-items: center;
   justify-content: space-between;
   gap: 0.75rem;
+}
+
+.demoInspectorAdvancedText {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 0.15rem;
 }
 
 .demoInspectorDelayInput {

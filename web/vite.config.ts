@@ -55,7 +55,6 @@ function readGitDirty(): boolean {
 function resolveBuildInfo(
   variant: BuildVariant,
   env: Record<string, string>,
-  command: 'build' | 'serve',
 ): ResolvedBuildInfo {
   const explicitVersion = (env.DOCKREV_BUILD_VERSION ?? '').trim()
   const declaredChannel = (env.DOCKREV_BUILD_CHANNEL ?? '').trim().toLowerCase()
@@ -78,9 +77,11 @@ function resolveBuildInfo(
   if (declaredChannel === 'pr' && shortSha) {
     return { variant, version: `0.0.0-pr.${shortSha}`, channel: 'pr', sourceSha, builtAt }
   }
+  // A dev server built from uncommitted sources must not claim a clean build id.
+  const dirty = readGitDirty()
   const localVersion = shortSha
-    ? `0.0.0-local${command === 'build' && readGitDirty() ? '.dirty' : ''}+${shortSha}`
-    : '0.0.0-local'
+    ? `0.0.0-local${dirty ? '.dirty' : ''}+${shortSha}`
+    : `0.0.0-local${dirty ? '.dirty' : ''}`
   return { variant, version: localVersion, channel: 'local', sourceSha, builtAt }
 }
 
@@ -256,7 +257,7 @@ export default defineConfig(({ command, mode }) => {
     variant === 'demo' ? env.DOCKREV_DEMO_PREVIEW_PORT : env.DOCKREV_WEB_PREVIEW_PORT,
     variant === 'demo' ? 50889 : 50885,
   )
-  const buildInfo = resolveBuildInfo(variant, env, command)
+  const buildInfo = resolveBuildInfo(variant, env)
   const base = normalizeBasePath(variant === 'demo' ? (env.DOCKREV_DEMO_BASE ?? '/') : env.DOCKREV_WEB_BASE)
   // The demo site is a static artifact with no service worker and no install contract.
   const pwaEnabled =
@@ -304,7 +305,8 @@ export default defineConfig(({ command, mode }) => {
 
   return {
     base,
-    appType: 'mpa',
+    // The live app ships a dedicated 404 entry; the demo rewrites every route.
+    appType: variant === 'demo' ? 'spa' : 'mpa',
     define: {
       __DOCKREV_BUILD_INFO__: JSON.stringify(buildInfo),
       'import.meta.env.VITE_DOCKREV_VARIANT': JSON.stringify(variant),

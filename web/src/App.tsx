@@ -34,8 +34,6 @@ import { BrandLogo } from "./BrandLogo";
 import { DeployWelcomePage } from "./pages/DeployWelcomePage";
 import { UnauthorizedPage } from "./pages/UnauthorizedPage";
 import { useRoute } from "./useRoute";
-import { DemoInspector } from "./demo/DemoInspector";
-import { isDemoBundle } from "./buildInfo";
 import { usePwaStatus } from "./pwaStatus";
 import { useManagementEventBatch, useManagementEvents } from "./managementEvents";
 import { AppShellStatusBanner } from "./components/AppShellStatusBanner";
@@ -219,6 +217,7 @@ export default function App() {
   const [authIdentity, setAuthIdentity] = useState<TopbarAuthIdentity>(() =>
     buildFallbackTopbarAuthIdentity(),
   );
+  const authIdentityPromiseRef = useRef<Promise<TopbarAuthIdentity | null> | null>(null);
   const authFailureActiveRef = useRef(false);
   const authFailureVersionRef = useRef(0);
   const authIdentityRefreshInFlightRef = useRef(false);
@@ -270,23 +269,29 @@ export default function App() {
   }, [serviceRouteKey]);
 
   const refreshAuthIdentity = useCallback(async () => {
-    if (authIdentityRefreshInFlightRef.current) return null;
+    // Concurrent callers must join the same request rather than receive null.
+    if (authIdentityPromiseRef.current) return authIdentityPromiseRef.current;
     authIdentityRefreshInFlightRef.current = true;
     suppressNextAuthRecoveredRef.current = true;
     const authFailureVersionAtStart = authFailureVersionRef.current;
-    try {
-      const settings = await getSettings();
-      if (
-        authFailureActiveRef.current ||
-        authFailureVersionAtStart !== authFailureVersionRef.current
-      ) {
-        return null;
+    const request = (async () => {
+      try {
+        const settings = await getSettings();
+        if (
+          authFailureActiveRef.current ||
+          authFailureVersionAtStart !== authFailureVersionRef.current
+        ) {
+          return null;
+        }
+        return buildTopbarAuthIdentityFromSettings(settings.auth);
+      } finally {
+        authIdentityPromiseRef.current = null;
+        authIdentityRefreshInFlightRef.current = false;
+        suppressNextAuthRecoveredRef.current = false;
       }
-      return buildTopbarAuthIdentityFromSettings(settings.auth);
-    } finally {
-      authIdentityRefreshInFlightRef.current = false;
-      suppressNextAuthRecoveredRef.current = false;
-    }
+    })();
+    authIdentityPromiseRef.current = request;
+    return request;
   }, []);
   const refreshDeployCheckState = useCallback(async () => {
     const requestId = ++deployCheckGateRequestIdRef.current;
@@ -578,7 +583,6 @@ export default function App() {
           />
         ) : null}
           </AppShell>
-          {isDemoBundle() ? <DemoInspector /> : null}
           <GitHubReleaseDrawer
             open={releaseDrawerState.open}
             serviceId={releaseDrawerState.serviceId}

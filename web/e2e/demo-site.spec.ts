@@ -12,6 +12,17 @@ async function openInspector(page: Page) {
   await expect(panel(page)).toBeVisible()
 }
 
+/**
+ * The shell renders the identity chip in the sidebar slot. Desktop shows it
+ * directly, mobile keeps it inside the closed sidebar, so this asserts the
+ * rendered identity rather than assuming a viewport-independent position.
+ */
+async function expectIdentityChip(page: Page, label: string) {
+  await expect
+    .poll(async () => page.locator(`[aria-label="当前身份：${label}"]`).count())
+    .toBeGreaterThan(0)
+}
+
 async function readMutations(page: Page): Promise<Array<{ label: string; detail: string }>> {
   return page.evaluate(() => {
     const raw = window.sessionStorage.getItem('dockrev:demo:mutations:v1')
@@ -42,14 +53,24 @@ test.describe('demo environment contract', () => {
 
     await panel(page).getByRole('radio', { name: '普通用户' }).click()
     await expect(page).toHaveURL(/d_persona=user/)
-    await panel(page).getByRole('radio', { name: '离线' }).click()
-    await expect(page).toHaveURL(/d_connection=offline/)
+    // The simulated identity must reach the product's own identity chip.
+    await expectIdentityChip(page, 'demo-user')
 
     await page.reload()
     // The panel open state is local, so a reload may restore either surface.
     await openInspector(page)
     await expect(panel(page).getByRole('radio', { name: '普通用户' })).toHaveAttribute('data-state', 'on')
+
+    // Connectivity is applied after identity resolves: offline intentionally
+    // makes every product request fail, so `/api/settings` cannot answer the
+    // identity query while it is off.
+    await panel(page).getByRole('radio', { name: '离线' }).click()
+    await expect(page).toHaveURL(/d_connection=offline/)
+
+    await page.reload()
+    await openInspector(page)
     await expect(panel(page).getByRole('radio', { name: '离线' })).toHaveAttribute('data-state', 'on')
+    await expect(panel(page).getByRole('radio', { name: '普通用户' })).toHaveAttribute('data-state', 'on')
 
     // Environment belongs to the reviewer, so the scene switch keeps it.
     await panel(page).getByRole('combobox', { name: '选择 Demo 场景' }).click()
@@ -57,6 +78,35 @@ test.describe('demo environment contract', () => {
     await expect(page).toHaveURL(/\/queue\?demo=queue/)
     await expect(page).toHaveURL(/d_persona=user/)
     await expect(page).toHaveURL(/d_connection=offline/)
+
+    // Coming back online restores the identity the persisted persona describes.
+    // `online` is the default, so it is omitted from the URL by design.
+    await panel(page).getByRole('radio', { name: '在线' }).click()
+    await expect(page).not.toHaveURL(/d_connection=offline/)
+    await expectIdentityChip(page, 'demo-user')
+  })
+
+  test('guest identity drops the user object and reaches the chip', async ({ page, isMobile }) => {
+    await page.goto('/?demo=overview&d_persona=guest')
+    await expectIdentityChip(page, '匿名开发')
+
+    const auth = await page.evaluate(async () => (await (await fetch('/api/settings')).json()).auth)
+    expect(auth.currentUser).toBeNull()
+    expect(auth.currentGroups).toEqual([])
+    expect(auth.matchedBy).toBe('anonymous_dev')
+
+    // The visible chip lives in the sidebar, which desktop renders inline.
+    if (!isMobile) {
+      await expect(page.locator('[aria-label="当前身份：匿名开发"]:visible')).toHaveCount(1)
+    }
+  })
+
+  test('demo deep links survive a direct visit', async ({ page }) => {
+    for (const route of ['/services', '/queue', '/cleanup', '/settings']) {
+      const response = await page.goto(`${route}?demo=overview&d_controls=hidden`)
+      expect(response?.status()).toBe(200)
+      await expect(page.locator('#root')).not.toBeEmpty()
+    }
   })
 
   test('offline fails product requests without touching the real backend', async ({ page }) => {

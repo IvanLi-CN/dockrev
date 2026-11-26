@@ -58,7 +58,11 @@ export function updateDemoShareState(patch: DemoShareStatePatch) {
   refreshSessionState(next)
 
   const modelChanged = MODEL_KEYS.some((key) => previous[key] !== next[key])
-  if (modelChanged) void rebuildDemoRuntime(next)
+  // Recovering connectivity must re-read the product state that failed offline
+  // (identity included). Going offline deliberately does not, so already
+  // rendered content is not cleared by the switch itself.
+  const recovered = previous.connection === 'offline' && next.connection === 'online'
+  if (modelChanged || recovered) void rebuildDemoRuntime(next)
 }
 
 async function rebuildDemoRuntime(shareState: DemoShareState) {

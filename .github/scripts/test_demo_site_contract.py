@@ -70,15 +70,32 @@ assert "Failed to fetch" in bootstrap, "offline must fail like a browser, not wi
 assert "demoRequestDelayMs" in bootstrap
 assert "notifyMutation" in bootstrap, "simulated writes must notify the inspector"
 
+# The demo dev server must serve deep links; `mpa` would 404 every shared URL.
+vite = read("web/vite.config.ts")
+assert "appType: variant === 'demo' ? 'spa' : 'mpa'" in vite, (
+    "the demo build is an SPA and must not use the live app's mpa appType"
+)
+
+# A rebuilt mock model must remount the app tree so the product's own boot reads
+# (settings/auth) re-run; otherwise the identity chip stays stale.
+main_src = read("web/src/main.tsx")
+assert "DemoRuntimeBoundary" in main_src
+assert "runtime.revision" in main_src, "the boundary must remount on each model rebuild"
+
+# Concurrent identity reads must share one request instead of returning null.
+app_src = read("web/src/App.tsx")
+assert "authIdentityPromiseRef" in app_src, "auth refresh must share its in-flight promise"
+
 # Scene switches reset scene-owned state but never the reviewer's environment.
 scenes_src = read("web/src/demo/scenes.ts")
 assert "withShareStatePatch" in scenes_src
 store_src = read("web/src/demo/store.ts")
 assert "MODEL_KEYS" in store_src and "applyDemoEnvironment" in store_src
 assert "'persona'" in store_src, "identity changes must rebuild the model so the product auth reflects them"
-assert "'connection'" not in store_src.split("MODEL_KEYS")[1].split("] as const")[0], (
-    "connectivity is environment-only and must not rebuild the model"
+assert "recovered" in store_src, (
+    "restoring connectivity must re-read the state that failed offline"
 )
+assert "previous.connection === 'offline' && next.connection === 'online'" in store_src
 
 # Release is the only publisher, and the artifact identity is checked first.
 release = read(".github/workflows/release.yml")

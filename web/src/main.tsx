@@ -7,7 +7,8 @@ import { TooltipProvider } from '@/components/ui/tooltip'
 import { PwaStatusProvider } from './pwaStatus'
 import { ManagementEventsProvider } from './managementEvents'
 import { isDemoBundle } from './buildInfo'
-import { startDemoRuntime } from './demo/store'
+import { startDemoRuntime, useDemoRuntime } from './demo/store'
+import { DemoInspector } from './demo/DemoInspector'
 import { initTheme } from './theme'
 
 function renderDemoBootFailure(error: unknown) {
@@ -37,6 +38,23 @@ function renderDemoBootFailure(error: unknown) {
   root.append(main)
 }
 
+/**
+ * A rebuilt mock model must reach every consumer, including the app's own boot
+ * reads (settings/auth). Keying the tree on the runtime revision remounts it
+ * exactly once per model change; navigation stays in the URL.
+ */
+function DemoRuntimeBoundary({ children }: { children: React.ReactNode }) {
+  const runtime = useDemoRuntime()
+  // The inspector lives outside the remount boundary: its open/drawer state is
+  // a reviewer preference, so rebuilding the mock model must not close it.
+  return (
+    <>
+      <div key={runtime.revision} style={{ display: 'contents' }}>{children}</div>
+      <DemoInspector />
+    </>
+  )
+}
+
 async function bootstrap() {
   initTheme()
   if (isDemoBundle()) {
@@ -50,7 +68,13 @@ async function bootstrap() {
       <PwaStatusProvider>
         <ManagementEventsProvider>
           <TooltipProvider>
-            <App />
+            {isDemoBundle() ? (
+              <DemoRuntimeBoundary>
+                <App />
+              </DemoRuntimeBoundary>
+            ) : (
+              <App />
+            )}
           </TooltipProvider>
         </ManagementEventsProvider>
       </PwaStatusProvider>
