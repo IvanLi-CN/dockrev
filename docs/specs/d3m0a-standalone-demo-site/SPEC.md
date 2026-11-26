@@ -53,10 +53,27 @@
 - `vite build --mode demo` 输出 `dist-demo/`，包含 `index.html`、`build-info.json`、`edgeone.json`；`edgeone.json` 的 rewrite 覆盖 `routeContract.ts` 中的全部静态与动态路由族。
 - Demo 版本来源唯一：CI/release 传入 `DOCKREV_BUILD_VERSION` 与 `DOCKREV_BUILD_CHANNEL`；未传入时按 `main+<sha>` / `0.0.0-pr.<sha>` / `0.0.0-local` 降级，且不伪造 release 链接。
 - `build-info.json` 的 `version` 与 `sourceSha` 必须与 release identity 一致，否则部署失败关闭。
-- `demo=<scene>` 选择场景；`d_persona`、`d_net`、`d_case`、`d_events`、`d_cleanup` 记录可分享状态；`d_controls=hidden` 提供干净证据态。默认值不写入 URL。
+- `demo=<scene>` 选择场景；环境与数据状态写入 `d_*`（见下表）；`d_controls=hidden` 提供干净证据态。默认值不写入 URL。
+
+| 全局状态 | 分享参数 | 取值 |
+| --- | --- | --- |
+| 模拟身份 | `d_persona` | `guest`、`user`、`admin` |
+| 网络连接 | `d_connection` | `online`、`offline` |
+| 请求延迟模式 | `d_delay` | `normal`、`slow`、`custom` |
+| 自定义附加延迟 | `d_delay_ms` | `0`–`30000` 整数，仅在 `custom` 下生效 |
+| 动效偏好 | `d_motion` | `system`、`reduce` |
+| 异步数据态 | `d_case` | `default`、`cold`、`cache-refresh`、`error`、`job-detail-retry` |
+| 管理事件流 | `d_events` | `default`、`reconnecting` |
+| 清理场景 | `d_cleanup` | 三个 cleanup scenario |
+
+- 身份只映射产品已有 auth 字段（guest 无用户对象、user 已登录非管理员、admin 进入 demo admin 组），不建立真实登录。
+- 主题不复制成第二份 demo 状态：Inspector 读写产品自身的 `setThemePreference` / `subscribeTheme`。
+- 离线让所有被接管的 `/api/**` 请求以 `TypeError` 失败（浏览器语义），不伪造 503、不回退真实后端；慢速统一 `+1500 ms`。
+- 场景切换只重置场景自有状态（async case / events / cleanup），环境选择必须保留。
 - pathname 与 `demo` 参数冲突时 pathname 优先，Inspector 显示的场景不得与当前路由不一致。
 - 场景切换使用 `pushState`，不重载文档；变更影响 mock 模型的字段会重建 mock 并 remount 应用子树。
-- Inspector 挂载在 App shell 级，覆盖所有路由；`<961px` 使用 bubble → drawer。
+- Inspector 挂载在 App shell 级，覆盖所有路由；桌面默认收起为 `Demo` 气泡，`<961px` 使用抽屉。
+- Inspector 主工作流固定为 `全局环境` → `Scene` → `Data` → `Actions`，`分享与记录` 为折叠次要工作流；`高级` 只承载自定义延迟与动效偏好，折叠时仍显示启用项摘要。
 - 写操作只改内存 mock 模型，并在 Inspector 的“模拟写入”区留痕。
 - Bootstrap 在 `createRoot` 之前完成 mock 安装，且校验 `globalThis.fetch` 已被接管、`__DOCKREV_MOCK_DEBUG__` 存在；任一失败渲染安全错误面，绝不回退真实 API。
 - Demo 发布只由 `Release` 触发；PR 只做 build + smoke。实际 EdgeOne 部署受仓库变量 `DOCKREV_DEMO_PUBLISH_ENABLED` 门控：未启用时 Release 仍产出可手工部署的 `dockrev-demo-web-<version>` artifact，且该 skip 必须可见。
@@ -69,7 +86,11 @@
 - Given 非 release 构建，When 查看侧栏版本，Then 不生成 GitHub release 链接。
 - Given `/queue?demo=queue`，When 点击 Inspector 的 Cleanup 场景，Then URL 变为 `/cleanup?demo=cleanup` 且文档未重载。
 - Given 修改 persona/network，When 刷新页面，Then 状态保留。
-- Given `<961px` 视口，When 打开 demo 页面，Then 有 bubble 入口且可展开为 drawer。
+- Given `<961px` 视口，When 打开 demo 页面，Then 有气泡入口且可展开为抽屉。
+- Given `d_connection=offline`，When 页面发起 `/api/**` 请求，Then 以 `TypeError` 失败且不产生真实网络请求。
+- Given `d_delay=slow`，When 页面读取 `/api/settings`，Then 额外耗时不少于 1400 ms。
+- Given 修改身份/连接/延迟并切换场景，Then 环境值保留，URL 保持非默认参数。
+- Given 修改主题，Then `html[data-theme]` 与 `localStorage['dockrev:theme']` 同步更新，Inspector 复读同一偏好。
 - Given mock 安装失败，When 打开 demo，Then 出现“Web Demo 启动失败”错误面而不是白屏或真实请求。
 
 ## Tasks
@@ -78,7 +99,7 @@
 - [x] 独立站点构建（`--mode demo`、`dist-demo`、`edgeone.json`）
 - [x] 移除 docs 站 demo 组装、404 桥与 `/demo` 链接
 - [x] scene registry / share state / client-side 场景切换
-- [x] Inspector（桌面浮窗 + bubble + 移动 drawer + 模拟写入）
+- [x] Inspector 环境控制（身份/连接/延迟/主题/动效 + 高级区 + 模拟写入）
 - [x] bootstrap 失败面与拦截断言
 - [x] mock fixture 下沉到 `web/src/mock/**`
 - [x] Release 驱动的 EdgeOne 发布脚本与 CI 校验

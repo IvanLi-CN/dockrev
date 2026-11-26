@@ -4,24 +4,23 @@
   /* Above the app shell chrome (drawers/navs use up to 1020). */
   z-index: 1200;
   display: flex;
+  width: min(21rem, calc(100vw - 2rem));
+  max-height: min(44rem, calc(100dvh - 7rem));
   flex-direction: column;
-  gap: 12px;
-  width: 320px;
-  max-height: min(78vh, 720px);
-  padding: 14px;
+  overflow: hidden;
   border: 1px solid var(--border);
-  border-radius: 16px;
-  background: color-mix(in srgb, var(--panel) 92%, transparent);
-  box-shadow: 0 18px 48px rgba(4, 14, 30, 0.42);
-  backdrop-filter: blur(12px);
-  overflow: auto;
+  border-radius: 1rem;
+  background: color-mix(in srgb, var(--panel) 94%, transparent);
+  box-shadow: 0 20px 60px rgba(4, 14, 30, 0.34);
+  backdrop-filter: blur(18px) saturate(1.1);
+  color: var(--text);
 }
 
 .demoInspectorDrawer {
   inset: auto 0 0 0;
   width: auto;
   max-height: 82vh;
-  border-radius: 18px 18px 0 0;
+  border-radius: 1rem 1rem 0 0;
 }
 
 .demoInspectorDrawerRoot {
@@ -42,161 +41,316 @@
   display: flex;
   align-items: flex-start;
   justify-content: space-between;
-  gap: 8px;
+  gap: 0.75rem;
+  padding: 0.9rem 0.95rem 0.6rem;
+}
+
+.demoInspectorHeading {
+  min-width: 0;
+}
+
+.demoInspectorKicker,
+.demoInspectorGroupHeading,
+.demoInspectorStatus,
+.demoInspectorSettingLabel {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+}
+
+.demoInspectorKicker {
+  color: var(--accent-foreground);
+  font-size: 0.62rem;
+  font-weight: 800;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+.demoInspectorHeading h2 {
+  margin: 0.15rem 0 0;
+  font-size: 1.15rem;
+  line-height: 1.2;
+}
+
+.demoInspectorHeading p {
+  margin: 0.25rem 0 0;
+  color: var(--muted-foreground);
+  font-size: 0.7rem;
 }
 
 .demoInspectorHeadActions {
   display: flex;
-  gap: 4px;
+  gap: 0.2rem;
 }
 
-.demoInspectorEyebrow {
-  font-size: 11px;
-  letter-spacing: 0.08em;
+.demoInspectorStatusRow {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0 0.95rem 0.6rem;
+}
+
+.demoInspectorStatus {
+  padding: 0.15rem 0.45rem;
+  border-radius: 0.4rem;
+  background: color-mix(in srgb, var(--accent) 45%, transparent);
+  color: var(--accent-foreground);
+  font-size: 0.6rem;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+}
+
+.demoInspectorStatusRow code {
+  overflow: hidden;
+  color: var(--muted-foreground);
+  font-size: 0.68rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.demoInspectorScroll {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+  padding: 0 0.95rem 1rem;
+  overflow-y: auto;
+}
+
+.demoInspectorGroup {
+  display: flex;
+  flex-direction: column;
+  gap: 0.55rem;
+}
+
+.demoInspectorGroupHeading {
+  margin: 0;
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
   text-transform: uppercase;
   color: var(--muted-foreground);
 }
 
-.demoInspectorTitle {
-  font-size: 13px;
+.demoInspectorSetting {
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+}
+
+.demoInspectorSettingLabel {
+  font-size: 0.76rem;
   font-weight: 600;
-  color: var(--text);
-  word-break: break-word;
 }
 
-.demoInspectorBody {
-  display: flex;
-  flex-direction: column;
-  gap: 14px;
-}
-
-.demoInspectorSection {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-}
-
-.demoInspectorLabel {
-  font-size: 11px;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
+.demoInspectorSettingNote,
+.demoInspectorGroup small {
+  margin: 0;
   color: var(--muted-foreground);
+  font-size: 0.68rem;
+  line-height: 1.4;
 }
 
-.demoInspectorFieldStack {
+.demoInspectorField {
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: 0.3rem;
+  font-size: 0.76rem;
 }
 
-.demoInspectorSceneList {
+.demoInspectorSegmented {
   display: flex;
-  flex-direction: column;
-  gap: 4px;
+  width: 100%;
+  gap: 0.2rem;
+  padding: 0.15rem;
+  border-radius: 0.55rem;
+  background: var(--muted-surface);
 }
 
-.demoInspectorSceneButton {
+.demoInspectorSegment {
+  flex: 1 1 0;
+  gap: 0.25rem;
+  padding: 0 0.35rem;
+  font-size: 0.7rem;
+  white-space: nowrap;
+}
+
+.demoInspectorCustomDelay {
   display: flex;
-  flex-direction: column;
-  gap: 2px;
-  padding: 7px 10px;
-  border: 1px solid transparent;
-  border-radius: 10px;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  padding: 0.35rem 0.55rem;
+  border: 1px solid var(--border);
+  border-radius: 0.5rem;
   background: var(--muted-surface);
   color: var(--text);
-  font-size: 13px;
-  text-align: left;
+  font-size: 0.72rem;
   cursor: pointer;
 }
 
-.demoInspectorSceneButton:hover {
-  border-color: var(--border);
+.demoInspectorAdvanced {
+  display: flex;
+  flex-direction: column;
 }
 
-.demoInspectorSceneButton[aria-pressed='true'] {
-  border-color: var(--accent);
-  background: color-mix(in srgb, var(--accent) 32%, transparent);
-}
-
-.demoInspectorSceneNote {
-  font-size: 11px;
+.demoInspectorAdvancedTrigger {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  width: 100%;
+  padding: 0.4rem 0;
+  border: 0;
+  background: transparent;
   color: var(--muted-foreground);
+  font-size: 0.72rem;
+  cursor: pointer;
+}
+
+.demoInspectorAdvancedLabel,
+.demoInspectorAdvancedSummary {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+}
+
+.demoInspectorAdvancedContent {
+  display: flex;
+  flex-direction: column;
+  gap: 0.7rem;
+  padding-top: 0.35rem;
+}
+
+.demoInspectorAdvancedRow {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+}
+
+.demoInspectorDelayInput {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  font-size: 0.72rem;
+}
+
+.demoInspectorError {
+  color: var(--error);
+  font-size: 0.68rem;
+}
+
+.demoInspectorActions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+}
+
+.demoInspectorSecondary {
+  border-top: 1px solid var(--border);
+  padding-top: 0.6rem;
+}
+
+.demoInspectorSecondary > summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  padding: 0.25rem 0;
+  color: var(--muted-foreground);
+  font-size: 0.72rem;
+  cursor: pointer;
+  list-style: none;
+}
+
+.demoInspectorSecondary > summary::-webkit-details-marker {
+  display: none;
+}
+
+.demoInspectorSecondary > summary > span {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+}
+
+.demoInspectorSecondary[open] > summary {
+  margin-bottom: 0.6rem;
+}
+
+.demoInspectorShareRow {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+}
+
+.demoInspectorShareRow input {
+  flex: 1 1 auto;
+  min-width: 0;
+  padding: 0.3rem 0.45rem;
+  border: 1px solid var(--border);
+  border-radius: 0.45rem;
+  background: var(--muted-surface);
+  color: var(--muted-foreground);
+  font-size: 0.66rem;
 }
 
 .demoInspectorMutations {
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: 0.4rem;
+}
+
+.demoInspectorMutationsHeading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  color: var(--muted-foreground);
+  font-size: 0.68rem;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.demoInspectorMutations ul {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
   margin: 0;
   padding: 0;
   list-style: none;
-  font-size: 12px;
 }
 
 .demoInspectorMutations li {
-  display: flex;
-  justify-content: space-between;
-  gap: 8px;
-  padding: 5px 8px;
-  border-radius: 8px;
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 0.15rem 0.5rem;
+  padding: 0.4rem 0.5rem;
+  border-radius: 0.5rem;
   background: var(--muted-surface);
+  font-size: 0.7rem;
 }
 
-.demoInspectorMutationLabel {
+.demoInspectorMutations li > span {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.demoInspectorMutationTime {
+.demoInspectorMutations li > small {
   color: var(--muted-foreground);
   font-variant-numeric: tabular-nums;
 }
 
+.demoInspectorMutations li p {
+  grid-column: 1 / -1;
+  margin: 0;
+  color: var(--muted-foreground);
+  font-size: 0.66rem;
+}
+
 .demoInspectorEmpty {
   margin: 0;
-  font-size: 12px;
   color: var(--muted-foreground);
-}
-
-.demoInspectorShare {
-  display: block;
-  padding: 6px 8px;
-  border-radius: 8px;
-  background: var(--muted-surface);
-  font-size: 11px;
-  word-break: break-all;
-}
-
-.demoInspectorActionRow {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-}
-
-.demoInspectorFooter {
-  display: flex;
-  justify-content: space-between;
-  gap: 8px;
-  font-size: 11px;
-  color: var(--muted-foreground);
-}
-
-.demoInspectorReset {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-  border-top: 1px solid var(--border);
-  padding-top: 10px;
-}
-
-.demoInspectorResetNote {
-  font-size: 11px;
-  color: var(--muted-foreground);
-}
-
-.demoInspectorHiddenCollapse {
-  display: none;
+  font-size: 0.7rem;
 }
 
 .demoInspectorBubble,
@@ -206,20 +360,20 @@
   z-index: 1200;
   display: inline-flex;
   align-items: center;
-  gap: 4px;
-  padding: 6px 10px;
+  gap: 0.3rem;
+  padding: 0.35rem 0.6rem;
   border: 1px solid var(--border);
   border-radius: 999px;
-  background: color-mix(in srgb, var(--panel) 92%, transparent);
+  background: color-mix(in srgb, var(--panel) 94%, transparent);
+  box-shadow: 0 10px 28px rgba(4, 14, 30, 0.3);
   color: var(--text);
-  font-size: 11px;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
+  font-size: 0.7rem;
   cursor: pointer;
 }
 
 .demoInspectorBubble {
-  top: 40%;
+  top: 8.5rem;
+  right: 1rem;
 }
 
 .demoInspectorReveal {
@@ -235,7 +389,17 @@
 }
 
 @media (max-width: 960px) {
-  .demoInspectorPanel {
+  .demoInspectorPanel:not(.demoInspectorDrawer) {
     display: none;
   }
+}
+
+/* The reviewer's explicit choice overrides even a motion-capable environment. */
+:root[data-demo-motion='reduce'] *,
+:root[data-demo-motion='reduce'] *::before,
+:root[data-demo-motion='reduce'] *::after {
+  animation-duration: 0.001ms !important;
+  animation-iteration-count: 1 !important;
+  transition-duration: 0.001ms !important;
+  scroll-behavior: auto !important;
 }

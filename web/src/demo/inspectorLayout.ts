@@ -66,12 +66,12 @@ export function demoShareStateSummary(state: DemoShareState): string {
   return [
     state.sceneId,
     state.persona,
-    state.network,
+    state.connection,
+    state.delay,
+    state.motion !== 'system' ? state.motion : null,
     state.asyncCase,
-    state.events !== 'default' ? state.events : null,
-    state.cleanup !== 'cleanup-console-storage-normal' ? state.cleanup : null,
-    state.controlsHidden ? 'controls-hidden' : null,
   ]
-    .filter((part): part is string => part !== null)
+    .filter((part) => part !== null)
+    .map(String)
     .join(' · ')
 }

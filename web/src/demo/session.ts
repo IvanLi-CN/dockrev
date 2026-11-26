@@ -90,12 +90,18 @@ export function applyDemoOverrides(fixture: Fixture, shareState: DemoShareState)
   const next = cloneFixture(fixture)
   seedVersionService(next)
 
-  const personaLabel = shareState.persona === 'admin' ? 'demo-admin' : 'demo-guest'
+  // The persona maps onto the product's own auth fields: guest has no user
+  // object, `user` is signed in without admin rights, `admin` gains the demo
+  // admin group. Nothing here grants real access.
+  const personaAuth =
+    shareState.persona === 'guest'
+      ? { currentUser: null, currentGroups: [] as string[], matchedBy: 'anonymous_dev' }
+      : shareState.persona === 'admin'
+        ? { currentUser: 'demo-admin', currentGroups: ['demo-admins'], matchedBy: 'group' }
+        : { currentUser: 'demo-user', currentGroups: [] as string[], matchedBy: 'user' }
   next.settings.auth = {
     ...next.settings.auth,
-    currentUser: personaLabel,
-    currentGroups: shareState.persona === 'admin' ? ['demo-admins'] : [],
-    matchedBy: shareState.persona === 'admin' ? 'group' : 'anonymous',
+    ...personaAuth,
     avatarUrl: null,
   }
 
@@ -176,6 +182,7 @@ export function readDemoMutations(): DemoMutationRecord[] {
         Boolean(item) &&
         typeof (item as DemoMutationRecord).id === 'string' &&
         typeof (item as DemoMutationRecord).label === 'string' &&
+        typeof (item as DemoMutationRecord).detail === 'string' &&
         typeof (item as DemoMutationRecord).route === 'string' &&
         typeof (item as DemoMutationRecord).at === 'string',
     )

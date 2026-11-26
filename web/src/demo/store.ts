@@ -1,8 +1,9 @@
 import { useSyncExternalStore } from 'react'
 
 import { navigateToHref } from '../routes'
-import { applyDemoShareStateToSearchParams, buildDemoHref, currentDemoShareState, readDemoShareState, withShareStatePatch } from './scenes'
-import { installDemoRuntime } from './runtimeBootstrap'
+import { applyDemoShareStateToSearchParams, buildDemoHref, currentDemoShareState, defaultShareState, readDemoShareState, withShareStatePatch } from './scenes'
+import { applyDemoEnvironment, installDemoRuntime, setDemoMutationObserver } from './runtimeBootstrap'
+import { applyDemoMotionPreference } from './motion'
 import { clearDemoFixture, clearDemoMutations, demoSessionSnapshot } from './session'
 import type { DemoSceneId, DemoSessionSnapshot, DemoShareState, DemoShareStatePatch } from './types'
 
@@ -34,33 +35,38 @@ function refreshSessionState(shareState: DemoShareState) {
 
 /**
  * Writes the share contract into the current URL without a document reload.
- * Scene navigation goes through the app router; only mock-affecting state
- * rebuilds the runtime.
+ * The product router owns the pathname; only the query is rewritten here.
  */
-function writeShareState(shareState: DemoShareState, options: { replace: boolean }) {
+function writeShareState(shareState: DemoShareState) {
   const url = new URL(window.location.href)
   applyDemoShareStateToSearchParams(url.searchParams, shareState)
-  const next = `${url.pathname}?${url.searchParams.toString()}`
-  if (options.replace) window.history.replaceState({}, '', next)
-  else window.history.pushState({}, '', next)
+  window.history.replaceState({}, '', `${url.pathname}?${url.searchParams.toString()}`)
 }
 
-const MOCK_AFFECTING_KEYS = ['sceneId', 'persona', 'network', 'asyncCase', 'events', 'cleanup'] as const
+/**
+ * Scene-owned state needs the mock model rebuilt. Environment state (identity,
+ * connection, latency, motion) is applied in place so a review keeps the page.
+ */
+const MODEL_KEYS = ['sceneId', 'persona', 'asyncCase', 'events', 'cleanup'] as const
 
 export function updateDemoShareState(patch: DemoShareStatePatch) {
   const previous = snapshot.shareState
   const next = withShareStatePatch(previous, patch)
-  const modelChanged = MOCK_AFFECTING_KEYS.some((key) => previous[key] !== next[key])
-  writeShareState(next, { replace: !modelChanged })
+  writeShareState(next)
+  applyDemoEnvironment(next)
+  applyDemoMotionPreference(next.motion)
   refreshSessionState(next)
-  if (!modelChanged) return
-  void rebuildDemoRuntime(next)
+
+  const modelChanged = MODEL_KEYS.some((key) => previous[key] !== next[key])
+  if (modelChanged) void rebuildDemoRuntime(next)
 }
 
 async function rebuildDemoRuntime(shareState: DemoShareState) {
-  // The mock layer is re-armed for the new scene, then the app subtree is
-  // remounted through `revision` so its data effects re-read the new model.
-  await installDemoRuntime(shareState, () => refreshSessionState(shareState))
+  // The mock layer is re-armed for the new model, then the app subtree is
+  // remounted through `revision` so its data effects re-read the new state.
+  const observer = () => refreshSessionState(shareState)
+  setDemoMutationObserver(observer)
+  await installDemoRuntime(shareState, observer)
   publish({ revision: snapshot.revision + 1 })
 }
 
@@ -78,33 +84,35 @@ export function selectDemoScene(sceneId: DemoSceneId) {
 
 /** Router-driven navigation keeps the demo share contract on the new pathname. */
 export function syncDemoShareStateFromUrl() {
-  const next = readDemoShareState(new URL(window.location.href))
-  if (next.sceneId === snapshot.shareState.sceneId) {
-    refreshSessionState(next)
-    return
-  }
+  const next = readDemoShareState(new URL(window.location.href), snapshot.shareState)
+  applyDemoMotionPreference(next.motion)
   refreshSessionState(next)
-  void rebuildDemoRuntime(next)
+  if (next.sceneId !== snapshot.shareState.sceneId) void rebuildDemoRuntime(next)
 }
 
+/** Back to the entry defaults, keeping the current route. */
 export function resetDemoSession() {
   clearDemoFixture()
   clearDemoMutations()
-  const sceneId = snapshot.shareState.sceneId
-  const next = withShareStatePatch(snapshot.shareState, { sceneId })
-  writeShareState(next, { replace: false })
+  const next = { ...defaultShareState(snapshot.shareState.sceneId), controlsHidden: snapshot.shareState.controlsHidden }
+  writeShareState(next)
+  applyDemoEnvironment(next)
+  applyDemoMotionPreference(next.motion)
   refreshSessionState(next)
   void rebuildDemoRuntime(next)
 }
 
 export function markDemoRuntimeReady() {
+  applyDemoMotionPreference(snapshot.shareState.motion)
   refreshSessionState(snapshot.shareState)
   publish({ ready: true })
 }
 
 /** Boots the demo runtime with the store wired as the mutation observer. */
 export async function startDemoRuntime() {
-  await installDemoRuntime(snapshot.shareState, () => refreshSessionState(snapshot.shareState))
+  const observer = () => refreshSessionState(snapshot.shareState)
+  setDemoMutationObserver(observer)
+  await installDemoRuntime(snapshot.shareState, observer)
   markDemoRuntimeReady()
 }
 

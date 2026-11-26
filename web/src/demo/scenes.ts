@@ -3,8 +3,10 @@ import type { DockrevApiScenario } from '../mock/dockrevMockApi/shared'
 import type {
   DemoAsyncCase,
   DemoCleanupScenario,
+  DemoConnection,
+  DemoDelayMode,
   DemoManagementEventsMode,
-  DemoNetworkMode,
+  DemoMotionPreference,
   DemoPersonaId,
   DemoSceneId,
   DemoShareState,
@@ -18,28 +20,73 @@ export type DemoScene = {
   /** App route this scene opens. Empty string is the overview root. */
   path: string
   fixtureScenario: Exclude<DockrevApiScenario, 'error'>
-  defaults: Pick<DemoShareState, 'persona' | 'network' | 'asyncCase' | 'events' | 'cleanup'>
+  defaults: Pick<DemoShareState, 'asyncCase' | 'events' | 'cleanup'>
+  /**
+   * Only the entry scene proposes a persona. Once a reviewer chooses one, the
+   * environment owns it and switching scenes must not overwrite that choice.
+   */
+  entryPersona: DemoPersonaId
 }
 
-export const DEMO_PERSONAS: readonly DemoPersonaId[] = ['anonymous', 'admin']
-export const DEMO_NETWORK_MODES: readonly DemoNetworkMode[] = ['normal', 'slow', 'faulty']
-export const DEMO_ASYNC_CASES: readonly DemoAsyncCase[] = [
-  'default',
-  'cold',
-  'cache-refresh',
-  'error',
-  'job-detail-retry',
-]
-export const DEMO_EVENTS_MODES: readonly DemoManagementEventsMode[] = ['default', 'reconnecting']
-export const DEMO_CLEANUP_SCENARIOS: readonly DemoCleanupScenario[] = [
-  'cleanup-console-storage-normal',
-  'cleanup-console-confirm-pending',
-  'cleanup-console-confirm-failed',
+export const DEMO_PERSONA_OPTIONS: ReadonlyArray<{ value: DemoPersonaId; label: string }> = [
+  { value: 'guest', label: '未登录' },
+  { value: 'user', label: '普通用户' },
+  { value: 'admin', label: '管理员' },
 ]
 
+export const DEMO_PERSONAS: readonly DemoPersonaId[] = DEMO_PERSONA_OPTIONS.map((option) => option.value)
+
+export const DEMO_CONNECTION_OPTIONS: ReadonlyArray<{ value: DemoConnection; label: string }> = [
+  { value: 'online', label: '在线' },
+  { value: 'offline', label: '离线' },
+]
+
+export const DEMO_CONNECTIONS: readonly DemoConnection[] = DEMO_CONNECTION_OPTIONS.map((option) => option.value)
+
+export const DEMO_DELAY_OPTIONS: ReadonlyArray<{ value: Exclude<DemoDelayMode, 'custom'>; label: string }> = [
+  { value: 'normal', label: '正常' },
+  { value: 'slow', label: '慢速' },
+]
+
+export const DEMO_MOTION_OPTIONS: ReadonlyArray<{ value: DemoMotionPreference; label: string }> = [
+  { value: 'system', label: '跟随系统' },
+  { value: 'reduce', label: '减少动效' },
+]
+
+export const DEMO_MOTIONS: readonly DemoMotionPreference[] = DEMO_MOTION_OPTIONS.map((option) => option.value)
+
+export const DEMO_ASYNC_CASE_OPTIONS: ReadonlyArray<{ value: DemoAsyncCase; label: string }> = [
+  { value: 'default', label: '默认' },
+  { value: 'cold', label: '冷启动' },
+  { value: 'cache-refresh', label: '缓存刷新' },
+  { value: 'error', label: '错误覆盖' },
+  { value: 'job-detail-retry', label: '任务详情重试' },
+]
+
+export const DEMO_ASYNC_CASES: readonly DemoAsyncCase[] = DEMO_ASYNC_CASE_OPTIONS.map((option) => option.value)
+
+export const DEMO_EVENTS_OPTIONS: ReadonlyArray<{ value: DemoManagementEventsMode; label: string }> = [
+  { value: 'default', label: '默认' },
+  { value: 'reconnecting', label: '重连中' },
+]
+
+export const DEMO_EVENTS_MODES: readonly DemoManagementEventsMode[] = DEMO_EVENTS_OPTIONS.map((option) => option.value)
+
+export const DEMO_CLEANUP_OPTIONS: ReadonlyArray<{ value: DemoCleanupScenario; label: string }> = [
+  { value: 'cleanup-console-storage-normal', label: '常规' },
+  { value: 'cleanup-console-confirm-pending', label: '确认待处理' },
+  { value: 'cleanup-console-confirm-failed', label: '确认失败' },
+]
+
+export const DEMO_CLEANUP_SCENARIOS: readonly DemoCleanupScenario[] = DEMO_CLEANUP_OPTIONS.map(
+  (option) => option.value,
+)
+
+/** Slow mode adds one fixed, documented latency on top of the mock's own timing. */
+export const DEMO_SLOW_DELAY_MS = 1500
+export const DEMO_MAX_CUSTOM_DELAY_MS = 30_000
+
 const DEFAULT_SCENE_DEFAULTS: DemoScene['defaults'] = {
-  persona: 'anonymous',
-  network: 'normal',
   asyncCase: 'default',
   events: 'default',
   cleanup: 'cleanup-console-storage-normal',
@@ -52,7 +99,8 @@ export const DEMO_SCENES: readonly DemoScene[] = [
     note: '导航概览与资源摘要',
     path: '',
     fixtureScenario: 'settings-configured',
-    defaults: { ...DEFAULT_SCENE_DEFAULTS, persona: 'admin' },
+    defaults: { ...DEFAULT_SCENE_DEFAULTS },
+    entryPersona: 'admin',
   },
   {
     id: 'services',
@@ -61,6 +109,7 @@ export const DEMO_SCENES: readonly DemoScene[] = [
     path: '/services',
     fixtureScenario: 'settings-configured',
     defaults: { ...DEFAULT_SCENE_DEFAULTS },
+    entryPersona: 'admin',
   },
   {
     id: 'service-actions',
@@ -69,6 +118,7 @@ export const DEMO_SCENES: readonly DemoScene[] = [
     path: '/services/stack-prod/svc-prod-api',
     fixtureScenario: 'service-action-progress',
     defaults: { ...DEFAULT_SCENE_DEFAULTS },
+    entryPersona: 'admin',
   },
   {
     id: 'service-versions',
@@ -77,6 +127,7 @@ export const DEMO_SCENES: readonly DemoScene[] = [
     path: '/services/stack-prod/svc-prod-api/versions',
     fixtureScenario: 'service-selected-version-updates',
     defaults: { ...DEFAULT_SCENE_DEFAULTS },
+    entryPersona: 'admin',
   },
   {
     id: 'queue',
@@ -85,6 +136,7 @@ export const DEMO_SCENES: readonly DemoScene[] = [
     path: '/queue',
     fixtureScenario: 'queue-mixed',
     defaults: { ...DEFAULT_SCENE_DEFAULTS },
+    entryPersona: 'admin',
   },
   {
     id: 'queue-logs',
@@ -92,7 +144,8 @@ export const DEMO_SCENES: readonly DemoScene[] = [
     note: '长日志与实时输出',
     path: '/queue/job-live-long',
     fixtureScenario: 'queue-long-logs',
-    defaults: { ...DEFAULT_SCENE_DEFAULTS, network: 'slow' },
+    defaults: { ...DEFAULT_SCENE_DEFAULTS },
+    entryPersona: 'admin',
   },
   {
     id: 'settings',
@@ -100,7 +153,8 @@ export const DEMO_SCENES: readonly DemoScene[] = [
     note: '鉴权、通知与集成',
     path: '/settings',
     fixtureScenario: 'settings-configured',
-    defaults: { ...DEFAULT_SCENE_DEFAULTS, persona: 'admin' },
+    defaults: { ...DEFAULT_SCENE_DEFAULTS },
+    entryPersona: 'admin',
   },
   {
     id: 'ghcr-registry',
@@ -108,7 +162,8 @@ export const DEMO_SCENES: readonly DemoScene[] = [
     note: 'Webhook 维护与假写',
     path: '/settings/ghcr-webhooks',
     fixtureScenario: 'settings-configured',
-    defaults: { ...DEFAULT_SCENE_DEFAULTS, persona: 'admin' },
+    defaults: { ...DEFAULT_SCENE_DEFAULTS },
+    entryPersona: 'admin',
   },
   {
     id: 'cleanup',
@@ -116,11 +171,8 @@ export const DEMO_SCENES: readonly DemoScene[] = [
     note: '扫描规则与 apply',
     path: '/cleanup',
     fixtureScenario: 'cleanup-console-storage-normal',
-    defaults: {
-      ...DEFAULT_SCENE_DEFAULTS,
-      persona: 'admin',
-      cleanup: 'cleanup-console-storage-normal',
-    },
+    defaults: { ...DEFAULT_SCENE_DEFAULTS, cleanup: 'cleanup-console-storage-normal' },
+    entryPersona: 'admin',
   },
   {
     id: 'deploy-check',
@@ -128,7 +180,8 @@ export const DEMO_SCENES: readonly DemoScene[] = [
     note: '部署检查报告',
     path: '/deploy-check',
     fixtureScenario: 'settings-configured',
-    defaults: { ...DEFAULT_SCENE_DEFAULTS, persona: 'admin' },
+    defaults: { ...DEFAULT_SCENE_DEFAULTS },
+    entryPersona: 'admin',
   },
 ]
 
@@ -150,9 +203,30 @@ function normalizeFromList<T extends string>(value: string | null | undefined, a
   return value != null && (allowed as readonly string[]).includes(value) ? (value as T) : fallback
 }
 
+/** The environment defaults are independent of the current scene. */
+export function defaultDemoEnvironment(sceneId: DemoSceneId) {
+  return {
+    persona: demoScene(sceneId).entryPersona,
+    connection: 'online' as const,
+    delay: 'normal' as const,
+    delayMs: DEMO_SLOW_DELAY_MS,
+    motion: 'system' as const,
+  }
+}
+
 export function defaultShareState(sceneId: DemoSceneId): DemoShareState {
   const scene = demoScene(sceneId)
-  return { sceneId, ...scene.defaults, controlsHidden: false }
+  return {
+    sceneId,
+    ...defaultDemoEnvironment(sceneId),
+    ...scene.defaults,
+    controlsHidden: false,
+  }
+}
+
+export function clampDemoDelayMs(value: number): number {
+  if (!Number.isFinite(value)) return 0
+  return Math.min(Math.max(Math.round(value), 0), DEMO_MAX_CUSTOM_DELAY_MS)
 }
 
 /**
@@ -167,16 +241,28 @@ export function demoSceneForPath(pathname: string, requested?: DemoSceneId | nul
   return candidates[0].id
 }
 
-/** Scene selection comes from the URL; the panel must never invent its own. */
-export function readDemoShareState(url: URL): DemoShareState {
+/**
+ * Valid URL fields override the session; missing fields keep the session value
+ * and only then fall back to entry defaults.
+ */
+export function readDemoShareState(url: URL, session?: DemoShareState | null): DemoShareState {
   const requestedScene = url.searchParams.get('demo')
   const requested = isSceneId(requestedScene) ? requestedScene : null
-  const sceneId = demoSceneForPath(url.pathname, requested) ?? requested ?? DEFAULT_DEMO_SCENE
-  const defaults = defaultShareState(sceneId)
+  const sceneId = demoSceneForPath(url.pathname, requested) ?? requested ?? session?.sceneId ?? DEFAULT_DEMO_SCENE
+  const defaults = session && session.sceneId === sceneId ? session : defaultShareState(sceneId)
+
+  const delayParam = url.searchParams.get('d_delay')
+  const delayMsParam = url.searchParams.get('d_delay_ms')
+  const parsedDelayMs = delayMsParam != null && /^\d+$/.test(delayMsParam) ? Number(delayMsParam) : null
+  const validDelayMs = parsedDelayMs != null && parsedDelayMs <= DEMO_MAX_CUSTOM_DELAY_MS
+
   return {
     sceneId,
     persona: normalizeFromList(url.searchParams.get('d_persona'), DEMO_PERSONAS, defaults.persona),
-    network: normalizeFromList(url.searchParams.get('d_net'), DEMO_NETWORK_MODES, defaults.network),
+    connection: normalizeFromList(url.searchParams.get('d_connection'), DEMO_CONNECTIONS, defaults.connection),
+    delay: normalizeFromList(delayParam, ['normal', 'slow', 'custom'] as const, defaults.delay),
+    delayMs: validDelayMs ? parsedDelayMs : defaults.delayMs,
+    motion: normalizeFromList(url.searchParams.get('d_motion'), DEMO_MOTIONS, defaults.motion),
     asyncCase: normalizeFromList(url.searchParams.get('d_case'), DEMO_ASYNC_CASES, defaults.asyncCase),
     events: normalizeFromList(url.searchParams.get('d_events'), DEMO_EVENTS_MODES, defaults.events),
     cleanup: normalizeFromList(url.searchParams.get('d_cleanup'), DEMO_CLEANUP_SCENARIOS, defaults.cleanup),
@@ -189,7 +275,11 @@ export function currentDemoShareState(): DemoShareState {
   return readDemoShareState(new URL(window.location.href))
 }
 
-/** Writes the canonical share contract and drops any stale demo parameters. */
+function sameValue(a: unknown, b: unknown): boolean {
+  return a === b
+}
+
+/** Writes the canonical share contract and drops stale demo parameters. */
 export function applyDemoShareStateToSearchParams(params: URLSearchParams, state: DemoShareState) {
   params.delete('demo')
   for (const key of Array.from(params.keys())) {
@@ -197,11 +287,14 @@ export function applyDemoShareStateToSearchParams(params: URLSearchParams, state
   }
   params.set('demo', state.sceneId)
   const defaults = defaultShareState(state.sceneId)
-  if (state.persona !== defaults.persona) params.set('d_persona', state.persona)
-  if (state.network !== defaults.network) params.set('d_net', state.network)
-  if (state.asyncCase !== defaults.asyncCase) params.set('d_case', state.asyncCase)
-  if (state.events !== defaults.events) params.set('d_events', state.events)
-  if (state.cleanup !== defaults.cleanup) params.set('d_cleanup', state.cleanup)
+  if (!sameValue(state.persona, defaults.persona)) params.set('d_persona', state.persona)
+  if (!sameValue(state.connection, defaults.connection)) params.set('d_connection', state.connection)
+  if (!sameValue(state.delay, defaults.delay)) params.set('d_delay', state.delay)
+  if (!sameValue(state.delayMs, defaults.delayMs)) params.set('d_delay_ms', String(state.delayMs))
+  if (!sameValue(state.motion, defaults.motion)) params.set('d_motion', state.motion)
+  if (!sameValue(state.asyncCase, defaults.asyncCase)) params.set('d_case', state.asyncCase)
+  if (!sameValue(state.events, defaults.events)) params.set('d_events', state.events)
+  if (!sameValue(state.cleanup, defaults.cleanup)) params.set('d_cleanup', state.cleanup)
   if (state.controlsHidden) params.set('d_controls', 'hidden')
 }
 
@@ -214,20 +307,32 @@ export function buildDemoHref(state: DemoShareState, basePath: string): string {
   return `${scenePath}?${params.toString()}`
 }
 
+/**
+ * Scene switches only replace scene-owned state. Environment choices belong to
+ * the reviewer and survive navigation.
+ */
 export function withShareStatePatch(state: DemoShareState, patch: DemoShareStatePatch): DemoShareState {
-  const next: DemoShareState = { ...state, ...patch }
   if (patch.sceneId && patch.sceneId !== state.sceneId) {
-    // Switching scene re-seeds the scenario-specific defaults so the URL stays
-    // minimal and the new page cannot inherit state that belongs to another scene.
-    const defaults = defaultShareState(patch.sceneId)
-    return { ...defaults, controlsHidden: state.controlsHidden }
+    const scene = demoScene(patch.sceneId)
+    return {
+      ...state,
+      ...scene.defaults,
+      ...patch,
+      sceneId: patch.sceneId,
+    }
   }
-  return next
+  return { ...state, ...patch }
 }
 
-/** Demo query parameters are stripped before real navigation on the live app. */
-export function copyDemoSearchParams(source: URLSearchParams, target: URLSearchParams) {
-  for (const [key, value] of source.entries()) {
-    if (key === 'demo' || key.startsWith('d_')) target.set(key, value)
-  }
+/** Effective extra latency for every demo-intercepted product request. */
+export function demoRequestDelayMs(state: DemoShareState): number {
+  if (state.connection === 'offline') return 0
+  if (state.delay === 'custom') return clampDemoDelayMs(state.delayMs)
+  return state.delay === 'slow' ? DEMO_SLOW_DELAY_MS : 0
+}
+
+export function formatDemoDelaySummary(state: DemoShareState): string {
+  if (state.connection === 'offline') return '离线 · 请求直接失败'
+  if (state.delay === 'custom') return `自定义 · +${clampDemoDelayMs(state.delayMs)} ms`
+  return state.delay === 'slow' ? `慢速 · +${DEMO_SLOW_DELAY_MS} ms` : '正常 · +0 ms'
 }

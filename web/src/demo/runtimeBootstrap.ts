@@ -1,7 +1,7 @@
 import { installDockrevMockApi } from '../mock/dockrevMockApi/install'
 import { realFetch, type DockrevApiRouteBehavior, type Fixture } from '../mock/dockrevMockApi/shared'
 import { buildReadonlySnapshotKey, deleteReadonlySnapshot, writeReadonlySnapshot } from '../readonlySnapshotCache'
-import { currentDemoShareState, demoScene } from './scenes'
+import { currentDemoShareState, demoRequestDelayMs, demoScene } from './scenes'
 import {
   DEMO_GITHUB_RELEASES_BY_SERVICE_ID,
   appendDemoMutation,
@@ -13,18 +13,30 @@ import type { DemoShareState } from './types'
 import { writeDockrevRuntimeMode } from './runtime'
 
 const QUEUE_SNAPSHOT_KEY = buildReadonlySnapshotKey('queue', 'jobs-overview')
-let installed = false
 
+/**
+ * The environment policy is read on every intercepted request, so connection
+ * and latency changes take effect immediately without reinstalling the mock
+ * or reloading the document.
+ */
+let activeEnvironment: DemoShareState | null = null
+let recordWrites = false
+/** Notifies the store after a simulated write so the inspector re-reads the log. */
+let notifyMutation: (() => void) | null = null
+
+function isProductRequest(urlPath: string) {
+  return urlPath.startsWith('/api/')
+}
+
+/** Scenario-specific async cases stay per-route; environment is global. */
 function routeBehaviorFor(state: DemoShareState): Record<string, DockrevApiRouteBehavior> {
   const slowRead = {
     'GET /api/jobs': { delayMs: 3_000 },
     'GET /api/version-inference/overview': { delayMs: 3_000 },
     'GET /api/github-packages/webhook/overview': { delayMs: 3_000 },
   }
-  if (state.network === 'slow' || state.asyncCase === 'cold' || state.asyncCase === 'cache-refresh') {
-    return slowRead
-  }
-  if (state.network === 'faulty' || state.asyncCase === 'error') {
+  if (state.asyncCase === 'cold' || state.asyncCase === 'cache-refresh') return slowRead
+  if (state.asyncCase === 'error') {
     return {
       'GET /api/jobs': {
         delayMs: 350,
@@ -84,12 +96,59 @@ function buildQueueSnapshot(fixture: Fixture) {
   }
 }
 
+/**
+ * Wraps the installed mock fetch with the environment policy:
+ *  - offline fails product requests the way a browser does (TypeError), never
+ *    with a fake 503 and never by falling back to the live backend;
+ *  - latency adds one documented delay per intercepted product request.
+ */
+function installEnvironmentPolicy() {
+  const mockFetch = globalThis.fetch
+  globalThis.fetch = async (input: RequestInfo | URL, init?: RequestInit) => {
+    const environment = activeEnvironment
+    const method = (init?.method ?? (input instanceof Request ? input.method : 'GET')).toUpperCase()
+    const rawUrl = typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url
+    const urlPath = (() => {
+      try {
+        return new URL(rawUrl, window.location.href).pathname
+      } catch {
+        return rawUrl
+      }
+    })()
+
+    if (environment && isProductRequest(urlPath)) {
+      if (environment.connection === 'offline') {
+        throw new TypeError('Failed to fetch')
+      }
+      const delayMs = demoRequestDelayMs(environment)
+      if (delayMs > 0) {
+        await new Promise<void>((resolve) => {
+          globalThis.setTimeout(resolve, delayMs)
+        })
+      }
+    }
+
+    const response = await mockFetch(input, init)
+
+    if (recordWrites && environment && method !== 'GET' && isProductRequest(urlPath) && response.ok) {
+      appendDemoMutation({
+        id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+        at: new Date().toISOString(),
+        label: `${method} ${urlPath}`,
+        detail: '写入内存 mock，未触达真实后端',
+        route: `${window.location.pathname}${window.location.search}`,
+      })
+      notifyMutation?.()
+    }
+    return response
+  }
+}
+
 export type DemoInstallResult = { enabled: true; shareState: DemoShareState }
 
 /**
- * A demo build must intercept before the first render and re-arm on every
- * model-affecting share-state change. Anything less would let the app tree
- * issue live requests against a non-existent backend.
+ * A demo build must intercept before the first render. Anything less would let
+ * the app tree issue live requests against a non-existent backend.
  */
 export async function installDemoRuntime(
   shareState: DemoShareState = currentDemoShareState(),
@@ -109,27 +168,12 @@ export async function installDemoRuntime(
     cleanupScenario: shareState.cleanup,
     githubReleasesByServiceId: DEMO_GITHUB_RELEASES_BY_SERVICE_ID,
     initialFixture,
-    onStateChange: (fixture) => saveDemoFixture(fixture, shareState),
+    onStateChange: (fixture) => {
+      saveDemoFixture(fixture, shareState)
+      onMutation?.()
+    },
     dockrevApiBehaviorByRoute: routeBehaviorFor(shareState),
   })
-
-  // A simulated write is a non-GET request the mock layer answered. Reads and
-  // boot-time seed persistence must never appear in the audit trail.
-  const mockFetch = globalThis.fetch
-  globalThis.fetch = async (input: RequestInfo | URL, init?: RequestInit) => {
-    const response = await mockFetch(input, init)
-    const method = (init?.method ?? (input instanceof Request ? input.method : 'GET')).toUpperCase()
-    if (method !== 'GET' && response.ok) {
-      appendDemoMutation({
-        id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
-        at: new Date().toISOString(),
-        label: `${method} ${new URL(input instanceof Request ? input.url : input.toString(), window.location.href).pathname}`,
-        route: `${window.location.pathname}${window.location.search}`,
-      })
-      onMutation?.()
-    }
-    return response
-  }
 
   if (globalThis.fetch === realFetch) {
     throw new Error('demo mock layer did not take over fetch; refusing to render the live app tree')
@@ -138,10 +182,23 @@ export async function installDemoRuntime(
     throw new Error('demo mock layer published no debug state; refusing to render the live app tree')
   }
 
-  installed = true
+  activeEnvironment = shareState
+  notifyMutation = onMutation ?? null
+  recordWrites = true
+  installEnvironmentPolicy()
   return { enabled: true, shareState }
 }
 
-export function isDemoRuntimeInstalled() {
-  return installed
+/** Applies a connection/latency change to the already-installed mock. */
+export function applyDemoEnvironment(shareState: DemoShareState) {
+  activeEnvironment = shareState
+}
+
+/** Keeps the inspector's mutation observer attached across model rebuilds. */
+export function setDemoMutationObserver(observer: (() => void) | null) {
+  notifyMutation = observer
+}
+
+export function currentDemoEnvironment(): DemoShareState | null {
+  return activeEnvironment
 }

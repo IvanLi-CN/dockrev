@@ -1,5 +1,3 @@
-import type { Fixture } from '../mock/dockrevMockApi/shared'
-
 export type DemoSceneId =
   | 'overview'
   | 'services'
@@ -12,9 +10,14 @@ export type DemoSceneId =
   | 'cleanup'
   | 'deploy-check'
 
-export type DemoPersonaId = 'anonymous' | 'admin'
+/** Simulated session, mapped onto the product's own auth fields. */
+export type DemoPersonaId = 'guest' | 'user' | 'admin'
 
-export type DemoNetworkMode = 'normal' | 'slow' | 'faulty'
+export type DemoConnection = 'online' | 'offline'
+
+export type DemoDelayMode = 'normal' | 'slow' | 'custom'
+
+export type DemoMotionPreference = 'system' | 'reduce'
 
 export type DemoAsyncCase =
   | 'default'
@@ -31,13 +34,19 @@ export type DemoCleanupScenario =
   | 'cleanup-console-confirm-failed'
 
 /**
- * Everything a reviewer can reproduce from a URL. Scene selection and share
- * state live in the query string; panel geometry stays local-only.
+ * Everything a reviewer can reproduce from a URL. Scene and environment state
+ * live in the query string; panel geometry and open/closed state stay local.
+ *
+ * `theme` is not duplicated here: the product owns the preference and the
+ * inspector reads/writes it, so a single source stays authoritative.
  */
 export type DemoShareState = {
   sceneId: DemoSceneId
   persona: DemoPersonaId
-  network: DemoNetworkMode
+  connection: DemoConnection
+  delay: DemoDelayMode
+  delayMs: number
+  motion: DemoMotionPreference
   asyncCase: DemoAsyncCase
   events: DemoManagementEventsMode
   cleanup: DemoCleanupScenario
@@ -50,13 +59,8 @@ export type DemoMutationRecord = {
   id: string
   at: string
   label: string
+  detail: string
   route: string
-}
-
-export type DemoSceneRuntimeState = {
-  shareState: DemoShareState
-  fixture: Fixture | null
-  mutations: DemoMutationRecord[]
 }
 
 export type DemoSessionSnapshot = {

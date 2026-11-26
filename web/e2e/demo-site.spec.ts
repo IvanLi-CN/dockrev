@@ -3,24 +3,23 @@ import { expect, test, type Page } from '@playwright/test'
 const panel = (page: Page) => page.getByRole('region', { name: 'Demo 控制面板' })
 
 /**
- * Desktop renders the inspector inline; mobile hides it behind the DEMO bubble.
- * Every scenario test starts from the same control surface.
+ * Desktop starts closed behind a bubble; mobile keeps its own bubble. Every
+ * scenario test opens the same control surface first.
  */
 async function openInspector(page: Page) {
-  const bubble = page.getByRole('button', { name: '打开 Demo 控制面板' })
+  const bubble = page.getByRole('button', { name: '打开 Web Demo 调试控制面板' })
   if (await bubble.count()) await bubble.first().click()
   await expect(panel(page)).toBeVisible()
 }
 
-async function closeInspector(page: Page) {
-  const close = panel(page).getByRole('button', { name: '关闭', exact: true })
-  if (await close.count()) {
-    await close.click()
-    await expect(panel(page)).toHaveCount(0)
-  }
+async function readMutations(page: Page): Promise<Array<{ label: string; detail: string }>> {
+  return page.evaluate(() => {
+    const raw = window.sessionStorage.getItem('dockrev:demo:mutations:v1')
+    return raw ? (JSON.parse(raw) as Array<{ label: string; detail: string }>) : []
+  })
 }
 
-test.describe('demo site share contract', () => {
+test.describe('demo environment contract', () => {
   test('scene selection is client-side and keeps the share parameter', async ({ page }) => {
     await page.goto('/queue?demo=queue')
     await openInspector(page)
@@ -29,51 +28,96 @@ test.describe('demo site share contract', () => {
       window.__demoE2eMarker__ = 'alive'
     })
 
-    await panel(page).getByRole('button', { name: /Cleanup/ }).click()
+    await panel(page).getByRole('combobox', { name: '选择 Demo 场景' }).click()
+    await page.getByRole('option', { name: 'Cleanup', exact: true }).click()
+
     await expect(page).toHaveURL(/\/cleanup\?demo=cleanup$/)
     // A document reload would drop this marker.
     expect(await page.evaluate(() => window.__demoE2eMarker__)).toBe('alive')
   })
 
-  test('data state survives a reload inside the same session', async ({ page }) => {
+  test('identity, connection and latency survive a reload and a scene switch', async ({ page }) => {
     await page.goto('/services?demo=services')
     await openInspector(page)
 
-    await panel(page).getByRole('combobox', { name: 'Demo network' }).click()
-    await page.getByRole('option', { name: '慢速 (3s)' }).click()
-    await expect(page).toHaveURL(/d_net=slow/)
+    await panel(page).getByRole('radio', { name: '普通用户' }).click()
+    await expect(page).toHaveURL(/d_persona=user/)
+    await panel(page).getByRole('radio', { name: '离线' }).click()
+    await expect(page).toHaveURL(/d_connection=offline/)
 
     await page.reload()
+    // The panel open state is local, so a reload may restore either surface.
     await openInspector(page)
-    await expect(panel(page).getByRole('combobox', { name: 'Demo network' })).toHaveText(/慢速/)
+    await expect(panel(page).getByRole('radio', { name: '普通用户' })).toHaveAttribute('data-state', 'on')
+    await expect(panel(page).getByRole('radio', { name: '离线' })).toHaveAttribute('data-state', 'on')
 
-    await panel(page).getByRole('combobox', { name: 'Demo persona' }).click()
-    await page.getByRole('option', { name: '维护者' }).click()
-    await expect(page).toHaveURL(/d_persona=admin/)
+    // Environment belongs to the reviewer, so the scene switch keeps it.
+    await panel(page).getByRole('combobox', { name: '选择 Demo 场景' }).click()
+    await page.getByRole('option', { name: 'Queue', exact: true }).click()
+    await expect(page).toHaveURL(/\/queue\?demo=queue/)
+    await expect(page).toHaveURL(/d_persona=user/)
+    await expect(page).toHaveURL(/d_connection=offline/)
+  })
 
-    await page.reload()
+  test('offline fails product requests without touching the real backend', async ({ page }) => {
+    await page.goto('/services?demo=services&d_connection=offline&d_controls=hidden')
+    const result = await page.evaluate(async () => {
+      try {
+        await fetch('/api/settings')
+        return 'resolved'
+      } catch (error) {
+        return error instanceof TypeError ? 'type-error' : String(error)
+      }
+    })
+    expect(result).toBe('type-error')
+  })
+
+  test('slow mode adds the documented delay to product requests', async ({ page }) => {
+    await page.goto('/services?demo=services&d_delay=slow&d_controls=hidden')
+    const elapsed = await page.evaluate(async () => {
+      const started = performance.now()
+      await fetch('/api/settings')
+      return performance.now() - started
+    })
+    expect(elapsed).toBeGreaterThan(1_400)
+  })
+
+  test('theme control is the product preference, not a second state', async ({ page }) => {
+    await page.goto('/services?demo=services')
     await openInspector(page)
-    await expect(panel(page).getByRole('combobox', { name: 'Demo persona' })).toHaveText(/维护者/)
+    await panel(page).getByRole('radio', { name: '深色' }).click({ force: true })
+    await expect(page.locator('html')).toHaveAttribute('data-theme', 'dark')
+    expect(await page.evaluate(() => window.localStorage.getItem('dockrev:theme'))).toBe('dark')
+  })
+
+  test('custom delay validates input and reports errors', async ({ page }) => {
+    await page.goto('/services?demo=services')
+    await openInspector(page)
+
+    await panel(page).getByRole('button', { name: /高级/ }).click()
+    const input = panel(page).getByLabel('附加延迟（毫秒）')
+    await input.fill('99999')
+    await input.press('Enter')
+    await expect(panel(page).getByText('请输入 0–30000 之间的整数毫秒数。')).toBeVisible()
+    await expect(page).not.toHaveURL(/d_delay_ms/)
+
+    await input.fill('1200')
+    await input.press('Enter')
+    await expect(page).toHaveURL(/d_delay=custom/)
+    await expect(page).toHaveURL(/d_delay_ms=1200/)
   })
 
   test('simulated writes appear in the mutation log', async ({ page }) => {
-    // The cleanup rescan is a write affordance on both viewports, unlike the
-    // settings toggles which only render on desktop.
     await page.goto('/cleanup?demo=cleanup')
     await expect(page.getByRole('button', { name: '重扫' }).first()).toBeVisible()
 
-    const readLog = () =>
-      page.evaluate(() => {
-        const raw = window.sessionStorage.getItem('dockrev:demo:mutations:v1')
-        return raw ? (JSON.parse(raw) as unknown[]).length : 0
-      })
-    const baseline = await readLog()
+    const baseline = (await readMutations(page)).length
     await page.getByRole('button', { name: '重扫' }).first().click()
-    await expect.poll(readLog).toBeGreaterThan(baseline)
+    await expect.poll(async () => (await readMutations(page)).length).toBeGreaterThan(baseline)
 
-    // The inspector renders the same persisted log once opened.
     await openInspector(page)
-    await expect(panel(page).locator('.demoInspectorMutationLabel').first()).toContainText('POST /api/')
+    await panel(page).locator('summary').first().click()
+    await expect(panel(page).getByRole('region', { name: '模拟写入记录' }).locator('li').first()).toContainText('POST /api/')
   })
 
   test('hidden controls provide a clean evidence surface', async ({ page }) => {
@@ -102,24 +146,23 @@ test.describe('demo site share contract', () => {
 })
 
 test.describe('demo inspector layout', () => {
-  test('desktop panel collapses to a bubble and restores', async ({ page, isMobile }) => {
+  test('desktop panel opens from a bubble and collapses back', async ({ page, isMobile }) => {
     test.skip(isMobile, 'desktop-only contract')
     await page.goto('/services?demo=services')
-    await expect(panel(page)).toBeVisible()
 
-    await panel(page).getByRole('button', { name: '收起', exact: true }).click()
+    await openInspector(page)
+    await panel(page).getByRole('button', { name: '收起为气泡' }).click()
     await expect(panel(page)).toHaveCount(0)
-
-    await page.locator('.demoInspectorBubble').click()
-    await expect(panel(page)).toBeVisible()
+    await expect(page.getByRole('button', { name: '打开 Web Demo 调试控制面板' })).toBeVisible()
   })
 
   test('mobile entry opens a drawer instead of nothing', async ({ page, isMobile }) => {
     test.skip(!isMobile, 'mobile-only contract')
     await page.goto('/cleanup?demo=cleanup')
-    await expect(page.getByRole('button', { name: '打开 Demo 控制面板' })).toBeVisible()
     await openInspector(page)
-    await closeInspector(page)
+    await expect(page.locator('[data-demo-inspector="drawer"]')).toBeVisible()
+    await panel(page).getByRole('button', { name: '关闭', exact: true }).click()
+    await expect(panel(page)).toHaveCount(0)
   })
 })
 

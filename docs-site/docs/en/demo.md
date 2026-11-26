@@ -18,8 +18,11 @@ The public demo is a **separate site**: <https://dockrev-demo.ivanli.cc/>. It is
 | Parameter | Purpose | Values |
 | --- | --- | --- |
 | `demo` | Scene selection | `overview`, `services`, `service-actions`, `service-versions`, `queue`, `queue-logs`, `settings`, `ghcr-registry`, `cleanup`, `deploy-check` |
-| `d_persona` | Demo persona | `anonymous`, `admin` |
-| `d_net` | Network behaviour | `normal`, `slow`, `faulty` |
+| `d_persona` | Simulated identity | `guest`, `user`, `admin` |
+| `d_connection` | Simulated connectivity | `online`, `offline` |
+| `d_delay` | Request-delay mode | `normal`, `slow`, `custom` |
+| `d_delay_ms` | Custom extra delay (ms) | integer `0`–`30000`, only applied in `custom` |
+| `d_motion` | Motion preference | `system`, `reduce` |
 | `d_case` | Async data state | `default`, `cold`, `cache-refresh`, `error`, `job-detail-retry` |
 | `d_events` | Management event stream | `default`, `reconnecting` |
 | `d_cleanup` | Cleanup scenario | `cleanup-console-storage-normal`, `cleanup-console-confirm-pending`, `cleanup-console-confirm-failed` |
@@ -29,9 +32,12 @@ Defaults are omitted from the URL. `https://dockrev-demo.ivanli.cc/services?demo
 
 ## Demo inspector
 
-- Desktop: a floating panel docked left or right, collapsible to a `DEMO` bubble, with per-scene position memory.
-- Mobile: a `DEMO` bubble that opens a bottom drawer.
-- The panel offers scene switching, persona, network, data, a share link and seed reset. Scene switching is client-side navigation and never reloads the document.
+- Desktop: a floating panel docked left or right that starts collapsed as a `Demo` bubble, with per-scene position memory; mobile gets a bottom drawer.
+- `全局环境` is always visible: simulated identity, connectivity, request delay and product theme. Identity and theme reuse the product's own session and theme models rather than a second copy.
+- `高级` holds only the custom delay and motion preference, collapsed by default; while collapsed it still summarises enabled items and keeps them active.
+- `Scene`, `Data` and `Actions` follow in one main workflow; `分享与记录` is a collapsed secondary tool with the share URL and simulated-write log.
+- Offline fails every intercepted `/api/**` request as a connection error (`TypeError`) — no fake 503 and no live-backend fallback. Slow mode adds a flat `+1500 ms`.
+- Scene switching is client-side navigation with no document reload; identity, connectivity, delay and motion are environment state and survive a scene switch.
 - Use `d_controls=hidden` for clean screenshots.
 
 ## Relationship to Storybook

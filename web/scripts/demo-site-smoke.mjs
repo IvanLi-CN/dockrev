@@ -153,6 +153,8 @@ try {
   const inspector = page.getByRole('region', { name: 'Demo 控制面板' })
   await page.goto(`${origin}/queue?demo=queue`, { waitUntil: 'networkidle' })
   await page.waitForFunction(() => Boolean(window.__DOCKREV_MOCK_DEBUG__), null, { timeout: 15000 })
+  const openBubble = page.getByRole('button', { name: '打开 Web Demo 调试控制面板' })
+  if (await openBubble.count()) await openBubble.first().click()
   if (!(await inspector.isVisible())) {
     throw new Error('demo inspector is not visible on the queue scene')
   }
@@ -161,7 +163,8 @@ try {
   await page.evaluate(() => {
     window.__demoSmokeMarker__ = 'alive'
   })
-  await inspector.getByRole('button', { name: /Cleanup/ }).click()
+  await inspector.getByRole('combobox', { name: '选择 Demo 场景' }).click()
+  await page.getByRole('option', { name: 'Cleanup', exact: true }).click()
   await page.waitForFunction(() => window.location.pathname === '/cleanup', null, { timeout: 15000 })
   const marker = await page.evaluate(() => window.__demoSmokeMarker__)
   if (marker !== 'alive') throw new Error('scene switch reloaded the document')
@@ -169,6 +172,22 @@ try {
   const url = new URL(page.url())
   if (url.searchParams.get('demo') !== 'cleanup') {
     throw new Error(`scene switch lost the demo parameter: ${page.url()}`)
+  }
+
+  // Environment policy is real behaviour, not URL decoration. Offline pages
+  // never reach networkidle because every product read fails on purpose.
+  await page.goto(`${origin}/services?demo=services&d_connection=offline&d_controls=hidden`, { waitUntil: 'domcontentloaded' })
+  await page.waitForFunction(() => Boolean(window.__DOCKREV_MOCK_DEBUG__), null, { timeout: 15000 })
+  const offlineResult = await page.evaluate(async () => {
+    try {
+      await fetch('/api/settings')
+      return 'resolved'
+    } catch (error) {
+      return error instanceof TypeError ? 'type-error' : String(error)
+    }
+  })
+  if (offlineResult !== 'type-error') {
+    throw new Error(`offline demo request did not fail like a browser: ${offlineResult}`)
   }
 
   // The hidden-controls contract is the clean screenshot mode.
@@ -180,7 +199,7 @@ try {
   const mobile = await browser.newPage({ viewport: { width: 390, height: 844 } })
   await mobile.goto(`${origin}/cleanup?demo=cleanup`, { waitUntil: 'networkidle' })
   await mobile.waitForFunction(() => Boolean(window.__DOCKREV_MOCK_DEBUG__), null, { timeout: 15000 })
-  const bubble = mobile.getByRole('button', { name: '打开 Demo 控制面板' })
+  const bubble = mobile.getByRole('button', { name: '打开 Web Demo 调试控制面板' })
   await bubble.click()
   await mobile.getByRole('region', { name: 'Demo 控制面板' }).waitFor({ timeout: 5000 })
   await mobile.close()

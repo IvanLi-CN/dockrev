@@ -54,14 +54,31 @@ assert "__DOCKREV_MOCK_DEBUG__" in bootstrap
 assert "installDockrevMockApi" in bootstrap
 
 scenes = read("web/src/demo/scenes.ts")
-for token in ("'demo'", "d_persona", "d_net", "d_case", "d_events", "d_cleanup", "d_controls"):
+for token in ("'demo'", "d_persona", "d_connection", "d_delay", "d_delay_ms", "d_motion", "d_case", "d_events", "d_cleanup", "d_controls"):
     assert token in scenes, token
 
 inspector = read("web/src/demo/DemoInspector.tsx")
-for token in ("scene", "persona", "network", "模拟写入", "分享"):
+for token in ("全局环境", "模拟身份", "网络连接", "请求延迟", "产品主题", "高级", "Recent mutations", "分享与记录"):
     assert token in inspector, token
 assert "window.location.reload" not in inspector
+assert "setThemePreference" in inspector, "the inspector must drive the product theme preference"
 assert "navigateToHref" in read("web/src/demo/store.ts")
+
+# Offline/latency must be real behaviour, not URL decoration.
+bootstrap = read("web/src/demo/runtimeBootstrap.ts")
+assert "Failed to fetch" in bootstrap, "offline must fail like a browser, not with a fake status"
+assert "demoRequestDelayMs" in bootstrap
+assert "notifyMutation" in bootstrap, "simulated writes must notify the inspector"
+
+# Scene switches reset scene-owned state but never the reviewer's environment.
+scenes_src = read("web/src/demo/scenes.ts")
+assert "withShareStatePatch" in scenes_src
+store_src = read("web/src/demo/store.ts")
+assert "MODEL_KEYS" in store_src and "applyDemoEnvironment" in store_src
+assert "'persona'" in store_src, "identity changes must rebuild the model so the product auth reflects them"
+assert "'connection'" not in store_src.split("MODEL_KEYS")[1].split("] as const")[0], (
+    "connectivity is environment-only and must not rebuild the model"
+)
 
 # Release is the only publisher, and the artifact identity is checked first.
 release = read(".github/workflows/release.yml")
