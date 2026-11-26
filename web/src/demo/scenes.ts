@@ -45,6 +45,41 @@ export const DEMO_CONNECTION_OPTIONS: ReadonlyArray<{ value: DemoConnection; lab
   { value: 'offline', label: '离线' },
 ]
 
+/**
+ * Connectivity and latency are one reviewer decision, so the inspector exposes a
+ * single three-state control. `custom` is reached through the advanced section.
+ * The share contract keeps `d_connection` and `d_delay` separate so existing
+ * links and the runtime policy stay unchanged.
+ */
+export type DemoNetworkMode = 'normal' | 'slow' | 'offline' | 'custom'
+
+export const DEMO_NETWORK_OPTIONS: ReadonlyArray<{
+  value: Exclude<DemoNetworkMode, 'custom'>
+  label: string
+}> = [
+  { value: 'normal', label: '正常' },
+  { value: 'slow', label: '慢速' },
+  { value: 'offline', label: '离线' },
+]
+
+export function demoNetworkMode(state: DemoShareState): DemoNetworkMode {
+  if (state.connection === 'offline') return 'offline'
+  if (state.delay === 'custom') return 'custom'
+  return state.delay === 'slow' ? 'slow' : 'normal'
+}
+
+/**
+ * Applying a mode only touches the fields it owns, so leaving offline restores
+ * the delay that was in effect instead of resetting it.
+ */
+export function demoNetworkModePatch(
+  state: DemoShareState,
+  mode: Exclude<DemoNetworkMode, 'custom'>,
+): Pick<DemoShareState, 'connection' | 'delay'> {
+  if (mode === 'offline') return { connection: 'offline', delay: state.delay === 'custom' ? 'normal' : state.delay }
+  return { connection: 'online', delay: mode }
+}
+
 export const DEMO_CONNECTIONS: readonly DemoConnection[] = DEMO_CONNECTION_OPTIONS.map((option) => option.value)
 
 export const DEMO_DELAY_OPTIONS: ReadonlyArray<{ value: Exclude<DemoDelayMode, 'custom'>; label: string }> = [

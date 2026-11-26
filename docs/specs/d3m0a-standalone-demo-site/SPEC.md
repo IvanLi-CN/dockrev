@@ -58,6 +58,7 @@
 | 全局状态 | 分享参数 | 取值 |
 | --- | --- | --- |
 | 模拟鉴权 | `d_persona` | `allowed`、`blocked`（旧值 `guest`→`blocked`，`user`/`admin`→`allowed`） |
+| 网络与延迟视野 | —（UI 层合并） | 正常、慢速、离线三态；写入上表两个字段 |
 | 网络连接 | `d_connection` | `online`、`offline` |
 | 请求延迟模式 | `d_delay` | `normal`、`slow`、`custom` |
 | 自定义附加延迟 | `d_delay_ms` | `0`–`30000` 整数，仅在 `custom` 下生效 |
@@ -70,6 +71,7 @@
 - `blocked` 时 mock 必须在任何路由处理之前返回与后端同构的 401，`details` 复用 `authz_error` 字段；公共豁免与后端一致（`GET /api/health`、`GET /api/version`、`/api/webhooks/*`）。
 - 未授权时前端已有链路渲染 `UnauthorizedPage`，demo 不新增阻断逻辑；切换回 `allowed` 后无需整页刷新即恢复控制台。
 - 授权优先于网络：`blocked` 不得先渲染业务骨架再报错，也不得被离线的 `TypeError` 掩盖。
+- 网络与延迟在 Inspector 中是一个三态控件（正常/慢速/离线）：选择离线保留此前的延迟，离开离线恢复该延迟；自定义延迟仍只在高级区启用，并被控件以当前值呈现。
 - 主题不复制成第二份 demo 状态：Inspector 读写产品自身的 `setThemePreference` / `subscribeTheme`。
 - 离线让所有被接管的 `/api/**` 请求以 `TypeError` 失败（浏览器语义），不伪造 503、不回退真实后端；慢速统一 `+1500 ms`。
 - 场景切换只重置场景自有状态（async case / events / cleanup），环境选择必须保留。

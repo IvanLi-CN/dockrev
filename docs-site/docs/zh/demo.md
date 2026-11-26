@@ -20,20 +20,25 @@ URL 决定场景与可复现状态：
 | 参数 | 作用 | 取值 |
 | --- | --- | --- |
 | `demo` | 选择场景 | `overview`、`services`、`service-actions`、`service-versions`、`queue`、`queue-logs`、`settings`、`ghcr-registry`、`cleanup`、`deploy-check` |
-| `d_persona` | 演示身份 | `anonymous`、`admin` |
-| `d_net` | 网络行为 | `normal`、`slow`、`faulty` |
+| `d_persona` | 模拟鉴权 | `allowed`、`blocked` |
+| `d_connection` / `d_delay` | 网络与延迟（一个三态控件写入这两个字段） | `online`/`offline` + `normal`/`slow`/`custom` |
+| `d_delay_ms` | 自定义附加延迟（毫秒） | `0`–`30000` 整数，仅在 `custom` 生效 |
+| `d_motion` | 动效偏好 | `system`、`reduce` |
 | `d_case` | 异步数据态 | `default`、`cold`、`cache-refresh`、`error`、`job-detail-retry` |
 | `d_events` | 管理事件流 | `default`、`reconnecting` |
 | `d_cleanup` | 清理场景 | `cleanup-console-storage-normal`、`cleanup-console-confirm-pending`、`cleanup-console-confirm-failed` |
 | `d_controls` | 隐藏控制面板 | `hidden` |
 
-默认值不写进 URL。例如 `https://dockrev-demo.ivanli.cc/services?demo=services&d_net=slow` 只记录与默认值不同的 `d_net`。
+默认值不写进 URL。例如 `https://dockrev-demo.ivanli.cc/services?demo=services&d_delay=slow` 只记录与默认值不同的 `d_delay`。旧链接的 `guest` 视为 `blocked`，`user` / `admin` 视为 `allowed`。
 
 ## Demo 控制面板
 
 - 桌面：右侧（或左侧）浮窗，可收起成 `DEMO` 气泡，位置按场景分别记忆。
 - 移动端：右下角 `DEMO` 气泡展开为底部 drawer。
-- 面板提供场景切换、身份、网络、数据、分享链接与重置 Seed。场景切换是 client-side 导航，不会整页刷新。
+- `全局环境` 常驻：模拟鉴权、网络与延迟、产品主题。鉴权与主题复用产品自己的会话与主题模型，不是第二套状态。
+- 网络与延迟是一个 **三态** 控件：正常 / 慢速 / 离线。自定义延迟在 `高级` 中启用后，控件下方显示当前自定义值。
+- `未授权` 时所有非公共 API 返回 `401 auth_required`，页面切换为「当前身份未获 Dockrev 授权」，控制台完全不可用；切回 `已授权` 无需刷新即恢复。
+- 面板提供场景切换、数据、Actions、分享链接与模拟写入记录。场景切换是 client-side 导航，不会整页刷新。
 - 需要干净截图时使用 `d_controls=hidden`。
 
 ## 与 Storybook 的关系

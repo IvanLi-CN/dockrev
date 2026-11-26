@@ -77,7 +77,7 @@ assert "urlPath === '/api/version'" in mock_install
 assert "'/api/webhooks/'" in mock_install
 
 inspector = read("web/src/demo/DemoInspector.tsx")
-for token in ("全局环境", "模拟鉴权", "网络连接", "请求延迟", "产品主题", "高级", "Recent mutations", "分享与记录"):
+for token in ("全局环境", "模拟鉴权", "网络与延迟", "产品主题", "高级", "Recent mutations", "分享与记录"):
     assert token in inspector, token
 assert "window.location.reload" not in inspector
 assert "setThemePreference" in inspector, "the inspector must drive the product theme preference"
@@ -111,6 +111,14 @@ assert "withShareStatePatch" in scenes_src
 store_src = read("web/src/demo/store.ts")
 assert "MODEL_KEYS" in store_src and "applyDemoEnvironment" in store_src
 assert "'persona'" in store_src, "identity changes must rebuild the model so the product auth reflects them"
+# Connectivity and latency are one three-state control at the UI layer while the
+# share contract keeps both fields.
+assert "demoNetworkMode" in scenes
+assert "demoNetworkModePatch" in scenes
+assert "DEMO_NETWORK_OPTIONS" in inspector
+assert "网络与延迟" in inspector
+assert "网络连接" not in inspector, "the standalone connectivity control must be gone"
+
 assert "recovered" in store_src, (
     "restoring connectivity must re-read the state that failed offline"
 )

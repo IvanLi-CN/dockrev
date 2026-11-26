@@ -48,15 +48,18 @@ test.describe('demo environment contract', () => {
     await openInspector(page)
     await expect(panel(page).getByRole('radio', { name: '已授权' })).toHaveAttribute('data-state', 'on')
 
-    // Connectivity is applied after identity resolves: offline intentionally
+    // Connectivity and latency are one three-state control: choosing offline
     // makes every product request fail, so `/api/settings` cannot answer the
     // identity query while it is off.
-    await panel(page).getByRole('radio', { name: '离线' }).click()
+    const network = panel(page).getByRole('group', { name: '网络与延迟' })
+    await network.getByRole('radio', { name: '离线' }).click()
     await expect(page).toHaveURL(/d_connection=offline/)
 
     await page.reload()
     await openInspector(page)
-    await expect(panel(page).getByRole('radio', { name: '离线' })).toHaveAttribute('data-state', 'on')
+    await expect(
+      panel(page).getByRole('group', { name: '网络与延迟' }).getByRole('radio', { name: '离线' }),
+    ).toHaveAttribute('data-state', 'on')
     await expect(panel(page).getByRole('radio', { name: '已授权' })).toHaveAttribute('data-state', 'on')
 
     // Environment belongs to the reviewer, so the scene switch keeps it.
@@ -65,9 +68,9 @@ test.describe('demo environment contract', () => {
     await expect(page).toHaveURL(/\/queue\?demo=queue/)
     await expect(page).toHaveURL(/d_connection=offline/)
 
-    // Coming back online restores the identity the persisted persona describes.
-    // `online` is the default, so it is omitted from the URL by design.
-    await panel(page).getByRole('radio', { name: '在线' }).click()
+    // Leaving offline restores the delay that was in effect; `online`/`normal`
+    // are defaults and stay out of the URL by design.
+    await panel(page).getByRole('group', { name: '网络与延迟' }).getByRole('radio', { name: '正常' }).click()
     await expect(page).not.toHaveURL(/d_connection=offline/)
     await expect(page.locator('.appShell')).toBeVisible()
   })
@@ -132,7 +135,7 @@ test.describe('demo environment contract', () => {
     expect(result).toBe('type-error')
   })
 
-  test('slow mode adds the documented delay to product requests', async ({ page }) => {
+  test('the three-state control drives latency and connectivity', async ({ page }) => {
     await page.goto('/services?demo=services&d_delay=slow&d_controls=hidden')
     const elapsed = await page.evaluate(async () => {
       const started = performance.now()

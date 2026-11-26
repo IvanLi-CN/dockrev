@@ -5,7 +5,6 @@ import {
   ChevronDown,
   ChevronUp,
   Database,
-  Gauge,
   MonitorCog,
   Moon,
   PanelRightClose,
@@ -31,15 +30,17 @@ import { Button, IconButton, Input, SelectField, Switch, ToggleGroup, ToggleGrou
 import {
   DEMO_ASYNC_CASE_OPTIONS,
   DEMO_CLEANUP_OPTIONS,
-  DEMO_CONNECTION_OPTIONS,
-  DEMO_DELAY_OPTIONS,
   DEMO_EVENTS_OPTIONS,
   DEMO_MAX_CUSTOM_DELAY_MS,
   DEMO_MOTION_OPTIONS,
+  DEMO_NETWORK_OPTIONS,
   DEMO_PERSONA_OPTIONS,
   DEMO_SCENES,
+  DEMO_SLOW_DELAY_MS,
   buildDemoHref,
   clampDemoDelayMs,
+  demoNetworkMode,
+  demoNetworkModePatch,
   demoScene,
   formatDemoDelaySummary,
 } from './scenes'
@@ -48,12 +49,12 @@ import { resetDemoSession, selectDemoScene, updateDemoShareState, useDemoRuntime
 import type {
   DemoAsyncCase,
   DemoCleanupScenario,
-  DemoConnection,
   DemoManagementEventsMode,
   DemoMotionPreference,
   DemoPersonaId,
   DemoShareState,
 } from './types'
+import type { DemoNetworkMode } from './scenes'
 import './demoInspector.css'
 
 const MOBILE_QUERY = '(max-width: 960px)'
@@ -138,6 +139,7 @@ function EnvironmentControls(props: {
   themePreference: ThemePreference
 }) {
   const { shareState } = props
+  const networkMode = demoNetworkMode(shareState)
   const items = advancedItems(shareState)
   // The custom delay is a draft+commit field: it never writes a half-typed value
   // into the environment, and it re-seeds whenever the synced value changes.
@@ -229,23 +231,23 @@ function EnvironmentControls(props: {
 
       <div className="demoInspectorSetting">
         <span className="demoInspectorSettingLabel">
-          {shareState.connection === 'offline' ? (
+          {networkMode === 'offline' ? (
             <WifiOff aria-hidden="true" size={13} />
           ) : (
             <Wifi aria-hidden="true" size={13} />
           )}
-          网络连接
+          网络与延迟
         </span>
         <ToggleGroup
           className="demoInspectorSegmented"
           onValueChange={(value) => {
-            if (value) updateDemoShareState({ connection: value as DemoConnection })
+            if (value) updateDemoShareState(demoNetworkModePatch(shareState, value as Exclude<DemoNetworkMode, 'custom'>))
           }}
           type="single"
-          value={shareState.connection}
-          aria-label="网络连接"
+          value={networkMode === 'custom' ? '' : networkMode}
+          aria-label="网络与延迟"
         >
-          {DEMO_CONNECTION_OPTIONS.map((option) => (
+          {DEMO_NETWORK_OPTIONS.map((option) => (
             <ToggleGroupItem
               className="demoInspectorSegment"
               key={option.value}
@@ -253,20 +255,13 @@ function EnvironmentControls(props: {
               size="sm"
               variant="outline"
               aria-label={option.label}
-              data-testid={`demo-connection-${option.value}`}
+              data-testid={`demo-network-${option.value}`}
             >
               {option.label}
             </ToggleGroupItem>
           ))}
         </ToggleGroup>
-      </div>
-
-      <div className="demoInspectorSetting">
-        <span className="demoInspectorSettingLabel">
-          <Gauge aria-hidden="true" size={13} />
-          请求延迟
-        </span>
-        {shareState.delay === 'custom' ? (
+        {networkMode === 'custom' ? (
           <button
             className="demoInspectorCustomDelay"
             onClick={() => props.onToggleAdvanced(true)}
@@ -276,33 +271,14 @@ function EnvironmentControls(props: {
             <ChevronDown aria-hidden="true" size={13} />
           </button>
         ) : (
-          <ToggleGroup
-            className="demoInspectorSegmented"
-            onValueChange={(value) => {
-              if (value) updateDemoShareState({ delay: value as 'normal' | 'slow' })
-            }}
-            type="single"
-            value={shareState.delay}
-            aria-label="请求延迟"
-          >
-            {DEMO_DELAY_OPTIONS.map((option) => (
-              <ToggleGroupItem
-                className="demoInspectorSegment"
-                key={option.value}
-                value={option.value}
-                size="sm"
-                variant="outline"
-                aria-label={option.label}
-                data-testid={`demo-delay-${option.value}`}
-              >
-                {option.label}
-              </ToggleGroupItem>
-            ))}
-          </ToggleGroup>
+          <small className="demoInspectorSettingNote">
+            {networkMode === 'offline'
+              ? '所有请求以连接失败结束，不会回退真实后端。'
+              : networkMode === 'slow'
+                ? `每次请求额外 +${DEMO_SLOW_DELAY_MS} ms。`
+                : '请求立即返回。'}
+          </small>
         )}
-        {shareState.connection === 'offline' ? (
-          <small className="demoInspectorSettingNote">离线时请求直接失败，恢复在线后沿用当前延迟设置。</small>
-        ) : null}
       </div>
 
       <div className="demoInspectorSetting">

@@ -9,6 +9,8 @@ import {
   defaultShareState,
   DEMO_PERSONA_OPTIONS,
   DEMO_SCENES,
+  demoNetworkMode,
+  demoNetworkModePatch,
   demoRequestDelayMs,
   demoSceneForPath,
   readDemoShareState,
@@ -122,5 +124,35 @@ describe('demo identity follows the product authorization model', () => {
     expect(read('allowed')).toBe('allowed')
     expect(read('blocked')).toBe('blocked')
     expect(read('nonsense')).toBe(defaultShareState('services').persona)
+  })
+})
+
+describe('combined network and latency control', () => {
+  test('the three visible modes map onto the two persisted fields', () => {
+    const base = defaultShareState('services')
+    expect(demoNetworkMode(base)).toBe('normal')
+    expect(demoNetworkMode({ ...base, delay: 'slow' })).toBe('slow')
+    expect(demoNetworkMode({ ...base, connection: 'offline' })).toBe('offline')
+    expect(demoNetworkMode({ ...base, delay: 'custom', delayMs: 900 })).toBe('custom')
+  })
+
+  test('choosing a mode only writes the fields that mode owns', () => {
+    const slow = defaultShareState('services')
+    expect(demoNetworkModePatch(slow, 'slow')).toEqual({ connection: 'online', delay: 'slow' })
+    expect(demoNetworkModePatch(slow, 'normal')).toEqual({ connection: 'online', delay: 'normal' })
+    expect(demoNetworkModePatch(slow, 'offline')).toEqual({ connection: 'offline', delay: 'normal' })
+  })
+
+  test('leaving offline restores the delay that was in effect', () => {
+    const offlineSlow = { ...defaultShareState('services'), connection: 'offline' as const, delay: 'slow' as const }
+    expect(demoNetworkModePatch(offlineSlow, 'slow')).toEqual({ connection: 'online', delay: 'slow' })
+  })
+
+  test('a custom delay is reachable but never claimed by the three-state control', () => {
+    const custom = { ...defaultShareState('services'), delay: 'custom' as const, delayMs: 1200 }
+    expect(demoNetworkMode(custom)).toBe('custom')
+    expect(demoRequestDelayMs(custom)).toBe(1200)
+    // Choosing a visible mode exits custom mode explicitly.
+    expect(demoNetworkModePatch(custom, 'normal')).toEqual({ connection: 'online', delay: 'normal' })
   })
 })
