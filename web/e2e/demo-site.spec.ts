@@ -227,6 +227,29 @@ test.describe('demo inspector layout', () => {
     await panel(page).getByRole('button', { name: '关闭', exact: true }).click()
     await expect(panel(page)).toHaveCount(0)
   })
+
+  test('scene menu outranks the panel it opens from', async ({ page }) => {
+    await page.goto('/services?demo=services')
+    await openInspector(page)
+
+    await page.getByLabel('选择 Demo 场景').click()
+    const options = page.getByRole('option')
+    await expect(options.first()).toBeVisible()
+
+    // The menu is portalled to <html>, so its layer must outrank the panel it
+    // was opened from. Equal-or-lower leaves it fully rendered but painted
+    // underneath the panel: correct DOM, correct CSS, invisible pixels. Hit
+    // testing cannot see that here, because an open select makes the rest of
+    // the page pointer-transparent, so compare the stacking layers instead.
+    const layers = await options.first().evaluate((option) => {
+      const menuLayer = option.closest('[data-radix-popper-content-wrapper]') ?? option
+      const host = document.querySelector('.demoInspectorPanel')
+      const zOf = (element: Element | null) => (element ? Number(getComputedStyle(element).zIndex) : Number.NaN)
+      return { menu: zOf(menuLayer), host: zOf(host) }
+    })
+    expect(layers.host).not.toBeNaN()
+    expect(layers.menu).toBeGreaterThan(layers.host)
+  })
 })
 
 test.describe('demo mock scope', () => {
