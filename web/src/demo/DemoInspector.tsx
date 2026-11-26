@@ -67,9 +67,8 @@ const THEME_OPTIONS: ReadonlyArray<{ value: ThemePreference; label: string; Icon
 ]
 
 const PERSONA_ICONS: Record<DemoPersonaId, typeof UserRound> = {
-  guest: UserRound,
-  user: UserRound,
-  admin: ShieldCheck,
+  allowed: UserRound,
+  blocked: ShieldCheck,
 }
 
 function readMobile(): boolean {
@@ -192,7 +191,7 @@ function EnvironmentControls(props: {
       <div className="demoInspectorSetting">
         <span className="demoInspectorSettingLabel">
           <UserRound aria-hidden="true" size={13} />
-          模拟身份
+          模拟鉴权
         </span>
         <ToggleGroup
           className="demoInspectorSegmented"
@@ -201,7 +200,7 @@ function EnvironmentControls(props: {
           }}
           type="single"
           value={shareState.persona}
-          aria-label="模拟身份"
+          aria-label="模拟鉴权"
         >
           {DEMO_PERSONA_OPTIONS.map((option) => {
             const Icon = PERSONA_ICONS[option.value]
@@ -221,6 +220,11 @@ function EnvironmentControls(props: {
             )
           })}
         </ToggleGroup>
+        <small className="demoInspectorSettingNote">
+          {shareState.persona === 'blocked'
+            ? '未命中 allowlist：所有 API 返回 401，控制台不可用。'
+            : '命中 allowlist：可使用全部功能。'}
+        </small>
       </div>
 
       <div className="demoInspectorSetting">

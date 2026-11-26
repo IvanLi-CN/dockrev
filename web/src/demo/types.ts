@@ -10,8 +10,19 @@ export type DemoSceneId =
   | 'cleanup'
   | 'deploy-check'
 
-/** Simulated session, mapped onto the product's own auth fields. */
-export type DemoPersonaId = 'guest' | 'user' | 'admin'
+/**
+ * Dockrev has a single authorization outcome: the forward-auth identity either
+ * matches the allowlist or gets `401 auth_required`. There are no role tiers, so
+ * the demo exposes exactly these two states.
+ */
+export type DemoPersonaId = 'allowed' | 'blocked'
+
+/** Legacy share links used role-like personas; they map onto the real states. */
+export const LEGACY_PERSONA_MAP: Record<string, DemoPersonaId> = {
+  guest: 'blocked',
+  user: 'allowed',
+  admin: 'allowed',
+}
 
 export type DemoConnection = 'online' | 'offline'
 

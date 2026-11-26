@@ -7,6 +7,7 @@ import {
   buildDemoHref,
   clampDemoDelayMs,
   defaultShareState,
+  DEMO_PERSONA_OPTIONS,
   DEMO_SCENES,
   demoRequestDelayMs,
   demoSceneForPath,
@@ -31,7 +32,7 @@ describe('demo scene registry', () => {
 
   test('share state round-trips through the URL without losing non-default fields', () => {
     const state = withShareStatePatch(defaultShareState('queue-logs'), {
-      persona: 'user',
+      persona: 'allowed',
       connection: 'offline',
       delay: 'custom',
       delayMs: 2300,
@@ -44,10 +45,10 @@ describe('demo scene registry', () => {
   })
 
   test('the URL keeps only non-default state and the hidden-controls flag', () => {
-    const state = { ...defaultShareState('services'), persona: 'guest' as const, controlsHidden: true }
-    const params = new URLSearchParams('demo=services&d_persona=guest&d_net=slow&stale=1')
+    const state = { ...defaultShareState('services'), persona: 'blocked' as const, controlsHidden: true }
+    const params = new URLSearchParams('demo=services&d_persona=blocked&d_net=slow&stale=1')
     applyDemoShareStateToSearchParams(params, state)
-    expect(params.get('d_persona')).toBe('guest')
+    expect(params.get('d_persona')).toBe('blocked')
     expect(params.get('d_net')).toBeNull()
     expect(params.get('stale')).toBe('1')
     expect(params.get('d_controls')).toBe('hidden')
@@ -56,14 +57,14 @@ describe('demo scene registry', () => {
 
   test('an environment choice survives a scene switch', () => {
     const environment = withShareStatePatch(defaultShareState('overview'), {
-      persona: 'guest',
+      persona: 'blocked',
       connection: 'offline',
       delay: 'custom',
       delayMs: 900,
       motion: 'reduce',
     })
     const next = withShareStatePatch(environment, { sceneId: 'cleanup' })
-    expect(next.persona).toBe('guest')
+    expect(next.persona).toBe('blocked')
     expect(next.connection).toBe('offline')
     expect(next.delay).toBe('custom')
     expect(next.delayMs).toBe(900)
@@ -74,13 +75,13 @@ describe('demo scene registry', () => {
 
   test('valid URL fields override the session while missing ones keep it', () => {
     const session = withShareStatePatch(defaultShareState('queue'), {
-      persona: 'admin',
+      persona: 'allowed',
       connection: 'offline',
       delay: 'custom',
       delayMs: 1200,
     })
-    const restored = readDemoShareState(new URL('https://demo.local/queue?demo=queue&d_persona=guest'), session)
-    expect(restored.persona).toBe('guest')
+    const restored = readDemoShareState(new URL('https://demo.local/queue?demo=queue&d_persona=blocked'), session)
+    expect(restored.persona).toBe('blocked')
     expect(restored.connection).toBe('offline')
     expect(restored.delay).toBe('custom')
     expect(restored.delayMs).toBe(1200)
@@ -104,5 +105,22 @@ describe('demo scene registry', () => {
   test('demo href carries a trailing-scoped base path', () => {
     const href = buildDemoHref(defaultShareState('cleanup'), '/')
     expect(href).toBe('/cleanup?demo=cleanup')
+  })
+})
+
+describe('demo identity follows the product authorization model', () => {
+  test('only the two real authorization outcomes are accepted', () => {
+    expect(DEMO_PERSONA_OPTIONS.map((option) => option.value)).toEqual(['allowed', 'blocked'])
+  })
+
+  test('legacy role-like share links map onto real outcomes', () => {
+    const read = (value: string) =>
+      readDemoShareState(new URL(`https://demo.local/services?demo=services&d_persona=${value}`)).persona
+    expect(read('admin')).toBe('allowed')
+    expect(read('user')).toBe('allowed')
+    expect(read('guest')).toBe('blocked')
+    expect(read('allowed')).toBe('allowed')
+    expect(read('blocked')).toBe('blocked')
+    expect(read('nonsense')).toBe(defaultShareState('services').persona)
   })
 })

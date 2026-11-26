@@ -52,6 +52,11 @@ import {
   summarizeVersionInferenceRows,
   type VersionInferenceOverviewMock,
 } from './shared'
+function isPublicMockApiPath(urlPath: string, method: string): boolean {
+  if (method === 'GET' && (urlPath === '/api/health' || urlPath === '/api/version')) return true
+  return urlPath.startsWith('/api/webhooks/')
+}
+
 export function installDockrevMockApi(
   scenario: DockrevApiScenario,
   options: DockrevMockApiOptions = {},
@@ -411,6 +416,45 @@ export function installDockrevMockApi(
       })
     }
     if (!urlPath.startsWith('/api/')) return realFetch(input, init)
+    // The public read endpoints the backend exempts from authorization must also
+    // exist here, otherwise a blocked visitor sees a mock artefact (501) instead
+    // of the product's real 200 health/version contract.
+    if (method === 'GET' && urlPath === '/api/health') {
+      return json({ ok: true })
+    }
+    // Authorization is evaluated before any route handling, exactly like the
+    // backend: an unauthorized visitor cannot read or write anything but the
+    // public endpoints.
+    const authz = options.authz
+    if (authz?.state === 'blocked' && !isPublicMockApiPath(urlPath, method)) {
+      const auth = state?.settings.auth
+      return json(
+        {
+          error: {
+            code: 'auth_required',
+            message: 'auth required',
+            details: {
+              reason: authz.reason,
+              message:
+                authz.reason === 'identity_missing'
+                  ? 'forward auth identity is missing'
+                  : authz.reason === 'authz_config_missing'
+                    ? 'authorization target is not configured'
+                    : 'forward auth identity is not allowed',
+              forwardHeaderName: auth?.forwardHeaderName ?? 'X-Forwarded-User',
+              groupHeaderName: auth?.groupHeaderName ?? 'Remote-Groups',
+              allowedUserMasked: auth?.allowedUserMasked ?? null,
+              allowedGroupMasked: auth?.allowedGroupMasked ?? null,
+              currentUser: auth?.currentUser ?? null,
+              currentGroups: auth?.currentGroups ?? [],
+              avatarUrl: null,
+              authorizationMode: auth?.authorizationMode ?? 'user_or_group',
+            },
+          },
+        },
+        { status: 401 },
+      )
+    }
     if (scenario === 'error') {
       return json({ error: 'mock error' }, { status: 500 })
     }

@@ -479,7 +479,9 @@ export default function App() {
             topActions={null}
             authIdentity={authIdentity}
           >
-            <ManagementEventsStatusBanner />
+            {/* An unauthorized session has no console, so console-level stream
+                health is noise here; the authorization reason is the only fact
+                that matters. */}
             <UnauthorizedPage authDetails={authFailure} />
           </AppShell>
         </NotificationProvider>

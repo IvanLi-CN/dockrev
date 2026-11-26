@@ -57,8 +57,27 @@ scenes = read("web/src/demo/scenes.ts")
 for token in ("'demo'", "d_persona", "d_connection", "d_delay", "d_delay_ms", "d_motion", "d_case", "d_events", "d_cleanup", "d_controls"):
     assert token in scenes, token
 
+# Dockrev has one authorization outcome, so the demo must expose exactly the two
+# real states and must not invent role tiers.
+demo_types = read("web/src/demo/types.ts")
+assert "export type DemoPersonaId = 'allowed' | 'blocked'" in demo_types
+for retired in ("'guest'", "'user'", "'admin'"):
+    assert f"DemoPersonaId = {retired}" not in demo_types, retired
+assert "LEGACY_PERSONA_MAP" in demo_types, "old share links must keep working"
+
+# The mock must enforce the same gate as the backend, before any route handling.
+mock_install = read("web/src/mock/dockrevMockApi/install.ts")
+assert "isPublicMockApiPath" in mock_install
+assert "'auth_required'" in mock_install, "blocked sessions must get the product's 401 code"
+assert "authz?.state === 'blocked'" in mock_install
+
+# Public exemptions must match the backend's anonymous surface.
+assert "urlPath === '/api/health'" in mock_install
+assert "urlPath === '/api/version'" in mock_install
+assert "'/api/webhooks/'" in mock_install
+
 inspector = read("web/src/demo/DemoInspector.tsx")
-for token in ("全局环境", "模拟身份", "网络连接", "请求延迟", "产品主题", "高级", "Recent mutations", "分享与记录"):
+for token in ("全局环境", "模拟鉴权", "网络连接", "请求延迟", "产品主题", "高级", "Recent mutations", "分享与记录"):
     assert token in inspector, token
 assert "window.location.reload" not in inspector
 assert "setThemePreference" in inspector, "the inspector must drive the product theme preference"
@@ -94,6 +113,9 @@ assert "MODEL_KEYS" in store_src and "applyDemoEnvironment" in store_src
 assert "'persona'" in store_src, "identity changes must rebuild the model so the product auth reflects them"
 assert "recovered" in store_src, (
     "restoring connectivity must re-read the state that failed offline"
+)
+assert "persona" in store_src.split("MODEL_KEYS")[1].split("] as const")[0], (
+    "an authorization change must rebuild the model so the 401 gate applies"
 )
 assert "previous.connection === 'offline' && next.connection === 'online'" in store_src
 

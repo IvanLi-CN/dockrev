@@ -116,7 +116,10 @@ function installEnvironmentPolicy() {
       }
     })()
 
-    if (environment && isProductRequest(urlPath)) {
+    // Authorization outranks connectivity: a blocked visitor must see the real
+    // 401 gate, never a simulated network failure or a half-rendered console.
+    const blocked = environment?.persona === 'blocked'
+    if (environment && !blocked && isProductRequest(urlPath)) {
       if (environment.connection === 'offline') {
         throw new TypeError('Failed to fetch')
       }
@@ -165,6 +168,8 @@ export async function installDemoRuntime(
 
   writeDockrevRuntimeMode('app-demo')
   installDockrevMockApi(demoScene(shareState.sceneId).fixtureScenario, {
+    // Blocked visitors must hit the product's real 401 path, not a passed route.
+    authz: shareState.persona === 'blocked' ? { state: 'blocked', reason: 'authz_no_match' } : { state: 'allowed' },
     cleanupScenario: shareState.cleanup,
     githubReleasesByServiceId: DEMO_GITHUB_RELEASES_BY_SERVICE_ID,
     initialFixture,

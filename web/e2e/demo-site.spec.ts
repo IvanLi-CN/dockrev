@@ -12,17 +12,6 @@ async function openInspector(page: Page) {
   await expect(panel(page)).toBeVisible()
 }
 
-/**
- * The shell renders the identity chip in the sidebar slot. Desktop shows it
- * directly, mobile keeps it inside the closed sidebar, so this asserts the
- * rendered identity rather than assuming a viewport-independent position.
- */
-async function expectIdentityChip(page: Page, label: string) {
-  await expect
-    .poll(async () => page.locator(`[aria-label="当前身份：${label}"]`).count())
-    .toBeGreaterThan(0)
-}
-
 async function readMutations(page: Page): Promise<Array<{ label: string; detail: string }>> {
   return page.evaluate(() => {
     const raw = window.sessionStorage.getItem('dockrev:demo:mutations:v1')
@@ -51,15 +40,13 @@ test.describe('demo environment contract', () => {
     await page.goto('/services?demo=services')
     await openInspector(page)
 
-    await panel(page).getByRole('radio', { name: '普通用户' }).click()
-    await expect(page).toHaveURL(/d_persona=user/)
-    // The simulated identity must reach the product's own identity chip.
-    await expectIdentityChip(page, 'demo-user')
+    await panel(page).getByRole('radio', { name: '已授权' }).click()
+    await expect(page).not.toHaveURL(/d_persona=blocked/)
 
     await page.reload()
     // The panel open state is local, so a reload may restore either surface.
     await openInspector(page)
-    await expect(panel(page).getByRole('radio', { name: '普通用户' })).toHaveAttribute('data-state', 'on')
+    await expect(panel(page).getByRole('radio', { name: '已授权' })).toHaveAttribute('data-state', 'on')
 
     // Connectivity is applied after identity resolves: offline intentionally
     // makes every product request fail, so `/api/settings` cannot answer the
@@ -70,35 +57,58 @@ test.describe('demo environment contract', () => {
     await page.reload()
     await openInspector(page)
     await expect(panel(page).getByRole('radio', { name: '离线' })).toHaveAttribute('data-state', 'on')
-    await expect(panel(page).getByRole('radio', { name: '普通用户' })).toHaveAttribute('data-state', 'on')
+    await expect(panel(page).getByRole('radio', { name: '已授权' })).toHaveAttribute('data-state', 'on')
 
     // Environment belongs to the reviewer, so the scene switch keeps it.
     await panel(page).getByRole('combobox', { name: '选择 Demo 场景' }).click()
     await page.getByRole('option', { name: 'Queue', exact: true }).click()
     await expect(page).toHaveURL(/\/queue\?demo=queue/)
-    await expect(page).toHaveURL(/d_persona=user/)
     await expect(page).toHaveURL(/d_connection=offline/)
 
     // Coming back online restores the identity the persisted persona describes.
     // `online` is the default, so it is omitted from the URL by design.
     await panel(page).getByRole('radio', { name: '在线' }).click()
     await expect(page).not.toHaveURL(/d_connection=offline/)
-    await expectIdentityChip(page, 'demo-user')
+    await expect(page.locator('.appShell')).toBeVisible()
   })
 
-  test('guest identity drops the user object and reaches the chip', async ({ page, isMobile }) => {
-    await page.goto('/?demo=overview&d_persona=guest')
-    await expectIdentityChip(page, '匿名开发')
+  test('an unauthorized visitor is blocked from every feature', async ({ page }) => {
+    // Dockrev has one authorization outcome: not on the allowlist means 401 and
+    // no console at all. This is the product's real gate, not a demo invention.
+    await page.goto('/?demo=overview&d_persona=blocked')
+    await expect(page.getByRole('heading', { name: '当前身份未获 Dockrev 授权' })).toBeVisible()
 
-    const auth = await page.evaluate(async () => (await (await fetch('/api/settings')).json()).auth)
-    expect(auth.currentUser).toBeNull()
-    expect(auth.currentGroups).toEqual([])
-    expect(auth.matchedBy).toBe('anonymous_dev')
+    const status = await page.evaluate(async () => {
+      const stacks = await fetch('/api/stacks')
+      const settings = await fetch('/api/settings')
+      const health = await fetch('/api/health')
+      const body = await stacks.json()
+      return { stacks: stacks.status, settings: settings.status, health: health.status, code: body.error?.code }
+    })
+    expect(status.stacks).toBe(401)
+    expect(status.settings).toBe(401)
+    // The backend exempts these public reads, and the demo must match.
+    expect(status.health).toBe(200)
+    expect(status.code).toBe('auth_required')
 
-    // The visible chip lives in the sidebar, which desktop renders inline.
-    if (!isMobile) {
-      await expect(page.locator('[aria-label="当前身份：匿名开发"]:visible')).toHaveCount(1)
-    }
+    // The product renders the unauthorized page inside its shell, but no
+    // business surface leaks through the gate and console-level stream health
+    // must not appear alongside an authorization failure.
+    await expect(page.locator('.homepageDashboardPage')).toHaveCount(0)
+    await expect(page.getByText('管理事件流重连中')).toHaveCount(0)
+  })
+
+  test('authorization can be restored from the inspector without a reload', async ({ page }) => {
+    await page.goto('/?demo=overview&d_persona=blocked')
+    await expect(page.getByRole('heading', { name: '当前身份未获 Dockrev 授权' })).toBeVisible()
+
+    await page.getByRole('button', { name: '打开 Web Demo 调试控制面板' }).click()
+    const panel = page.getByRole('region', { name: 'Demo 控制面板' })
+    await expect(panel.getByRole('radio', { name: '已授权' })).toBeVisible()
+    await panel.getByRole('radio', { name: '已授权' }).click()
+
+    await expect(page.locator('.appShell')).toBeVisible()
+    await expect(page).not.toHaveURL(/d_persona=blocked/)
   })
 
   test('demo deep links survive a direct visit', async ({ page }) => {

@@ -1,5 +1,6 @@
 import { normalizeAppBasePath, stripAppBase } from '../appBase'
 import type { DockrevApiScenario } from '../mock/dockrevMockApi/shared'
+import { LEGACY_PERSONA_MAP } from './types'
 import type {
   DemoAsyncCase,
   DemoCleanupScenario,
@@ -28,10 +29,13 @@ export type DemoScene = {
   entryPersona: DemoPersonaId
 }
 
-export const DEMO_PERSONA_OPTIONS: ReadonlyArray<{ value: DemoPersonaId; label: string }> = [
-  { value: 'guest', label: '未登录' },
-  { value: 'user', label: '普通用户' },
-  { value: 'admin', label: '管理员' },
+export const DEMO_PERSONA_OPTIONS: ReadonlyArray<{
+  value: DemoPersonaId
+  label: string
+  note: string
+}> = [
+  { value: 'allowed', label: '已授权', note: '命中 allowlist，可使用全部功能' },
+  { value: 'blocked', label: '未授权', note: '401 auth_required，全部功能不可用' },
 ]
 
 export const DEMO_PERSONAS: readonly DemoPersonaId[] = DEMO_PERSONA_OPTIONS.map((option) => option.value)
@@ -100,7 +104,7 @@ export const DEMO_SCENES: readonly DemoScene[] = [
     path: '',
     fixtureScenario: 'settings-configured',
     defaults: { ...DEFAULT_SCENE_DEFAULTS },
-    entryPersona: 'admin',
+    entryPersona: 'allowed',
   },
   {
     id: 'services',
@@ -109,7 +113,7 @@ export const DEMO_SCENES: readonly DemoScene[] = [
     path: '/services',
     fixtureScenario: 'settings-configured',
     defaults: { ...DEFAULT_SCENE_DEFAULTS },
-    entryPersona: 'admin',
+    entryPersona: 'allowed',
   },
   {
     id: 'service-actions',
@@ -118,7 +122,7 @@ export const DEMO_SCENES: readonly DemoScene[] = [
     path: '/services/stack-prod/svc-prod-api',
     fixtureScenario: 'service-action-progress',
     defaults: { ...DEFAULT_SCENE_DEFAULTS },
-    entryPersona: 'admin',
+    entryPersona: 'allowed',
   },
   {
     id: 'service-versions',
@@ -127,7 +131,7 @@ export const DEMO_SCENES: readonly DemoScene[] = [
     path: '/services/stack-prod/svc-prod-api/versions',
     fixtureScenario: 'service-selected-version-updates',
     defaults: { ...DEFAULT_SCENE_DEFAULTS },
-    entryPersona: 'admin',
+    entryPersona: 'allowed',
   },
   {
     id: 'queue',
@@ -136,7 +140,7 @@ export const DEMO_SCENES: readonly DemoScene[] = [
     path: '/queue',
     fixtureScenario: 'queue-mixed',
     defaults: { ...DEFAULT_SCENE_DEFAULTS },
-    entryPersona: 'admin',
+    entryPersona: 'allowed',
   },
   {
     id: 'queue-logs',
@@ -145,7 +149,7 @@ export const DEMO_SCENES: readonly DemoScene[] = [
     path: '/queue/job-live-long',
     fixtureScenario: 'queue-long-logs',
     defaults: { ...DEFAULT_SCENE_DEFAULTS },
-    entryPersona: 'admin',
+    entryPersona: 'allowed',
   },
   {
     id: 'settings',
@@ -154,7 +158,7 @@ export const DEMO_SCENES: readonly DemoScene[] = [
     path: '/settings',
     fixtureScenario: 'settings-configured',
     defaults: { ...DEFAULT_SCENE_DEFAULTS },
-    entryPersona: 'admin',
+    entryPersona: 'allowed',
   },
   {
     id: 'ghcr-registry',
@@ -163,7 +167,7 @@ export const DEMO_SCENES: readonly DemoScene[] = [
     path: '/settings/ghcr-webhooks',
     fixtureScenario: 'settings-configured',
     defaults: { ...DEFAULT_SCENE_DEFAULTS },
-    entryPersona: 'admin',
+    entryPersona: 'allowed',
   },
   {
     id: 'cleanup',
@@ -172,7 +176,7 @@ export const DEMO_SCENES: readonly DemoScene[] = [
     path: '/cleanup',
     fixtureScenario: 'cleanup-console-storage-normal',
     defaults: { ...DEFAULT_SCENE_DEFAULTS, cleanup: 'cleanup-console-storage-normal' },
-    entryPersona: 'admin',
+    entryPersona: 'allowed',
   },
   {
     id: 'deploy-check',
@@ -181,7 +185,7 @@ export const DEMO_SCENES: readonly DemoScene[] = [
     path: '/deploy-check',
     fixtureScenario: 'settings-configured',
     defaults: { ...DEFAULT_SCENE_DEFAULTS },
-    entryPersona: 'admin',
+    entryPersona: 'allowed',
   },
 ]
 
@@ -201,6 +205,11 @@ function isSceneId(value: string | null | undefined): value is DemoSceneId {
 
 function normalizeFromList<T extends string>(value: string | null | undefined, allowed: readonly T[], fallback: T): T {
   return value != null && (allowed as readonly string[]).includes(value) ? (value as T) : fallback
+}
+
+function normalizePersona(value: string | null | undefined, fallback: DemoPersonaId): DemoPersonaId {
+  const mapped = value != null ? LEGACY_PERSONA_MAP[value] ?? value : null
+  return normalizeFromList(mapped, DEMO_PERSONAS, fallback)
 }
 
 /** The environment defaults are independent of the current scene. */
@@ -258,7 +267,7 @@ export function readDemoShareState(url: URL, session?: DemoShareState | null): D
 
   return {
     sceneId,
-    persona: normalizeFromList(url.searchParams.get('d_persona'), DEMO_PERSONAS, defaults.persona),
+    persona: normalizePersona(url.searchParams.get('d_persona'), defaults.persona),
     connection: normalizeFromList(url.searchParams.get('d_connection'), DEMO_CONNECTIONS, defaults.connection),
     delay: normalizeFromList(delayParam, ['normal', 'slow', 'custom'] as const, defaults.delay),
     delayMs: validDelayMs ? parsedDelayMs : defaults.delayMs,

@@ -90,20 +90,24 @@ export function applyDemoOverrides(fixture: Fixture, shareState: DemoShareState)
   const next = cloneFixture(fixture)
   seedVersionService(next)
 
-  // The persona maps onto the product's own auth fields: guest has no user
-  // object, `user` is signed in without admin rights, `admin` gains the demo
-  // admin group. Nothing here grants real access.
-  const personaAuth =
-    shareState.persona === 'guest'
-      ? { currentUser: null, currentGroups: [] as string[], matchedBy: 'anonymous_dev' }
-      : shareState.persona === 'admin'
-        ? { currentUser: 'demo-admin', currentGroups: ['demo-admins'], matchedBy: 'group' }
-        : { currentUser: 'demo-user', currentGroups: [] as string[], matchedBy: 'user' }
-  next.settings.auth = {
-    ...next.settings.auth,
-    ...personaAuth,
-    avatarUrl: null,
-  }
+  // Dockrev has one authorization outcome. `allowed` describes an identity that
+  // matched the allowlist; `blocked` describes one that did not, and the mock API
+  // answers it with the product's own `401 auth_required` instead of this model.
+  next.settings.auth = shareState.persona === 'allowed'
+    ? {
+        ...next.settings.auth,
+        currentUser: 'demo-operator',
+        currentGroups: ['dockrev-maintainers'],
+        matchedBy: 'group',
+        avatarUrl: null,
+      }
+    : {
+        ...next.settings.auth,
+        currentUser: 'demo-visitor',
+        currentGroups: [],
+        matchedBy: null,
+        avatarUrl: null,
+      }
 
   const demoBaseUrl = currentDemoBaseUrl()
   if (!demoBaseUrl) return next

@@ -57,7 +57,7 @@
 
 | 全局状态 | 分享参数 | 取值 |
 | --- | --- | --- |
-| 模拟身份 | `d_persona` | `guest`、`user`、`admin` |
+| 模拟鉴权 | `d_persona` | `allowed`、`blocked`（旧值 `guest`→`blocked`，`user`/`admin`→`allowed`） |
 | 网络连接 | `d_connection` | `online`、`offline` |
 | 请求延迟模式 | `d_delay` | `normal`、`slow`、`custom` |
 | 自定义附加延迟 | `d_delay_ms` | `0`–`30000` 整数，仅在 `custom` 下生效 |
@@ -66,9 +66,10 @@
 | 管理事件流 | `d_events` | `default`、`reconnecting` |
 | 清理场景 | `d_cleanup` | 三个 cleanup scenario |
 
-- 身份只映射产品已有 auth 字段（guest 无用户对象、user 已登录非管理员、admin 进入 demo admin 组），不建立真实登录。
-- 身份必须真正到达产品身份入口：改动后 shell 的 identity chip 必须同步变化；模型重建会 remount 应用树，使 App 自身的 auth 读取重新执行。
-- 离线时 `/api/settings` 同样失败，因此身份在离线期间不可解析；恢复在线后必须按持久化 persona 重新显示。
+- Dockrev 只有一种授权结论：命中 allowlist 即已授权，否则 `401 auth_required`，没有角色层级（见 `docs/adr/0023-demo-identity-follows-product-authz.md`）。
+- `blocked` 时 mock 必须在任何路由处理之前返回与后端同构的 401，`details` 复用 `authz_error` 字段；公共豁免与后端一致（`GET /api/health`、`GET /api/version`、`/api/webhooks/*`）。
+- 未授权时前端已有链路渲染 `UnauthorizedPage`，demo 不新增阻断逻辑；切换回 `allowed` 后无需整页刷新即恢复控制台。
+- 授权优先于网络：`blocked` 不得先渲染业务骨架再报错，也不得被离线的 `TypeError` 掩盖。
 - 主题不复制成第二份 demo 状态：Inspector 读写产品自身的 `setThemePreference` / `subscribeTheme`。
 - 离线让所有被接管的 `/api/**` 请求以 `TypeError` 失败（浏览器语义），不伪造 503、不回退真实后端；慢速统一 `+1500 ms`。
 - 场景切换只重置场景自有状态（async case / events / cleanup），环境选择必须保留。
@@ -92,7 +93,9 @@
 - Given `d_connection=offline`，When 页面发起 `/api/**` 请求，Then 以 `TypeError` 失败且不产生真实网络请求。
 - Given `d_delay=slow`，When 页面读取 `/api/settings`，Then 额外耗时不少于 1400 ms。
 - Given 修改身份/连接/延迟并切换场景，Then 环境值保留，URL 保持非默认参数。
-- Given 把身份从默认切到 guest/user/admin，Then 产品身份 chip 立即随之变化（不依赖整页刷新）。
+- Given 把鉴权从 `allowed` 切到 `blocked`，Then 所有非公共 `/api/**` 返回 401，页面渲染「当前身份未获 Dockrev 授权」，且不出现业务页面或控制台横幅。
+- Given `blocked`，When 请求 `GET /api/health`，Then 仍为 200（与后端豁免一致）。
+- Given `blocked`，When 在 Inspector 切回 `allowed`，Then 控制台无需刷新即恢复。
 - Given demo 直接访问 `/services`、`/queue`、`/cleanup`、`/settings`，Then 开发服务器与静态产物都以 200 返回入口文档。
 - Given 修改主题，Then `html[data-theme]` 与 `localStorage['dockrev:theme']` 同步更新，Inspector 复读同一偏好。
 - Given mock 安装失败，When 打开 demo，Then 出现“Web Demo 启动失败”错误面而不是白屏或真实请求。

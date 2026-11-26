@@ -133,8 +133,17 @@ export type DockrevApiScenario =
   | 'empty'
   | 'error'
 
+/**
+ * Mirrors the backend's authorization gate: when blocked, every non-public API
+ * answers `401 auth_required` with the same details the Rust handler emits.
+ */
+export type DockrevMockAuthz =
+  | { state: 'allowed' }
+  | { state: 'blocked'; reason: 'authz_no_match' | 'identity_missing' | 'authz_config_missing' }
+
 export type DockrevMockApiOptions = {
   dockrevApiBehaviorByRoute?: Record<string, DockrevApiRouteBehavior>
+  authz?: DockrevMockAuthz
   cleanupScenario?: CleanupMockScenario
   initialFixture?: Fixture
   onStateChange?: (fixture: Fixture) => void
