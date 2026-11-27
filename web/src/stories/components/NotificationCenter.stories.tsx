@@ -9,7 +9,7 @@ import {
   useNotifications,
 } from '../../NotificationCenter'
 import { getNotificationInbox } from '../../notificationApi'
-import { withDockrevMockApi } from '../mocks/withDockrevMockApi'
+import { withDockrevMockApi } from '../../mock/withDockrevMockApi'
 
 const meta: Meta<typeof NotificationCenter> = {
   title: 'Components/NotificationCenter',

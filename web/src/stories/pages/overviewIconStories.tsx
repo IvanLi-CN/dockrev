@@ -1,6 +1,6 @@
 import type { StoryObj } from "@storybook/react";
 import { OverviewPage } from "../../pages/OverviewPage";
-import { PageHarness } from "../mocks/PageHarness";
+import { PageHarness } from "../../mock/PageHarness";
 
 type Story = StoryObj<typeof OverviewPage>;
 

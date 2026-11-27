@@ -1,7 +1,7 @@
 import type { StoryObj } from "@storybook/react";
 import { ServiceDetailPage } from "../../pages/ServiceDetailPage";
 import type { Route } from "../../routes";
-import { PageHarness } from "../mocks/PageHarness";
+import { PageHarness } from "../../mock/PageHarness";
 import { findButton, normalizeText } from "./storyAssertions";
 
 export type ServiceDetailStory = StoryObj<typeof ServiceDetailPage>;

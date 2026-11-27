@@ -27,9 +27,9 @@ No. Those directories are engineering artifacts, not end-user documentation.
 
 ## Can docs be deployed automatically?
 
-Yes. The `docs-pages` workflow publishes the docs root, the [public Demo](/demo/index.html), and [Storybook](/storybook.html) together.
+Yes. The `docs-pages` workflow publishes the docs root and [Storybook](/storybook.html). The [public Demo](https://dockrev-demo.ivanli.cc/) is a separate site published by `Release`.
 
 ## What is the difference between Demo and Storybook?
 
-- [Public Demo](/demo/index.html) is the `/demo/` product surface: real app routes, seeded mock state, shareable deep links, and interactive fake writes.
+- [Public Demo](https://dockrev-demo.ivanli.cc/) is a separate site: real app routes, seeded mock state, shareable deep links, and interactive fake writes. Its version is fixed at build time and never read from `/api/version`.
 - [Storybook](/storybook.html) is the QA/component/page-state gallery and is not the public product demo.

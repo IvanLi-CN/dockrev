@@ -16,7 +16,7 @@ Dockrev is a self-hosted Docker/Compose update manager with auto-discovery, chec
 - [Operations](./operations)
 - [Integrations](./integrations)
 - [API Reference (Complete)](./api-reference)
-- [Public Demo (Product Mock)](/demo/index.html)
+- [Public Demo (Product Mock)](https://dockrev-demo.ivanli.cc/)
 - [UI Preview (Storybook)](/storybook.html)
 - [Troubleshooting](./troubleshooting)
 - [FAQ](./faq)
@@ -26,7 +26,7 @@ Dockrev is a self-hosted Docker/Compose update manager with auto-discovery, chec
 
 - Chinese docs entry: [简体中文](/index.html)
 - English docs entry: [English](/en/index.html)
-- Public Demo: [Demo](/demo/index.html)
+- Public Demo: [dockrev-demo.ivanli.cc](https://dockrev-demo.ivanli.cc/)
 - UI Preview: [Storybook](/storybook.html)
 
 ## Demo vs Storybook

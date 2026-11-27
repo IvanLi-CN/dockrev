@@ -52,7 +52,8 @@
 | 5dnjc | Dockrev：任务日志实时输出与事件可见性 | active | `5dnjc-job-live-output-event-visibility/SPEC.md` | 2026-08-03 | fast-track（无持久化 job_live_log SSE、命令摘要去重、EVEN 默认隐藏与浏览器偏好） |
 | 9cq2a | Dockrev：服务详情操作下拉与生命周期任务 | active | `9cq2a-service-lifecycle-actions/SPEC.md` | 2026-07-30 | fast-track（服务级 lifecycle queue、split dropdown、页头服务名与 Storybook evidence） |
 | service-lifecycle-observability | Dockrev：服务生命周期可观测性 | active | `service-lifecycle-observability/SPEC.md` | 2026-08-27 | fast-track（持久生命周期账本、Engine events observer、图表标注与系统日志行） |
-| 8m2dp | Dockrev：GitHub Pages 公共 Web Demo（/demo/）正式化 | 已完成 | `8m2dp-pages-public-demo/SPEC.md` | 2026-07-13 | fast-track（Pages `/demo/` public surface + BASE_URL 路由 + session mock state + docs discoverability） |
+| 8m2dp | Dockrev：GitHub Pages 公共 Web Demo（/demo/）正式化 | superseded | `8m2dp-pages-public-demo/SPEC.md` | 2026-07-13 | 由 `d3m0a-standalone-demo-site/SPEC.md` 取代 |
+| d3m0a | Dockrev：独立 Web Demo 站点（build-time 版本 + mock Inspector） | active | `d3m0a-standalone-demo-site/SPEC.md` | 2026-11-25 | `/demo/` 方案作废；独立站点、构建期版本、URL-first 场景、Release 驱动 EdgeOne 发布 |
 | c2r2u | Dockrev：详情页双侧栏与 Stack→Service 树导航 | superseded | `c2r2u-detail-route-service-navigation/SPEC.md` | 2026-09-04 | successor: `unified-page-context-navigation/SPEC.md`；保留详情树行为与历史证据 |
 | r8kpa | Dockrev：Web PWA 离线壳、更新提示与分级缓存 | 部分完成（5/6） | `r8kpa-web-pwa-offline-shell/SPEC.md` | 2026-07-12 | fast-track（PWA shell + update prompt + readonly snapshot cache 已收口；service history 纳入 fresh snapshot read model） |
 | 8hewd | Dockrev：概览发现异常详情改为点击弹窗并消除双 tooltip | 已完成 | `8hewd-overview-discovery-error-detail-dialog/SPEC.md` | 2026-04-05 | fast-track（shared dialog primitive + overview discovery dialog + storybook evidence） |

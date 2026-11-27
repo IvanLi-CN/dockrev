@@ -1,0 +1,33 @@
+.demoBootFailure {
+  max-width: 720px;
+  margin: 12vh auto;
+  padding: 28px;
+  border: 1px solid var(--border);
+  border-radius: 18px;
+  background: var(--panel);
+  color: var(--text);
+}
+
+.demoBootFailure h1 {
+  margin: 0 0 10px;
+  font-size: 22px;
+}
+
+.demoBootFailure p {
+  margin: 0 0 12px;
+  color: var(--muted-foreground);
+}
+
+.demoBootFailure pre {
+  margin: 0 0 16px;
+  padding: 12px;
+  border-radius: 10px;
+  background: var(--muted-surface);
+  font-size: 12px;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.demoBootFailure a {
+  color: var(--accent-foreground);
+}

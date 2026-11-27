@@ -4,7 +4,7 @@ import App from '../../App'
 import type { DeployCheckReportEnvelope } from '../../api'
 import { claimDeployCheckAutoOpen } from '../../deployCheckAutoOpen'
 import { RELEASE_DRAWER_QUERY_KEYS } from '../../releaseDrawer'
-import { withDockrevMockApi } from '../mocks/withDockrevMockApi'
+import { withDockrevMockApi } from '../../mock/withDockrevMockApi'
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms))

@@ -27,9 +27,9 @@ description: Dockrev 常见提问与最佳实践。
 
 ## 是否支持自动发布文档站？
 
-支持。仓库内 `docs-pages` workflow 会一起发布 docs 根站、[公开 Demo](/demo/index.html) 和 [Storybook](/storybook.html)。
+支持。`docs-pages` workflow 发布 docs 根站与 [Storybook](/storybook.html)；[公开 Demo](https://dockrev-demo.ivanli.cc/) 是独立站点，由 `Release` 发布。
 
 ## Demo 和 Storybook 有什么区别？
 
-- [公开 Demo](/demo/index.html) 对应 `/demo/`，复用真实 app 路由与 seeded mock state，可分享深链、可交互假写。
+- [公开 Demo](https://dockrev-demo.ivanli.cc/) 是独立站点，复用真实 app 路由与 seeded mock state，可分享深链、可交互假写；版本号在构建时固定，不请求 `/api/version`。
 - [Storybook](/storybook.html) 是 QA / 组件 / 页面状态图库，不替代产品 demo。

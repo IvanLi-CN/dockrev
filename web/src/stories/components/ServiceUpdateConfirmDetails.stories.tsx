@@ -2,7 +2,7 @@ import type { Meta, StoryObj } from '@storybook/react'
 
 import type { Service } from '../../api'
 import { ServiceUpdateConfirmDetails } from '../../components/ServiceUpdateConfirmDetails'
-import { withDockrevMockApi } from '../mocks/withDockrevMockApi'
+import { withDockrevMockApi } from '../../mock/withDockrevMockApi'
 
 const meta: Meta<typeof ServiceUpdateConfirmDetails> = {
   title: 'Components/ServiceUpdateConfirmDetails',

@@ -1,7 +1,7 @@
 import { expect, test } from 'bun:test'
 
-import { handleGhcrRoutes } from '../src/stories/mocks/dockrevMockApi/handlers/ghcr'
-import type { MockRouteContext } from '../src/stories/mocks/dockrevMockApi/context'
+import { handleGhcrRoutes } from '../src/mock/dockrevMockApi/handlers/ghcr'
+import type { MockRouteContext } from '../src/mock/dockrevMockApi/context'
 
 function mockContext(path: string): MockRouteContext {
   const url = new URL(path, 'http://mock.local')

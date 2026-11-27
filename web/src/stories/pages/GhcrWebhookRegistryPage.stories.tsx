@@ -1,8 +1,8 @@
 import type { Meta, StoryObj } from '@storybook/react'
 import { userEvent, within } from 'storybook/test'
 import { GhcrWebhookRegistryPage } from '../../pages/GhcrWebhookRegistryPage'
-import { PageHarness } from '../mocks/PageHarness'
-import { withDockrevMockApi } from '../mocks/withDockrevMockApi'
+import { PageHarness } from '../../mock/PageHarness'
+import { withDockrevMockApi } from '../../mock/withDockrevMockApi'
 
 const meta: Meta<typeof GhcrWebhookRegistryPage> = {
   title: 'Pages/GhcrWebhookRegistryPage',

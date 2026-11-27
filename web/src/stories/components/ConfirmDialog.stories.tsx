@@ -5,7 +5,7 @@ import { ServiceUpdateConfirmDetails } from '../../components/ServiceUpdateConfi
 import { ConfirmDialog, ConfirmProvider } from '../../ConfirmProvider'
 import { useConfirm } from '../../confirm'
 import { Mono } from '../../ui'
-import { withDockrevMockApi } from '../mocks/withDockrevMockApi'
+import { withDockrevMockApi } from '../../mock/withDockrevMockApi'
 
 const LONG_DIGEST = 'sha256:eda3fe8c1c9d782840ded123b7f16936e4abb4d29e13981d132c27877c2f4680'
 const CURRENT_DIGEST = 'sha256:6aa3fe8c1c9d782840ded123b7f16936e4abb4d29e13981d132c27877c2f4680'

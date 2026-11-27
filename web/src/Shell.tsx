@@ -9,6 +9,7 @@ import {
   type LucideIcon,
 } from 'lucide-react'
 import { getDockrevVersion } from './api'
+import { dockrevBuildInfo, isDemoBundle, releaseTagForVersion } from './buildInfo'
 import { AppShellStatusBanner } from './components/AppShellStatusBanner'
 import { PwaUpdateBubble } from './components/PwaUpdateBubble'
 import { usePwaStatus } from './pwaStatus'
@@ -131,7 +132,11 @@ export function AppShell(props: {
         : props.route.name === "ghcr-webhook-registry"
           ? "settings"
           : props.route.name;
-  const [appVersion, setAppVersion] = useState<string | null>(null);
+  const demoBuild = isDemoBundle();
+  // A demo bundle ships its identity at build time and has no backend to ask.
+  const [appVersion, setAppVersion] = useState<string | null>(() =>
+    demoBuild ? dockrevBuildInfo().version : null,
+  );
   const [mobileDrawerOpenFor, setMobileDrawerOpenFor] = useState<string | null>(
     null,
   );
@@ -181,6 +186,7 @@ export function AppShell(props: {
   );
 
   useEffect(() => {
+    if (demoBuild) return;
     let cancelled = false;
     void getDockrevVersion()
       .then((v) => {
@@ -194,11 +200,13 @@ export function AppShell(props: {
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [demoBuild]);
 
   const versionLabel = formatVersionLabel(appVersion);
   const versionRef = (appVersion ?? "").trim();
-  const versionDisplay = formatVersionDisplay(appVersion);
+  // A demo bundle shows the version it was built with, verbatim: no `v` prefix
+  // is invented on top of a value the build already fixed.
+  const versionDisplay = demoBuild ? versionLabel : formatVersionDisplay(appVersion);
   const routeHref = currentHref(props.route);
   const contextNavigation =
     props.contextNavigation ??
@@ -237,9 +245,17 @@ export function AppShell(props: {
     .filter(Boolean)
     .join(" ");
   const versionHref =
-    versionLabel !== "-" && versionRef
-      ? `https://github.com/IvanLi-CN/dockrev/releases/tag/${encodeGitRefForPath(versionRef)}`
-      : null;
+    versionLabel === "-" || !versionRef
+      ? null
+      : demoBuild
+        ? (() => {
+            const tag = releaseTagForVersion();
+            return tag
+              ? `https://github.com/IvanLi-CN/dockrev/releases/tag/${encodeGitRefForPath(tag)}`
+              : null;
+          })()
+        : `https://github.com/IvanLi-CN/dockrev/releases/tag/${encodeGitRefForPath(versionRef)}`;
+
 
   useEffect(() => {
     if (typeof window === "undefined") return;

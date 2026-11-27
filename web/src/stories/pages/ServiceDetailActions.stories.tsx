@@ -1,6 +1,6 @@
 import type { Meta } from "@storybook/react";
 import { ServiceDetailPage } from "../../pages/ServiceDetailPage";
-import { withDockrevMockApi } from "../mocks/withDockrevMockApi";
+import { withDockrevMockApi } from "../../mock/withDockrevMockApi";
 import { expectTopbarMonitorSummary } from "./serviceDetailHeaderAssertions";
 import { findActionButton, render, type ServiceDetailStory } from "./serviceDetailStoryShared";
 import { expectStory, findButton, normalizeText, waitForCondition } from "./storyAssertions";

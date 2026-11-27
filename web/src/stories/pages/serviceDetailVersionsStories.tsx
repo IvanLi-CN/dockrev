@@ -1,5 +1,5 @@
 import { currentRoutePathname } from "../../routes";
-import { dockrevVersionReleaseNotes, versionReleaseNotes } from "./serviceDetailPageStoryFixtures";
+import { dockrevVersionReleaseNotes, versionReleaseNotes } from "../../mock/serviceDetailFixtures";
 import {
   findSectionCard,
   findTab,

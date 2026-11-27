@@ -1,7 +1,7 @@
 import { describe, expect, test } from 'bun:test'
 
-import { handleVersionUpdateRoutes } from '../src/stories/mocks/dockrevMockApi/handlers/versionUpdates'
-import type { MockRouteContext } from '../src/stories/mocks/dockrevMockApi/context'
+import { handleVersionUpdateRoutes } from '../src/mock/dockrevMockApi/handlers/versionUpdates'
+import type { MockRouteContext } from '../src/mock/dockrevMockApi/context'
 
 function previewResponse(
   releaseTag: string,

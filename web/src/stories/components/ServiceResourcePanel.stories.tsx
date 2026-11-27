@@ -9,8 +9,8 @@ import type {
 } from '../../api'
 import { ServiceResourcePanel } from '../../components/ServiceResourcePanel'
 import { useServiceDetailResourceMonitor } from '../../pages/useServiceDetailResourceMonitor'
-import { withDockrevMockApi } from '../mocks/withDockrevMockApi'
-import type { ServiceLogsMockDataset } from '../mocks/dockrevMockApi/shared'
+import { withDockrevMockApi } from '../../mock/withDockrevMockApi'
+import type { ServiceLogsMockDataset } from '../../mock/dockrevMockApi/shared'
 import { waitForCondition } from '../pages/storyAssertions'
 import { useState } from 'react'
 

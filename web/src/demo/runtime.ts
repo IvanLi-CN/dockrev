@@ -1,16 +1,11 @@
-const APP_DEMO_FLAG_VALUES = new Set(['app', 'true', '1'])
+import { isDemoBundle } from '../buildInfo'
+
 const DOCKREV_RUNTIME_MODE_ATTRIBUTE = 'data-dockrev-runtime-mode'
 
 export type DockrevRuntimeMode = 'app-demo'
 
-function normalizeDockrevDemoFlag(value: string | null | undefined): string {
-  return (value ?? '').trim().toLowerCase()
-}
-
 export function isDockrevAppDemoBuild(): boolean {
-  return APP_DEMO_FLAG_VALUES.has(
-    normalizeDockrevDemoFlag(import.meta.env.VITE_DOCKREV_DEMO),
-  )
+  return isDemoBundle()
 }
 
 export function writeDockrevRuntimeMode(mode: DockrevRuntimeMode | null) {
@@ -24,9 +19,7 @@ export function writeDockrevRuntimeMode(mode: DockrevRuntimeMode | null) {
 
 export function readDockrevRuntimeMode(): DockrevRuntimeMode | null {
   if (typeof document !== 'undefined') {
-    const mode = document.documentElement.getAttribute(
-      DOCKREV_RUNTIME_MODE_ATTRIBUTE,
-    )
+    const mode = document.documentElement.getAttribute(DOCKREV_RUNTIME_MODE_ATTRIBUTE)
     if (mode === 'app-demo') return mode
   }
   return isDockrevAppDemoBuild() ? 'app-demo' : null

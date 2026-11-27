@@ -1,12 +1,12 @@
 import type { Meta } from "@storybook/react";
 import { ServiceDetailPage } from "../../pages/ServiceDetailPage";
 import { currentRoutePathname } from "../../routes";
-import { withDockrevMockApi } from "../mocks/withDockrevMockApi";
+import { withDockrevMockApi } from "../../mock/withDockrevMockApi";
 import { expectMobileTopbarMonitorHidden, expectNoLegacyServiceDetailHero, expectTopbarMonitorSummary } from "./serviceDetailHeaderAssertions";
 import { expectHistoryColumnsAligned } from "./serviceDetailHistoryAssertions";
 import { expectLightServiceLogsContrast } from "./serviceLogsLightContrastStory";
 import { expectDesktopLogTimestampLayout } from "./serviceDetailLogsStories";
-import { buildLongLogsSnapshot, buildMultilineLogsSnapshot, historyReleaseNotes, paginatedHistoryJobs, partialHistoryBackupRecords } from "./serviceDetailPageStoryFixtures";
+import { buildLongLogsSnapshot, buildMultilineLogsSnapshot, historyReleaseNotes, paginatedHistoryJobs, partialHistoryBackupRecords } from "../../mock/serviceDetailFixtures";
 import { assertRecentUpdateKeyboardNavigation, assertRecentUpdateReasonPopoverStaysOnRoute, navigateStoryPath } from "./recentUpdateStoryAssertions";
 import { assertMonitoringActivationRefresh, assertMonitoringResourceSync, assertOverviewMonitorSummary } from "./serviceDetailMonitorAssertions";
 import { drawerText, findActionButton, findHistoryRowByJobId, findLogRowContaining, findSectionCard, findTab, render, tabLabels, type ServiceDetailStory } from "./serviceDetailStoryShared";

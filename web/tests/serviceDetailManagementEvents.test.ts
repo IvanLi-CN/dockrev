@@ -3,7 +3,7 @@ import { describe, expect, test } from 'bun:test'
 import type { Service } from '../src/api'
 import type { ManagementEvent } from '../src/managementEvents'
 import { managementEventAffectsServiceDetail } from '../src/pages/useServiceDetailPageState'
-import { formatMockManagementCursor, parseMockManagementCursor } from '../src/stories/mocks/dockrevMockApi/managementEventCursor'
+import { formatMockManagementCursor, parseMockManagementCursor } from '../src/mock/dockrevMockApi/managementEventCursor'
 
 const service = {
   id: 'svc-1',

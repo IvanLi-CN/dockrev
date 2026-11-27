@@ -34,7 +34,6 @@ import {
 } from "../readonlySnapshotCache";
 import { navigate } from "../routes";
 import { buildUpdateServiceTarget } from "../updateTargets";
-import { isDockrevAppDemoRuntime } from "../demo/runtime";
 import {
   deployCheckOperationImpactReason,
   useDeployCheckReport,
@@ -64,7 +63,6 @@ import {
   HomepageSearchForm,
   HomepageTopStrip,
 } from "./OverviewPageChrome";
-import { HomepageFloatingToolPanel } from "./OverviewFloatingToolPanel";
 import { HomepageNavSkeleton } from "./HomepageNavSkeleton";
 import { AsyncDataRegion } from "../components/AsyncDataRegion";
 import { OverviewContextNavigation } from "../components/PageContextNavigation";
@@ -424,7 +422,6 @@ export function OverviewPage(props: {
   } =
     props;
   const pageRef = useRef<HTMLDivElement | null>(null);
-  const isAppDemoRuntime = isDockrevAppDemoRuntime();
   const { isOnline } = usePwaStatus();
   const deployCheckReport = useDeployCheckReport();
   const [busy, setBusy] = useState(false);
@@ -819,9 +816,6 @@ export function OverviewPage(props: {
   return (
     <div ref={pageRef} className="page homepageDashboardPage">
       <h1 className="srOnly">服务导航</h1>
-      {isAppDemoRuntime ? (
-        <HomepageFloatingToolPanel pageRef={pageRef} />
-      ) : null}
       {hasCachedCardsInUse || resourceFromCache ? (
         <ReadonlySnapshotNotice
           tone={!isOnline ? "warn" : "info"}

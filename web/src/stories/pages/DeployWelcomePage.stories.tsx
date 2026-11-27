@@ -1,8 +1,8 @@
 import type { Meta, StoryObj } from '@storybook/react'
 import type { DeployCheckReportEnvelope } from '../../api'
 import { DeployWelcomePage } from '../../pages/DeployWelcomePage'
-import { PageHarness } from '../mocks/PageHarness'
-import { withDockrevMockApi } from '../mocks/withDockrevMockApi'
+import { PageHarness } from '../../mock/PageHarness'
+import { withDockrevMockApi } from '../../mock/withDockrevMockApi'
 
 const meta: Meta<typeof DeployWelcomePage> = {
   title: 'Pages/DeployWelcomePage',

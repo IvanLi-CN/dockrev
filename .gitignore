@@ -35,3 +35,10 @@ build/
 .codex/skills/ui-ux-pro-max/scripts/**/*.pyc
 __pycache__/
 *.pyc
+
+# Demo site build output
+web/dist-demo/
+
+# Playwright
+web/test-results/
+web/playwright-report/

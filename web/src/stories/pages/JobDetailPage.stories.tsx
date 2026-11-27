@@ -1,9 +1,9 @@
 import type { Meta, StoryObj } from '@storybook/react'
 import type { ReactNode } from 'react'
 import { JobDetailPage } from '../../pages/JobDetailPage'
-import { PageHarness } from '../mocks/PageHarness'
-import { buildQueueHealthRollback, RUNNING_JOB_ID } from '../mocks/dockrevMockApi/fixturesQueues'
-import { withDockrevMockApi } from '../mocks/withDockrevMockApi'
+import { PageHarness } from '../../mock/PageHarness'
+import { buildQueueHealthRollback, RUNNING_JOB_ID } from '../../mock/dockrevMockApi/fixturesQueues'
+import { withDockrevMockApi } from '../../mock/withDockrevMockApi'
 import { expectNearlyEqual, expectStory, findButton, waitForCondition } from './storyAssertions'
 
 function sleep(ms: number) {

@@ -59,7 +59,7 @@ export default defineConfig({
         link: '/en/index.html',
         activeMatch: '^/en(?:/|$)'
       },
-      { text: 'Demo', link: '/demo/' },
+      { text: 'Demo', link: 'https://dockrev-demo.ivanli.cc/' },
       { text: 'Storybook', link: '/storybook.html' },
       { text: 'GitHub', link: 'https://github.com/ivanli-cn/dockrev' }
     ],
@@ -82,7 +82,8 @@ export default defineConfig({
             { text: '集成指南', link: '/integrations' },
             { text: '故障排查', link: '/troubleshooting' },
             { text: '常见问题', link: '/faq' },
-            { text: '术语表', link: '/glossary' }
+            { text: '术语表', link: '/glossary' },
+            { text: '公开 Demo', link: '/demo' }
           ]
         },
         {
@@ -111,7 +112,8 @@ export default defineConfig({
             { text: 'Integrations', link: '/en/integrations' },
             { text: 'Troubleshooting', link: '/en/troubleshooting' },
             { text: 'FAQ', link: '/en/faq' },
-            { text: 'Glossary', link: '/en/glossary' }
+            { text: 'Glossary', link: '/en/glossary' },
+            { text: 'Public Demo', link: '/en/demo' }
           ]
         },
         {
